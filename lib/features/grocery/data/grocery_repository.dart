@@ -23,7 +23,37 @@ class GroceryRepository {
         .select('household_id')
         .eq('id', userId)
         .maybeSingle();
-    return profile?['household_id']?.toString();
+    final profileHouseholdId = profile?['household_id']?.toString();
+    if (profileHouseholdId != null && profileHouseholdId.isNotEmpty) {
+      return profileHouseholdId;
+    }
+
+    // Recovery path for users whose profile row does not currently point to the
+    // active household but who are still an active household member.
+    final membership = await _client
+        .from('household_members')
+        .select('household_id')
+        .eq('user_id', userId)
+        .eq('status', HouseholdMemberStatus.active.name)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    final membershipHouseholdId = membership?['household_id']?.toString();
+    if (membershipHouseholdId == null || membershipHouseholdId.isEmpty) {
+      return null;
+    }
+
+    // Best effort sync so future reads/writes use the profile shortcut.
+    try {
+      await _client
+          .from('profiles')
+          .update({'household_id': membershipHouseholdId})
+          .eq('id', userId)
+          .isFilter('household_id', null);
+    } catch (_) {
+      // Ignore profile sync failures; we can still proceed with the recovered id.
+    }
+    return membershipHouseholdId;
   }
 
   static const Map<String, GroceryCategory> _categoryMap = {
@@ -351,7 +381,9 @@ class GroceryRepository {
     String? fromRecipeId,
   }) async {
     final householdId = await _householdForUser(userId);
-    if (householdId == null || householdId.isEmpty) return;
+    if (householdId == null || householdId.isEmpty) {
+      throw StateError('No active household found for grocery write.');
+    }
     await _client.from('grocery_items').insert({
       'user_id': userId,
       'household_id': householdId,

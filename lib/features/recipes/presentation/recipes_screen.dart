@@ -25,7 +25,13 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
 
   Future<void> _createRecipeManually() async {
     final user = ref.read(currentUserProvider);
-    final householdId = ref.read(activeHouseholdIdProvider);
+    final householdId = ref.read(activeHouseholdProvider).valueOrNull?.id;
+    bool hasSharedHousehold = false;
+    try {
+      hasSharedHousehold = await ref.read(hasSharedHouseholdProvider.future);
+    } catch (_) {
+      hasSharedHousehold = false;
+    }
     if (user == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -45,7 +51,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
 
     try {
       var shareWithHousehold = false;
-      if (householdId != null && householdId.isNotEmpty) {
+      if (hasSharedHousehold && householdId != null && householdId.isNotEmpty) {
         if (!mounted) return;
         final selection = await showModalBottomSheet<String>(
           context: context,
@@ -105,9 +111,14 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   @override
   Widget build(BuildContext context) {
     final recipesAsync = ref.watch(recipesProvider);
+    final hasSharedHousehold =
+        ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
     final query = _searchCtrl.text.trim().toLowerCase();
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
+    final effectiveLibraryIndex = hasSharedHousehold ? _libraryIndex : 0;
+    final libraryLabels =
+        hasSharedHousehold ? const ['Household Recipes', 'My Recipes'] : const ['My Recipes'];
 
     return Scaffold(
       appBar: AppBar(
@@ -129,25 +140,28 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                 children: [
                   SectionCard(
                     title: 'Recipe Library',
-                    subtitle:
-                        'Search and manage household and personal recipes.',
+                    subtitle: hasSharedHousehold
+                        ? 'Search and manage household and personal recipes.'
+                        : 'Search and manage your personal recipes.',
                     child: SearchBar(
                       controller: _searchCtrl,
-                      hintText: _libraryIndex == 0
-                          ? 'Search household recipes'
+                      hintText: hasSharedHousehold
+                          ? (effectiveLibraryIndex == 0
+                              ? 'Search household recipes'
+                              : 'Search my recipes')
                           : 'Search my recipes',
                       onChanged: (_) => setState(() {}),
                     ),
                   ),
                   const SizedBox(height: 10),
                   SegmentedPills(
-                    labels: const ['Household Recipes', 'My Recipes'],
-                    selectedIndex: _libraryIndex,
+                    labels: libraryLabels,
+                    selectedIndex: effectiveLibraryIndex,
                     onSelect: (idx) => setState(() => _libraryIndex = idx),
                   ),
                   const SizedBox(height: 10),
                   SegmentedPills(
-                    labels: const ['All', 'Favorites', 'To Try'],
+                    labels: const ['Favorites', 'To Try'],
                     selectedIndex: _segmentIndex,
                     onSelect: (idx) => setState(() => _segmentIndex = idx),
                   ),
@@ -169,26 +183,21 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
 
                   final filtered = recipes.where(matches).toList();
                   final byLibrary = filtered.where((recipe) {
-                    if (_libraryIndex == 0) {
+                    if (hasSharedHousehold && effectiveLibraryIndex == 0) {
                       return recipe.visibility == RecipeVisibility.household;
                     }
                     return recipe.visibility == RecipeVisibility.personal;
                   }).toList();
-                  final allBySection = _libraryIndex == 1
-                      ? byLibrary
-                          .where((r) => r.isFavorite || r.isToTry)
-                          .toList()
-                      : byLibrary;
                   final favorites =
                       byLibrary.where((r) => r.isFavorite).toList();
                   final toTry = byLibrary.where((r) => r.isToTry).toList();
                   final visible = switch (_segmentIndex) {
-                    1 => favorites,
-                    2 => toTry,
-                    _ => allBySection,
+                    1 => toTry,
+                    _ => favorites,
                   };
                   return _RecipeList(
                     recipes: visible,
+                    hasSharedHousehold: hasSharedHousehold,
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -208,9 +217,13 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
 }
 
 class _RecipeList extends ConsumerWidget {
-  const _RecipeList({required this.recipes});
+  const _RecipeList({
+    required this.recipes,
+    required this.hasSharedHousehold,
+  });
 
   final List<Recipe> recipes;
+  final bool hasSharedHousehold;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -220,7 +233,6 @@ class _RecipeList extends ConsumerWidget {
     }
     final scheme = Theme.of(context).colorScheme;
     final user = ref.watch(currentUserProvider);
-    final activeHouseholdId = ref.watch(activeHouseholdIdProvider);
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
@@ -228,8 +240,7 @@ class _RecipeList extends ConsumerWidget {
       itemBuilder: (context, index) {
         final recipe = recipes[index];
         final canCopyToHousehold = user != null &&
-            activeHouseholdId != null &&
-            activeHouseholdId.isNotEmpty &&
+            hasSharedHousehold &&
             recipe.visibility == RecipeVisibility.personal;
         final heroTag = 'recipe-image-${recipe.id}';
         final tags = <String>[

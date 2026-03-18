@@ -33,3 +33,13 @@ final pendingHouseholdInvitesProvider =
   if (user == null) return const [];
   return ref.watch(householdRepositoryProvider).listPendingInvites();
 });
+
+final hasSharedHouseholdProvider = FutureProvider<bool>((ref) async {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return false;
+  final members = await ref.watch(householdMembersProvider.future);
+  return members.any(
+    (member) =>
+        member.userId != user.id && member.status == HouseholdMemberStatus.active,
+  );
+});
