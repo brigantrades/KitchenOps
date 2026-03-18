@@ -10,6 +10,7 @@ import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 const double _groceryCardGridSpacing = 8;
 const double _groceryCardAspectRatio = 1.15;
@@ -88,6 +89,37 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         name: draftItem.name,
         quantity: draftItem.quantity,
       );
+    } on StateError catch (error) {
+      if (mounted) {
+        setState(() {
+          _addSheetOpen = false;
+        });
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Could not add item.')),
+      );
+      return;
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        setState(() {
+          _addSheetOpen = false;
+        });
+      }
+      if (!mounted) {
+        return;
+      }
+      final message = error.message.toLowerCase();
+      final friendly = message.contains('row-level security') ||
+              message.contains('violates row-level')
+          ? 'Your account is not an active household member yet. Open Profile and accept the household invite.'
+          : 'Could not add item right now. Please try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendly)),
+      );
+      return;
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -99,7 +131,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Could not add item. Check connection and try again.'),
+          content: Text('Could not add item right now. Please try again.'),
         ),
       );
       return;

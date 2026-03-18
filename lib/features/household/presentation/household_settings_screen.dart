@@ -189,6 +189,7 @@ class _HouseholdSettingsScreenState
   Widget build(BuildContext context) {
     final householdAsync = ref.watch(activeHouseholdProvider);
     final membersAsync = ref.watch(householdMembersProvider);
+    final hasHousehold = householdAsync.valueOrNull != null;
     final user = ref.watch(currentUserProvider);
     final members = membersAsync.valueOrNull ?? const <HouseholdMember>[];
     final currentMember = user == null
@@ -263,12 +264,15 @@ class _HouseholdSettingsScreenState
           const SizedBox(height: AppSpacing.md),
           SectionCard(
             title: 'Invite Member',
-            subtitle: 'Add your spouse by account email.',
+            subtitle: hasHousehold
+                ? 'Add your spouse by account email.'
+                : 'Create a household first to invite others.',
             child: Column(
               children: [
                 TextField(
                   controller: _inviteEmailCtrl,
                   keyboardType: TextInputType.emailAddress,
+                  enabled: hasHousehold,
                   decoration: const InputDecoration(
                     labelText: 'Email',
                     hintText: 'name@example.com',
@@ -276,7 +280,7 @@ class _HouseholdSettingsScreenState
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 FilledButton.icon(
-                  onPressed: _working ? null : _inviteMember,
+                  onPressed: _working || !hasHousehold ? null : _inviteMember,
                   icon: const Icon(Icons.person_add_alt_1_rounded),
                   label: const Text('Add to household'),
                 ),

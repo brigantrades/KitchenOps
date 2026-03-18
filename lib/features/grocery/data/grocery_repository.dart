@@ -17,7 +17,15 @@ class GroceryRepository {
   bool _catalogLoadAttempted = false;
   static const int _maxAutocompleteCatalogItems = 7500;
 
+  Future<void> _ensureProfileRow(String userId) async {
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'name': 'KitchenOps User',
+    });
+  }
+
   Future<String?> _householdForUser(String userId) async {
+    await _ensureProfileRow(userId);
     final profile = await _client
         .from('profiles')
         .select('household_id')
@@ -40,6 +48,28 @@ class GroceryRepository {
         .maybeSingle();
     final membershipHouseholdId = membership?['household_id']?.toString();
     if (membershipHouseholdId == null || membershipHouseholdId.isEmpty) {
+      final pendingInvite = await _client
+          .from('household_members')
+          .select('household_id')
+          .eq('user_id', userId)
+          .eq('status', HouseholdMemberStatus.invited.name)
+          .limit(1)
+          .maybeSingle();
+      if (pendingInvite != null) {
+        return null;
+      }
+      try {
+        final created = await _client.rpc(
+          'create_household_with_member',
+          params: {'name': 'My Household'},
+        );
+        final createdHouseholdId = created?.toString();
+        if (createdHouseholdId != null && createdHouseholdId.isNotEmpty) {
+          return createdHouseholdId;
+        }
+      } catch (_) {
+        // Fall through and return null so callers can handle gracefully.
+      }
       return null;
     }
 
@@ -382,7 +412,7 @@ class GroceryRepository {
   }) async {
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) {
-      throw StateError('No active household found for grocery write.');
+      throw StateError('Could not initialize your personal grocery list.');
     }
     await _client.from('grocery_items').insert({
       'user_id': userId,

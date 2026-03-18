@@ -82,10 +82,21 @@ class HouseholdRepository {
   }
 
   Future<void> acceptInvite(String householdId) async {
-    await _client.rpc(
-      'accept_household_invite',
-      params: {'household_uuid': householdId},
-    );
+    try {
+      await _client.rpc(
+        'accept_household_invite',
+        params: {'household_uuid': householdId},
+      );
+    } on PostgrestException catch (error) {
+      final message = error.message.toLowerCase();
+      if (!message.contains('already in another household')) {
+        rethrow;
+      }
+      await _client.rpc(
+        'accept_household_invite_with_switch',
+        params: {'household_uuid': householdId},
+      );
+    }
   }
 
   Future<void> rejectInvite(String householdId) async {

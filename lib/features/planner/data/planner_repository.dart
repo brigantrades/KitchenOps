@@ -6,13 +6,71 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class PlannerRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
+  Future<void> _ensureProfileRow(String userId) async {
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'name': 'KitchenOps User',
+    });
+  }
+
   Future<String?> _householdForUser(String userId) async {
+    await _ensureProfileRow(userId);
     final profile = await _client
         .from('profiles')
         .select('household_id')
         .eq('id', userId)
         .maybeSingle();
-    return profile?['household_id']?.toString();
+    final profileHouseholdId = profile?['household_id']?.toString();
+    if (profileHouseholdId != null && profileHouseholdId.isNotEmpty) {
+      return profileHouseholdId;
+    }
+
+    final membership = await _client
+        .from('household_members')
+        .select('household_id')
+        .eq('user_id', userId)
+        .eq('status', HouseholdMemberStatus.active.name)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    final membershipHouseholdId = membership?['household_id']?.toString();
+    if (membershipHouseholdId != null && membershipHouseholdId.isNotEmpty) {
+      try {
+        await _client
+            .from('profiles')
+            .update({'household_id': membershipHouseholdId})
+            .eq('id', userId)
+            .isFilter('household_id', null);
+      } catch (_) {
+        // Ignore profile sync failures; recovered membership still works.
+      }
+      return membershipHouseholdId;
+    }
+
+    final pendingInvite = await _client
+        .from('household_members')
+        .select('household_id')
+        .eq('user_id', userId)
+        .eq('status', HouseholdMemberStatus.invited.name)
+        .limit(1)
+        .maybeSingle();
+    if (pendingInvite != null) {
+      return null;
+    }
+
+    try {
+      final created = await _client.rpc(
+        'create_household_with_member',
+        params: {'name': 'My Household'},
+      );
+      final createdHouseholdId = created?.toString();
+      if (createdHouseholdId != null && createdHouseholdId.isNotEmpty) {
+        return createdHouseholdId;
+      }
+    } catch (_) {
+      // Fall through and return null so callers can handle gracefully.
+    }
+    return null;
   }
 
   Future<List<MealPlanSlot>> listSlots(
