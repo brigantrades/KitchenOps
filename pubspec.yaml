@@ -1,5 +1,5 @@
 name: plateplan
-description: PlatePlan mobile meal planning app.
+description: ForkFlow mobile meal planning app.
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -39,5 +39,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/images/food_icons/
+    - assets/images/food_icons/openmoji/
     - assets/lottie/
     - assets/data/
