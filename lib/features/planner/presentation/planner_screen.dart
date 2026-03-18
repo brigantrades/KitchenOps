@@ -44,80 +44,108 @@ class PlannerScreen extends ConsumerWidget {
         recipes.where((r) => r.mealType.name == normalized).toList();
     final options = matching.isNotEmpty ? matching : recipes;
     if (options.isEmpty) return Future.value(null);
+    var segmentIndex = 0;
 
     return showModalBottomSheet<Recipe>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => BrandedSheetScaffold(
-        title: 'Select ${_mealLabelDisplay(mealLabel)} Recipe',
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (matching.isEmpty)
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child:
-                      Text('No exact meal-tag matches, showing all recipes.'),
-                ),
-              ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                onPressed: () {
-                  final picked = options[Random().nextInt(options.length)];
-                  Navigator.of(context).pop(picked);
-                },
-                icon: const Icon(Icons.auto_awesome_rounded),
-                label: const Text('Select for me'),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: options.length,
-                itemBuilder: (context, index) {
-                  final recipe = options[index];
-                  return InkWell(
-                    onTap: () => Navigator.of(context).pop(recipe),
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest
-                            .withValues(alpha: 0.4),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.restaurant_rounded),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(recipe.title),
-                                Text(
-                                  '${_mealTypeLabel(recipe.mealType)} • Serves ${recipe.servings}',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          final resultsHeight =
+              (MediaQuery.of(context).size.height * 0.42).clamp(240.0, 420.0);
+          final visible = switch (segmentIndex) {
+            1 => options.where((r) => r.isToTry).toList(),
+            _ => options.where((r) => r.isFavorite).toList(),
+          };
+          return BrandedSheetScaffold(
+            title: 'Select ${_mealLabelDisplay(mealLabel)} Recipe',
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (matching.isEmpty)
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'No exact meal-tag matches, showing all recipes.',
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                SegmentedPills(
+                  labels: const ['Favorites', 'To Try'],
+                  selectedIndex: segmentIndex,
+                  onSelect: (idx) => setModalState(() => segmentIndex = idx),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonalIcon(
+                    onPressed: visible.isEmpty
+                        ? null
+                        : () {
+                            final picked =
+                                visible[Random().nextInt(visible.length)];
+                            Navigator.of(context).pop(picked);
+                          },
+                    icon: const Icon(Icons.auto_awesome_rounded),
+                    label: const Text('Select for me'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: resultsHeight.toDouble(),
+                  child: visible.isEmpty
+                      ? const Center(
+                          child: Text('No recipes in this tab yet.'),
+                        )
+                      : ListView.builder(
+                          itemCount: visible.length,
+                          itemBuilder: (context, index) {
+                            final recipe = visible[index];
+                            return InkWell(
+                              onTap: () => Navigator.of(context).pop(recipe),
+                              borderRadius: BorderRadius.circular(14),
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(14),
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest
+                                      .withValues(alpha: 0.4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.restaurant_rounded),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(recipe.title),
+                                          Text(
+                                            '${_mealTypeLabel(recipe.mealType)} • Serves ${recipe.servings}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -570,10 +598,11 @@ class PlannerScreen extends ConsumerWidget {
             Future<void> removeMealSlot(MealPlanSlot slot) async {
               final confirmed = await showDialog<bool>(
                 context: context,
+                barrierDismissible: false,
                 builder: (context) => AlertDialog(
-                  title: const Text('Remove meal slot?'),
+                  title: const Text('Delete meal slot?'),
                   content: Text(
-                    'Remove ${_mealLabelDisplay(slot.mealLabel)} from ${DateFormat('EEEE').format(selectedDate)}?',
+                    'Delete ${_mealLabelDisplay(slot.mealLabel)} from ${DateFormat('EEEE').format(selectedDate)}? This cannot be undone.',
                   ),
                   actions: [
                     TextButton(
@@ -581,8 +610,12 @@ class PlannerScreen extends ConsumerWidget {
                       child: const Text('Cancel'),
                     ),
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.error,
+                        foregroundColor: Theme.of(context).colorScheme.onError,
+                      ),
                       onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Remove'),
+                      child: const Text('Delete'),
                     ),
                   ],
                 ),
@@ -825,21 +858,6 @@ class PlannerScreen extends ConsumerWidget {
                                             Icons.drag_indicator_rounded),
                                       ),
                                       const SizedBox(width: 6),
-                                      if (recipe != null) ...[
-                                        ClipRRect(
-                                          borderRadius:
-                                              BorderRadius.circular(16),
-                                          child: SizedBox(
-                                            width: 72,
-                                            height: 72,
-                                            child: FoodMedia(
-                                              imageUrl: recipe.imageUrl,
-                                              height: 72,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                      ],
                                       Expanded(
                                         child: Column(
                                           crossAxisAlignment:
@@ -861,33 +879,6 @@ class PlannerScreen extends ConsumerWidget {
                                               style: Theme.of(context)
                                                   .textTheme
                                                   .titleMedium,
-                                            ),
-                                            const SizedBox(height: 6),
-                                            Wrap(
-                                              spacing: 6,
-                                              runSpacing: 6,
-                                              children: [
-                                                Chip(
-                                                  label: Text(recipe == null
-                                                      ? 'Unassigned'
-                                                      : 'Assigned'),
-                                                  backgroundColor: recipe ==
-                                                          null
-                                                      ? scheme
-                                                          .surfaceContainerHighest
-                                                      : scheme.secondary,
-                                                  labelStyle: Theme.of(context)
-                                                      .textTheme
-                                                      .labelSmall
-                                                      ?.copyWith(
-                                                        color: recipe == null
-                                                            ? scheme
-                                                                .onSurfaceVariant
-                                                            : scheme
-                                                                .onSecondary,
-                                                      ),
-                                                ),
-                                              ],
                                             ),
                                           ],
                                         ),

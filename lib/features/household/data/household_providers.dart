@@ -20,8 +20,16 @@ final activeHouseholdIdProvider = Provider<String?>((ref) {
   return ref.watch(activeHouseholdProvider).valueOrNull?.id;
 });
 
-final householdMembersProvider = FutureProvider<List<HouseholdMember>>((ref) async {
+final householdMembersProvider =
+    FutureProvider<List<HouseholdMember>>((ref) async {
   final householdId = ref.watch(activeHouseholdIdProvider);
   if (householdId == null || householdId.isEmpty) return [];
   return ref.watch(householdRepositoryProvider).listMembers(householdId);
+});
+
+final pendingHouseholdInvitesProvider =
+    FutureProvider<List<HouseholdInvite>>((ref) async {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return const [];
+  return ref.watch(householdRepositoryProvider).listPendingInvites();
 });

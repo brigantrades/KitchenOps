@@ -34,6 +34,9 @@ Future<void> main() async {
       await Supabase.initialize(
         url: Env.supabaseUrl,
         anonKey: Env.supabaseAnonKey,
+        authOptions: const FlutterAuthClientOptions(
+          authFlowType: AuthFlowType.pkce,
+        ),
       );
     } catch (error, stack) {
       debugPrint('Supabase initialize failed: $error');

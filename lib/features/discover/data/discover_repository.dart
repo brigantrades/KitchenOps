@@ -445,6 +445,53 @@ class DiscoverRepository {
         .from('recipes')
         .update({'is_to_try': value}).eq('id', recipeId);
   }
+
+  Future<void> saveDiscoverRecipeForUser({
+    required String userId,
+    required Recipe recipe,
+    bool? favorite,
+    bool? toTry,
+  }) async {
+    await _ensureProfileRow(userId);
+
+    final existing = await _client
+        .from('recipes')
+        .select('id,is_favorite,is_to_try')
+        .eq('user_id', userId)
+        .eq('visibility', 'personal')
+        .eq('source', 'saved_from_discover')
+        .eq('title', recipe.title)
+        .eq('meal_type', recipe.mealType.name)
+        .maybeSingle();
+
+    if (existing != null) {
+      final currentFavorite = existing['is_favorite'] == true;
+      final currentToTry = existing['is_to_try'] == true;
+      await _client.from('recipes').update({
+        'is_favorite': favorite ?? currentFavorite,
+        'is_to_try': toTry ?? currentToTry,
+      }).eq('id', existing['id']);
+      return;
+    }
+
+    final payload = recipe.toJson()
+      ..remove('id')
+      ..remove('user_id')
+      ..remove('household_id')
+      ..remove('visibility')
+      ..remove('is_favorite')
+      ..remove('is_to_try')
+      ..remove('source');
+
+    await _client.from('recipes').insert({
+      'user_id': userId,
+      'visibility': 'personal',
+      'source': 'saved_from_discover',
+      'is_favorite': favorite ?? false,
+      'is_to_try': toTry ?? false,
+      ...payload,
+    });
+  }
 }
 
 final geminiServiceProvider = Provider<GeminiService>((ref) => GeminiService());

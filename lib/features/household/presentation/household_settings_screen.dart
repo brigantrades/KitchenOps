@@ -55,8 +55,9 @@ class _HouseholdSettingsScreenState
     if (email.isEmpty) return;
     setState(() => _working = true);
     try {
-      final result = await ref.read(householdRepositoryProvider).inviteByEmail(email);
-      if (result == HouseholdInviteResult.addedExistingMember) {
+      final result =
+          await ref.read(householdRepositoryProvider).inviteByEmail(email);
+      if (result == HouseholdInviteResult.invitedExistingMember) {
         ref.invalidate(householdMembersProvider);
       }
       _inviteEmailCtrl.clear();
@@ -64,8 +65,8 @@ class _HouseholdSettingsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            result == HouseholdInviteResult.addedExistingMember
-                ? 'Household member added.'
+            result == HouseholdInviteResult.invitedExistingMember
+                ? 'Invite sent. They can accept in their app profile.'
                 : 'No account found yet. Sign-up invite email sent.',
           ),
         ),
@@ -294,12 +295,16 @@ class _HouseholdMigrationWizardState
             SwitchListTile(
               title: const Text('Share planner into household'),
               value: _sharePlanner,
-              onChanged: _saving ? null : (value) => setState(() => _sharePlanner = value),
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _sharePlanner = value),
             ),
             SwitchListTile(
               title: const Text('Share grocery list into household'),
               value: _shareGrocery,
-              onChanged: _saving ? null : (value) => setState(() => _shareGrocery = value),
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _shareGrocery = value),
             ),
             const SizedBox(height: AppSpacing.sm),
             const Text('Choose personal recipes to share'),

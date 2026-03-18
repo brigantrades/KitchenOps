@@ -2,7 +2,14 @@ import 'package:collection/collection.dart';
 
 enum MealType { breakfast, lunch, dinner, snack, dessert }
 
-enum GroceryCategory { produce, meatFish, dairyEggs, pantryGrains, bakery, other }
+enum GroceryCategory {
+  produce,
+  meatFish,
+  dairyEggs,
+  pantryGrains,
+  bakery,
+  other
+}
 
 enum RecipeVisibility { personal, household, public }
 
@@ -153,7 +160,8 @@ class Recipe {
     int? servings,
     String? householdId,
     RecipeVisibility? visibility,
-  }) => Recipe(
+  }) =>
+      Recipe(
         id: id,
         title: title,
         description: description,
@@ -206,15 +214,22 @@ class Recipe {
               (m) => m.name == json['meal_type'],
             ) ??
             MealType.dinner,
-        cuisineTags: (json['cuisine_tags'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+        cuisineTags: (json['cuisine_tags'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
         ingredients: (json['ingredients'] as List?)
                 ?.whereType<Map<String, dynamic>>()
                 .map(Ingredient.fromJson)
                 .toList() ??
             const [],
-        instructions: (json['instructions'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+        instructions: (json['instructions'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
         imageUrl: json['image_url']?.toString(),
-        nutrition: Nutrition.fromJson(json['nutrition'] as Map<String, dynamic>?),
+        nutrition:
+            Nutrition.fromJson(json['nutrition'] as Map<String, dynamic>?),
         isFavorite: json['is_favorite'] == true,
         isToTry: json['is_to_try'] == true,
         source: json['source']?.toString() ?? 'user_created',
@@ -347,13 +362,20 @@ class Profile {
         id: json['id'].toString(),
         name: json['name']?.toString() ?? '',
         avatarUrl: json['avatar_url']?.toString(),
-        goals: (json['goals'] as List?)?.map((e) => e.toString()).toList() ?? const [],
-        dietaryRestrictions:
-            (json['dietary_restrictions'] as List?)?.map((e) => e.toString()).toList() ?? const [],
-        preferredCuisines:
-            (json['preferred_cuisines'] as List?)?.map((e) => e.toString()).toList() ?? const [],
-        dislikedIngredients:
-            (json['disliked_ingredients'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+        goals: (json['goals'] as List?)?.map((e) => e.toString()).toList() ??
+            const [],
+        dietaryRestrictions: (json['dietary_restrictions'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
+        preferredCuisines: (json['preferred_cuisines'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
+        dislikedIngredients: (json['disliked_ingredients'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
         householdServings: (json['household_servings'] as num?)?.toInt(),
         householdId: json['household_id']?.toString(),
       );
@@ -408,6 +430,33 @@ class HouseholdMember {
           ) ??
           HouseholdMemberStatus.active,
       name: profile?['name']?.toString(),
+      invitedEmail: json['invited_email']?.toString(),
+    );
+  }
+}
+
+class HouseholdInvite {
+  const HouseholdInvite({
+    required this.householdId,
+    required this.householdName,
+    required this.role,
+    this.invitedEmail,
+  });
+
+  final String householdId;
+  final String householdName;
+  final HouseholdRole role;
+  final String? invitedEmail;
+
+  factory HouseholdInvite.fromJson(Map<String, dynamic> json) {
+    final household = json['households'] as Map<String, dynamic>?;
+    return HouseholdInvite(
+      householdId: json['household_id'].toString(),
+      householdName: household?['name']?.toString() ?? 'Household',
+      role: HouseholdRole.values.firstWhereOrNull(
+            (role) => role.name == json['role'],
+          ) ??
+          HouseholdRole.member,
       invitedEmail: json['invited_email']?.toString(),
     );
   }

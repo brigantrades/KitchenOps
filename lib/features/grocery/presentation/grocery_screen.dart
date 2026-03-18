@@ -48,6 +48,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     final draftItem = await showModalBottomSheet<_PendingGroceryItem>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) => _AddGroceryItemSheet(
         repo: repo,
         currentItems: currentItems,
@@ -164,6 +165,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -508,7 +510,7 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
     final media = MediaQuery.of(context);
     final maxSheetHeight = media.size.height * 0.82;
     return SafeArea(
-      top: false,
+      top: true,
       child: AnimatedPadding(
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,

@@ -9,6 +9,7 @@ import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/theme/theme_extensions.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
@@ -22,6 +23,8 @@ class HomeScreen extends ConsumerWidget {
     final planner = ref.watch(plannerSlotsProvider);
     final grocery = ref.watch(groceryItemsProvider);
     final recipes = ref.watch(recipesProvider);
+    final pendingInvites = ref.watch(pendingHouseholdInvitesProvider);
+    final pendingInviteCount = pendingInvites.valueOrNull?.length ?? 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -30,7 +33,12 @@ class HomeScreen extends ConsumerWidget {
           IconButton(
             tooltip: 'Profile',
             onPressed: () => context.go('/profile'),
-            icon: const Icon(Icons.person_outline),
+            icon: pendingInviteCount > 0
+                ? Badge(
+                    label: Text('$pendingInviteCount'),
+                    child: const Icon(Icons.person_outline),
+                  )
+                : const Icon(Icons.person_outline),
           ),
         ],
       ),

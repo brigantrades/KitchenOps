@@ -15,9 +15,11 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _busy = false;
+  ProviderSubscription<User?>? _userSubscription;
 
   @override
   void dispose() {
+    _userSubscription?.close();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -45,6 +47,10 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
   @override
   void initState() {
     super.initState();
+    _userSubscription = ref.listenManual<User?>(currentUserProvider, (_, next) {
+      if (next == null || !mounted) return;
+      context.go('/');
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final user = ref.read(currentUserProvider);
       if (user != null) context.go('/');
@@ -54,8 +60,16 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
   @override
   Widget build(BuildContext context) {
     final authRepo = ref.watch(authRepositoryProvider);
+    final user = ref.watch(currentUserProvider);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    if (user != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.go('/');
+      });
+    }
 
     return Scaffold(
       body: Container(

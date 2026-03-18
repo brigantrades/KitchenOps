@@ -2,7 +2,7 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum HouseholdInviteResult {
-  addedExistingMember,
+  invitedExistingMember,
   sentSignupInvite,
 }
 
@@ -52,7 +52,7 @@ class HouseholdRepository {
         'invite_household_member',
         params: {'email': email},
       );
-      return HouseholdInviteResult.addedExistingMember;
+      return HouseholdInviteResult.invitedExistingMember;
     } on PostgrestException catch (error) {
       final message = error.message.toLowerCase();
       if (message.contains('no account found for that email')) {
@@ -64,6 +64,35 @@ class HouseholdRepository {
       }
       rethrow;
     }
+  }
+
+  Future<List<HouseholdInvite>> listPendingInvites() async {
+    final user = _client.auth.currentUser;
+    if (user == null) return const [];
+    final rows = await _client
+        .from('household_members')
+        .select('household_id,invited_email,role,status,households(name)')
+        .eq('user_id', user.id)
+        .eq('status', HouseholdMemberStatus.invited.name)
+        .order('created_at', ascending: false);
+    return (rows as List)
+        .whereType<Map<String, dynamic>>()
+        .map(HouseholdInvite.fromJson)
+        .toList();
+  }
+
+  Future<void> acceptInvite(String householdId) async {
+    await _client.rpc(
+      'accept_household_invite',
+      params: {'household_uuid': householdId},
+    );
+  }
+
+  Future<void> rejectInvite(String householdId) async {
+    await _client.rpc(
+      'reject_household_invite',
+      params: {'household_uuid': householdId},
+    );
   }
 
   Future<int> migratePlannerToHousehold() async {

@@ -4,7 +4,9 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/ui/app_surface.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
+import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
 class DiscoverScreen extends ConsumerWidget {
   const DiscoverScreen({super.key});
@@ -549,16 +551,24 @@ class _DiscoverRecipeDetailPageState
   Future<void> _setRecipeFlag({bool? favorite, bool? toTry}) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
+      final user = ref.read(currentUserProvider);
+      if (user == null) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Sign in required.')),
+        );
+        return;
+      }
       final repository = ref.read(discoverRepositoryProvider);
-      if (favorite != null) {
-        await repository.setFavorite(widget.recipe.id, favorite);
-        setState(() => _isFavorite = favorite);
-      }
-      if (toTry != null) {
-        await repository.setToTry(widget.recipe.id, toTry);
-        setState(() => _isToTry = toTry);
-      }
+      await repository.saveDiscoverRecipeForUser(
+        userId: user.id,
+        recipe: widget.recipe,
+        favorite: favorite,
+        toTry: toTry,
+      );
+      if (favorite != null) setState(() => _isFavorite = favorite);
+      if (toTry != null) setState(() => _isToTry = toTry);
       ref.invalidate(discoverPublicRecipesProvider);
+      ref.invalidate(recipesProvider);
       messenger.showSnackBar(const SnackBar(content: Text('Saved.')));
     } catch (error) {
       messenger.showSnackBar(

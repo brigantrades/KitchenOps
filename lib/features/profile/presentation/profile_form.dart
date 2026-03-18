@@ -39,7 +39,8 @@ const profileServingsOptions = <int>[1, 2, 4, 6];
 String profileLabel(String value) {
   return value
       .split('_')
-      .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+      .map((part) =>
+          part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
       .join(' ');
 }
 
@@ -73,6 +74,7 @@ class ProfileForm extends StatefulWidget {
     required this.submitLabel,
     required this.onSubmit,
     this.onSkip,
+    this.topSections = const [],
   });
 
   final String initialName;
@@ -84,6 +86,7 @@ class ProfileForm extends StatefulWidget {
   final String submitLabel;
   final Future<void> Function(ProfileFormData data) onSubmit;
   final Future<void> Function()? onSkip;
+  final List<Widget> topSections;
 
   @override
   State<ProfileForm> createState() => _ProfileFormState();
@@ -122,7 +125,8 @@ class _ProfileFormState extends State<ProfileForm> {
 
   Future<void> _loadIngredientCatalog() async {
     try {
-      final raw = await rootBundle.loadString('assets/data/usda_food_catalog.txt');
+      final raw =
+          await rootBundle.loadString('assets/data/usda_food_catalog.txt');
       final lines = raw
           .split('\n')
           .map((line) => line.trim())
@@ -145,7 +149,8 @@ class _ProfileFormState extends State<ProfileForm> {
   }
 
   String _normalizeIngredient(String value) {
-    final normalized = value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final normalized =
+        value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
     return normalized;
   }
 
@@ -153,7 +158,9 @@ class _ProfileFormState extends State<ProfileForm> {
     final query = _normalizeIngredient(_dislikedSearchCtrl.text);
     if (query.isEmpty) return const [];
     final selected = _disliked.map(_normalizeIngredient).toSet();
-    final source = _ingredientCatalog.isEmpty ? profileDislikedIngredientOptions : _ingredientCatalog;
+    final source = _ingredientCatalog.isEmpty
+        ? profileDislikedIngredientOptions
+        : _ingredientCatalog;
     return source
         .where((item) {
           final normalized = _normalizeIngredient(item);
@@ -200,7 +207,8 @@ class _ProfileFormState extends State<ProfileForm> {
     final error = _validate();
     if (error != null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
       return;
     }
     setState(() => _saving = true);
@@ -242,6 +250,9 @@ class _ProfileFormState extends State<ProfileForm> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        ...widget.topSections,
+        if (widget.topSections.isNotEmpty)
+          const SizedBox(height: AppSpacing.md),
         Container(
           padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(
@@ -250,7 +261,8 @@ class _ProfileFormState extends State<ProfileForm> {
           ),
           child: Row(
             children: [
-              Icon(Icons.person_outline_rounded, color: scheme.onPrimaryContainer),
+              Icon(Icons.person_outline_rounded,
+                  color: scheme.onPrimaryContainer),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Column(
@@ -258,12 +270,14 @@ class _ProfileFormState extends State<ProfileForm> {
                   children: [
                     Text(
                       'Profile setup',
-                      style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      style: textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Keep this quick. You can edit everything later.',
-                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      style: textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -313,7 +327,8 @@ class _ProfileFormState extends State<ProfileForm> {
                 children: profileServingsOptions
                     .map(
                       (servings) => ChoiceChip(
-                        label: Text('$servings ${servings == 1 ? 'person' : 'people'}'),
+                        label: Text(
+                            '$servings ${servings == 1 ? 'person' : 'people'}'),
                         selected: _servings == servings,
                         onSelected: (_) => setState(() => _servings = servings),
                       ),
@@ -361,7 +376,9 @@ class _ProfileFormState extends State<ProfileForm> {
                         label: Text(profileLabel(cuisine)),
                         selected: _cuisines.contains(cuisine),
                         onSelected: (value) => setState(
-                          () => value ? _cuisines.add(cuisine) : _cuisines.remove(cuisine),
+                          () => value
+                              ? _cuisines.add(cuisine)
+                              : _cuisines.remove(cuisine),
                         ),
                       ),
                     )
@@ -402,7 +419,8 @@ class _ProfileFormState extends State<ProfileForm> {
                     ),
                     ActionChip(
                       label: Text('Add "${_dislikedSearchCtrl.text.trim()}"'),
-                      onPressed: () => _addDislikedIngredient(_dislikedSearchCtrl.text),
+                      onPressed: () =>
+                          _addDislikedIngredient(_dislikedSearchCtrl.text),
                     ),
                   ],
                 ),
@@ -416,7 +434,8 @@ class _ProfileFormState extends State<ProfileForm> {
                       .map(
                         (ingredient) => InputChip(
                           label: Text(profileLabel(ingredient)),
-                          onDeleted: () => setState(() => _disliked.remove(ingredient)),
+                          onDeleted: () =>
+                              setState(() => _disliked.remove(ingredient)),
                         ),
                       )
                       .toList(),
