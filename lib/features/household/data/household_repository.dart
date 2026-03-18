@@ -95,6 +95,17 @@ class HouseholdRepository {
     );
   }
 
+  Future<void> removeMember(String memberUserId) async {
+    await _client.rpc(
+      'remove_household_member',
+      params: {'member_user_id': memberUserId},
+    );
+  }
+
+  Future<void> leaveHousehold() async {
+    await _client.rpc('leave_household');
+  }
+
   Future<int> migratePlannerToHousehold() async {
     final response = await _client.rpc(
       'migrate_planner_to_household',

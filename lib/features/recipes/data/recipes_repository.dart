@@ -89,15 +89,19 @@ class RecipesRepository {
 
   Future<void> create(String userId, Recipe recipe,
       {bool shareWithHousehold = false}) async {
-    final payload = recipe.toJson()..remove('id');
+    final payload = recipe.toJson()
+      ..remove('id')
+      ..remove('user_id')
+      ..remove('household_id')
+      ..remove('visibility');
     await _ensureProfileRow(userId);
     final householdId = await _householdForUser(userId);
     final visibility = shareWithHousehold ? 'household' : 'personal';
     await _client.from('recipes').insert({
+      ...payload,
       'user_id': userId,
       'household_id': shareWithHousehold ? householdId : null,
       'visibility': visibility,
-      ...payload,
     });
   }
 
@@ -107,6 +111,44 @@ class RecipesRepository {
 
   Future<void> toggleToTry(String recipeId, bool value) {
     return _client.from('recipes').update({'is_to_try': value}).eq('id', recipeId);
+  }
+
+  Future<void> copyPersonalRecipeToHousehold({
+    required String userId,
+    required String recipeId,
+  }) async {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) {
+      throw StateError('No active household found.');
+    }
+
+    final source = await _client
+        .from('recipes')
+        .select()
+        .eq('id', recipeId)
+        .eq('user_id', userId)
+        .eq('visibility', RecipeVisibility.personal.name)
+        .maybeSingle();
+
+    if (source == null) {
+      throw StateError('Could not find personal recipe to copy.');
+    }
+
+    final payload = Map<String, dynamic>.from(source)
+      ..remove('id')
+      ..remove('created_at')
+      ..remove('user_id')
+      ..remove('household_id')
+      ..remove('visibility')
+      // recipes.api_id is globally unique; household copies should not reuse it.
+      ..remove('api_id');
+
+    await _client.from('recipes').insert({
+      ...payload,
+      'user_id': userId,
+      'household_id': householdId,
+      'visibility': RecipeVisibility.household.name,
+    });
   }
 
   Future<List<Recipe>> searchSpoonacular(String query) async {

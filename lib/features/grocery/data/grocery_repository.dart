@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
@@ -246,6 +247,31 @@ class GroceryRepository {
     }
   }
 
+  Stream<List<GroceryItem>> streamItems(String userId) async* {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) {
+      yield const [];
+      return;
+    }
+
+    final initial = await listItems(userId);
+    yield initial;
+
+    yield* _client
+        .from('grocery_items')
+        .stream(primaryKey: ['id'])
+        .eq('household_id', householdId)
+        .order('created_at')
+        .map((rows) {
+          final items = rows
+              .whereType<Map<String, dynamic>>()
+              .map(GroceryItem.fromJson)
+              .toList();
+          unawaited(_cache.saveGrocery(items.map((e) => e.toJson()).toList()));
+          return items;
+        });
+  }
+
   Future<void> addItem({
     required String userId,
     required String name,
@@ -348,8 +374,8 @@ final groceryRepositoryProvider = Provider<GroceryRepository>((ref) {
   return GroceryRepository(ref.watch(localCacheProvider));
 });
 
-final groceryItemsProvider = FutureProvider<List<GroceryItem>>((ref) async {
+final groceryItemsProvider = StreamProvider<List<GroceryItem>>((ref) {
   final user = ref.watch(currentUserProvider);
-  if (user == null) return [];
-  return ref.watch(groceryRepositoryProvider).listItems(user.id);
+  if (user == null) return Stream<List<GroceryItem>>.value(const []);
+  return ref.watch(groceryRepositoryProvider).streamItems(user.id);
 });

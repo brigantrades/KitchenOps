@@ -133,8 +133,9 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                         'Search and manage household and personal recipes.',
                     child: SearchBar(
                       controller: _searchCtrl,
-                      hintText:
-                          _libraryIndex == 0 ? 'Search household recipes' : 'Search my recipes',
+                      hintText: _libraryIndex == 0
+                          ? 'Search household recipes'
+                          : 'Search my recipes',
                       onChanged: (_) => setState(() {}),
                     ),
                   ),
@@ -174,7 +175,9 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                     return recipe.visibility == RecipeVisibility.personal;
                   }).toList();
                   final allBySection = _libraryIndex == 1
-                      ? byLibrary.where((r) => r.isFavorite || r.isToTry).toList()
+                      ? byLibrary
+                          .where((r) => r.isFavorite || r.isToTry)
+                          .toList()
                       : byLibrary;
                   final favorites =
                       byLibrary.where((r) => r.isFavorite).toList();
@@ -216,12 +219,18 @@ class _RecipeList extends ConsumerWidget {
           child: Text('No recipes yet. Add one in Discover or Planner.'));
     }
     final scheme = Theme.of(context).colorScheme;
+    final user = ref.watch(currentUserProvider);
+    final activeHouseholdId = ref.watch(activeHouseholdIdProvider);
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
       itemCount: recipes.length,
       itemBuilder: (context, index) {
         final recipe = recipes[index];
+        final canCopyToHousehold = user != null &&
+            activeHouseholdId != null &&
+            activeHouseholdId.isNotEmpty &&
+            recipe.visibility == RecipeVisibility.personal;
         final heroTag = 'recipe-image-${recipe.id}';
         final tags = <String>[
           _mealTypeLabel(recipe.mealType),
@@ -256,23 +265,109 @@ class _RecipeList extends ConsumerWidget {
                   : [recipe.cuisineTags.first, ...tags],
               onTap: () =>
                   context.push('/cooking/${recipe.id}?heroTag=$heroTag'),
-              trailing: IconButton.filledTonal(
-                onPressed: () async {
-                  await ref.read(recipesRepositoryProvider).toggleFavorite(
-                        recipe.id,
-                        !recipe.isFavorite,
-                      );
-                  ref.invalidate(recipesProvider);
-                },
-                icon: Icon(
-                  recipe.isFavorite
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_border_rounded,
-                  color: recipe.isFavorite
-                      ? scheme.primary
-                      : scheme.onSurfaceVariant,
-                ),
-              ),
+              trailing: canCopyToHousehold
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton.filledTonal(
+                          onPressed: () async {
+                            await ref
+                                .read(recipesRepositoryProvider)
+                                .toggleFavorite(
+                                  recipe.id,
+                                  !recipe.isFavorite,
+                                );
+                            ref.invalidate(recipesProvider);
+                          },
+                          icon: Icon(
+                            recipe.isFavorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: recipe.isFavorite
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: 'Recipe actions',
+                          onSelected: (value) async {
+                            if (value != 'copy_to_household') {
+                              return;
+                            }
+                            try {
+                              await ref
+                                  .read(recipesRepositoryProvider)
+                                  .copyPersonalRecipeToHousehold(
+                                    userId: user.id,
+                                    recipeId: recipe.id,
+                                  );
+                              ref.invalidate(recipesProvider);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Copied "${recipe.title}" to Household Recipes.',
+                                  ),
+                                ),
+                              );
+                            } on PostgrestException catch (error) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Could not copy recipe: ${error.message}',
+                                  ),
+                                ),
+                              );
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Could not copy recipe: $error',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem<String>(
+                              value: 'copy_to_household',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.content_copy_rounded),
+                                  SizedBox(width: 8),
+                                  Text('Copy to Household'),
+                                ],
+                              ),
+                            ),
+                          ],
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 4),
+                            child: Icon(Icons.more_vert_rounded),
+                          ),
+                        ),
+                      ],
+                    )
+                  : IconButton.filledTonal(
+                      onPressed: () async {
+                        await ref
+                            .read(recipesRepositoryProvider)
+                            .toggleFavorite(
+                              recipe.id,
+                              !recipe.isFavorite,
+                            );
+                        ref.invalidate(recipesProvider);
+                      },
+                      icon: Icon(
+                        recipe.isFavorite
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        color: recipe.isFavorite
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
             ),
           ),
         );

@@ -1,10 +1,13 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/household/data/household_repository.dart';
+import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
 class HouseholdSettingsScreen extends ConsumerStatefulWidget {
@@ -99,10 +102,101 @@ class _HouseholdSettingsScreenState
     );
   }
 
+  Future<void> _removeMember(HouseholdMember member) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove member?'),
+        content: Text(
+          'Remove ${member.name?.trim().isNotEmpty == true ? member.name : (member.invitedEmail ?? member.userId)} from this household?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _working = true);
+    try {
+      await ref.read(householdRepositoryProvider).removeMember(member.userId);
+      ref.invalidate(householdMembersProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Member removed.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not remove member: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _leaveHousehold() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Leave household?'),
+        content: const Text(
+          'You will lose shared access to this household planner, recipes, and grocery list.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _working = true);
+    try {
+      await ref.read(householdRepositoryProvider).leaveHousehold();
+      ref.invalidate(activeHouseholdProvider);
+      ref.invalidate(activeHouseholdIdProvider);
+      ref.invalidate(householdMembersProvider);
+      ref.invalidate(profileProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You left the household.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not leave household: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final householdAsync = ref.watch(activeHouseholdProvider);
     final membersAsync = ref.watch(householdMembersProvider);
+    final user = ref.watch(currentUserProvider);
+    final members = membersAsync.valueOrNull ?? const <HouseholdMember>[];
+    final currentMember = user == null
+        ? null
+        : members.firstWhereOrNull((m) => m.userId == user.id);
+    final isCurrentOwner = currentMember?.role == HouseholdRole.owner;
+    final canLeave = currentMember?.role == HouseholdRole.member &&
+        currentMember?.status == HouseholdMemberStatus.active;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Household')),
@@ -130,6 +224,14 @@ class _HouseholdSettingsScreenState
                         icon: const Icon(Icons.swap_horiz_rounded),
                         label: const Text('Run sharing migration wizard'),
                       ),
+                      if (canLeave) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        OutlinedButton.icon(
+                          onPressed: _working ? null : _leaveHousehold,
+                          icon: const Icon(Icons.logout_rounded),
+                          label: const Text('Leave household'),
+                        ),
+                      ],
                     ],
                   ),
                 );
@@ -210,6 +312,19 @@ class _HouseholdSettingsScreenState
                           subtitle: Text(
                             '${member.role.name} • ${member.status.name}',
                           ),
+                          trailing: isCurrentOwner &&
+                                  user != null &&
+                                  member.userId != user.id &&
+                                  member.role != HouseholdRole.owner
+                              ? IconButton(
+                                  tooltip: 'Remove member',
+                                  onPressed: _working
+                                      ? null
+                                      : () => _removeMember(member),
+                                  icon: const Icon(
+                                      Icons.person_remove_alt_1_rounded),
+                                )
+                              : null,
                         ),
                       )
                       .toList(),
