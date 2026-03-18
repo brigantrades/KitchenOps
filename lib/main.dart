@@ -16,13 +16,30 @@ Future<void> main() async {
   await LocalCache.init();
 
   if (Env.firebaseEnabled) {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      FlutterError.onError =
+          FirebaseCrashlytics.instance.recordFlutterFatalError;
+    } catch (error, stack) {
+      // Keep app bootable in release even if Firebase setup mismatches.
+      debugPrint('Firebase initialize failed: $error');
+      debugPrint('$stack');
+    }
   }
 
   if (Env.hasSupabase) {
-    await Supabase.initialize(url: Env.supabaseUrl, anonKey: Env.supabaseAnonKey);
+    try {
+      await Supabase.initialize(
+        url: Env.supabaseUrl,
+        anonKey: Env.supabaseAnonKey,
+      );
+    } catch (error, stack) {
+      debugPrint('Supabase initialize failed: $error');
+      debugPrint('$stack');
+    }
   }
 
-  runApp(const ProviderScope(child: ForkFlowApp()));
+  runApp(const ProviderScope(child: KitchenOpsApp()));
 }

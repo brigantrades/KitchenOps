@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1040237027470",
+    "project_id": "forkflow-4e529",
+    "storage_bucket": "forkflow-4e529.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1040237027470:android:84885c2d601730f70929df",
+        "android_client_info": {
+          "package_name": "com.example.plateplan"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDe4Q2I-TzahUQ9LB-ZcJwtkXknPzheCFw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

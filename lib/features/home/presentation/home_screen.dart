@@ -25,7 +25,7 @@ class HomeScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ForkFlow'),
+        title: const Text('KitchenOps'),
         actions: [
           IconButton(
             tooltip: 'Profile',

@@ -93,7 +93,7 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(18),
                             child: Image.asset(
-                              'assets/images/branding/forkflow_logo.png',
+                              'assets/images/branding/kitchenops_logo.png',
                               width: 180,
                               height: 180,
                               fit: BoxFit.cover,
@@ -111,7 +111,7 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'ForkFlow',
+                          'KitchenOps',
                           textAlign: TextAlign.center,
                           style: theme.textTheme.headlineMedium?.copyWith(
                             fontWeight: FontWeight.w800,

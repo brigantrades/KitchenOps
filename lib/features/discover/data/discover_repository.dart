@@ -106,7 +106,7 @@ class DiscoverRepository {
   Future<void> _ensureProfileRow(String userId) async {
     await _client.from('profiles').upsert({
       'id': userId,
-      'name': 'ForkFlow User',
+      'name': 'KitchenOps User',
     });
   }
 

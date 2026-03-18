@@ -52,7 +52,7 @@ class OnboardingScreen extends ConsumerWidget {
             await profileRepo.upsertProfile(
               Profile(
                 id: user.id,
-                name: profile?.name.trim().isNotEmpty == true ? profile!.name : 'ForkFlow User',
+                name: profile?.name.trim().isNotEmpty == true ? profile!.name : 'KitchenOps User',
                 goals: profile?.goals.isNotEmpty == true ? profile!.goals : const ['more_veg'],
                 dietaryRestrictions: profile?.dietaryRestrictions ?? const [],
                 preferredCuisines: profile?.preferredCuisines ?? const [],

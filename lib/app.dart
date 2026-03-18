@@ -3,14 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/router/app_router.dart';
 import 'package:plateplan/core/theme/app_theme.dart';
 
-class ForkFlowApp extends ConsumerWidget {
-  const ForkFlowApp({super.key});
+class KitchenOpsApp extends ConsumerWidget {
+  const KitchenOpsApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
     return MaterialApp.router(
-      title: 'ForkFlow',
+      title: 'KitchenOps',
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
