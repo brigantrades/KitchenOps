@@ -41,7 +41,7 @@ flutter_launcher_icons:
   android: true
   ios: true
   remove_alpha_ios: true
-  image_path: assets/images/branding/kitchenops_logo.png
+  image_path: assets/images/branding/leckerly_logo.png
 
 flutter:
   uses-material-design: true
