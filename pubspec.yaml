@@ -42,6 +42,8 @@ flutter_launcher_icons:
   ios: true
   remove_alpha_ios: true
   image_path: assets/images/branding/leckerly_logo.png
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: assets/images/branding/leckerly_logo_foreground.png
 
 flutter:
   uses-material-design: true

@@ -15,11 +15,10 @@ class LeckerlyApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+    final currentUser = ref.watch(currentUserProvider);
     if (Env.firebaseEnabled) {
       final pushService = ref.watch(pushNotificationServiceProvider);
-      ref.listen(currentUserProvider, (_, next) {
-        pushService.initForUser(next?.id);
-      });
+      pushService.initForUser(currentUser?.id);
     }
     return MaterialApp.router(
       title: 'Leckerly',
