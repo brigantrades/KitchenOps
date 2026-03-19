@@ -98,7 +98,7 @@ class _AppScaffold extends ConsumerWidget {
       'Home',
       'Recipes',
       'Planner',
-      'Grocery',
+      'Lists',
       'Discover'
     ];
     final icons = <IconData>[

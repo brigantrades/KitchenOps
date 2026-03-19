@@ -22,6 +22,15 @@ class _HouseholdSettingsScreenState
     extends ConsumerState<HouseholdSettingsScreen> {
   final _householdNameCtrl = TextEditingController();
   final _inviteEmailCtrl = TextEditingController();
+  bool _sharePlannerOnCreate = false;
+  bool _shareGroceryOnCreate = false;
+  _RecipeShareMode _createRecipeShareMode = _RecipeShareMode.none;
+  final Set<String> _createSelectedRecipeIds = {};
+  List<Recipe> _createPersonalRecipes = const [];
+  String? _loadedCreateRecipesForUserId;
+  bool _loadingCreateRecipes = false;
+  bool? _lastAppliedSharePlanner;
+  bool? _lastAppliedShareGrocery;
   bool _working = false;
 
   @override
@@ -36,13 +45,60 @@ class _HouseholdSettingsScreenState
     if (name.isEmpty) return;
     setState(() => _working = true);
     try {
-      await ref.read(householdRepositoryProvider).createHousehold(name);
+      final repo = ref.read(householdRepositoryProvider);
+      await repo.createHousehold(name);
+      final sharingFailures = <String>[];
+
+      if (_sharePlannerOnCreate) {
+        try {
+          await repo.migratePlannerToHousehold();
+        } catch (_) {
+          sharingFailures.add('planner');
+        }
+      }
+      if (_shareGroceryOnCreate) {
+        try {
+          await repo.migrateGroceryToHousehold();
+        } catch (_) {
+          sharingFailures.add('grocery');
+        }
+      }
+      if (_createRecipeShareMode == _RecipeShareMode.all) {
+        try {
+          await repo.shareAllPersonalRecipes();
+        } catch (_) {
+          sharingFailures.add('recipes');
+        }
+      } else if (_createRecipeShareMode == _RecipeShareMode.select &&
+          _createSelectedRecipeIds.isNotEmpty) {
+        try {
+          await repo.shareSelectedRecipes(_createSelectedRecipeIds.toList());
+        } catch (_) {
+          sharingFailures.add('recipes');
+        }
+      }
+
       ref.invalidate(activeHouseholdProvider);
       ref.invalidate(activeHouseholdIdProvider);
+      ref.invalidate(householdMembersProvider);
+      ref.invalidate(recipesProvider);
+      _lastAppliedSharePlanner = _sharePlannerOnCreate;
+      _lastAppliedShareGrocery = _shareGroceryOnCreate;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Household created.')),
+        SnackBar(
+          content: Text(
+            sharingFailures.isEmpty
+                ? 'Household created.'
+                : 'Household created. Some sharing updates failed (${sharingFailures.join(', ')}). You can edit household sharing later.',
+          ),
+        ),
       );
+      _householdNameCtrl.clear();
+      _createSelectedRecipeIds.clear();
+      _createRecipeShareMode = _RecipeShareMode.none;
+      _sharePlannerOnCreate = false;
+      _shareGroceryOnCreate = false;
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -87,19 +143,106 @@ class _HouseholdSettingsScreenState
   Future<void> _openMigrationWizard() async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
+    final repo = ref.read(householdRepositoryProvider);
     final personalRecipes =
         await ref.read(recipesRepositoryProvider).listPersonalForUser(user.id);
+    final sharingStatus = await repo.fetchSharingStatus();
     if (!mounted) return;
-    await showModalBottomSheet<void>(
+    final result = await showModalBottomSheet<_AppliedSharingState>(
       context: context,
       isScrollControlled: true,
       builder: (context) => _HouseholdMigrationWizard(
-        personalRecipeIds: personalRecipes.map((r) => r.id).toList(),
-        personalRecipeTitles: {
-          for (final recipe in personalRecipes) recipe.id: recipe.title,
-        },
+        personalRecipes: personalRecipes,
+        initialSharePlanner:
+            _lastAppliedSharePlanner ?? sharingStatus.plannerShared,
+        initialShareGrocery:
+            _lastAppliedShareGrocery ?? sharingStatus.groceryShared,
       ),
     );
+    if (result != null && mounted) {
+      setState(() {
+        _lastAppliedSharePlanner = result.sharePlanner;
+        _lastAppliedShareGrocery = result.shareGrocery;
+      });
+    }
+  }
+
+  Future<void> _editHouseholdName(String currentName) async {
+    var draftName = currentName;
+    final nextName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit household name'),
+        content: TextFormField(
+          initialValue: currentName,
+          autofocus: true,
+          onChanged: (value) => draftName = value,
+          onFieldSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+          decoration: const InputDecoration(
+            labelText: 'Household name',
+            hintText: 'e.g. The Smith Home',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(draftName.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (nextName == null || nextName.trim().isEmpty) return;
+
+    // Let dialog teardown finish before mutating parent widget state.
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    setState(() => _working = true);
+    try {
+      await ref
+          .read(householdRepositoryProvider)
+          .updateActiveHouseholdName(nextName);
+      ref.invalidate(activeHouseholdProvider);
+      ref.invalidate(activeHouseholdIdProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Household name updated.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update household name: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  void _loadCreatePersonalRecipesIfNeeded(String? userId) {
+    if (userId == null ||
+        userId.isEmpty ||
+        _loadingCreateRecipes ||
+        _loadedCreateRecipesForUserId == userId) {
+      return;
+    }
+    _loadingCreateRecipes = true;
+    ref
+        .read(recipesRepositoryProvider)
+        .listPersonalForUser(userId)
+        .then((recipes) {
+      if (!mounted) return;
+      setState(() {
+        _createPersonalRecipes = recipes;
+        _loadedCreateRecipesForUserId = userId;
+        _loadingCreateRecipes = false;
+      });
+    }).catchError((_) {
+      if (!mounted) return;
+      setState(() => _loadingCreateRecipes = false);
+    });
   }
 
   Future<void> _removeMember(HouseholdMember member) async {
@@ -223,8 +366,18 @@ class _HouseholdSettingsScreenState
                       FilledButton.tonalIcon(
                         onPressed: _working ? null : _openMigrationWizard,
                         icon: const Icon(Icons.swap_horiz_rounded),
-                        label: const Text('Run sharing migration wizard'),
+                        label: const Text('Edit household sharing'),
                       ),
+                      if (isCurrentOwner) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        OutlinedButton.icon(
+                          onPressed: _working
+                              ? null
+                              : () => _editHouseholdName(household.name),
+                          icon: const Icon(Icons.edit_rounded),
+                          label: const Text('Edit household name'),
+                        ),
+                      ],
                       if (canLeave) ...[
                         const SizedBox(height: AppSpacing.sm),
                         OutlinedButton.icon(
@@ -256,6 +409,115 @@ class _HouseholdSettingsScreenState
                       icon: const Icon(Icons.home_rounded),
                       label: const Text('Create household'),
                     ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Choose what to share now. You can edit household sharing later and share more anytime.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Share planner now'),
+                      value: _sharePlannerOnCreate,
+                      onChanged: _working
+                          ? null
+                          : (value) =>
+                              setState(() => _sharePlannerOnCreate = value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Share grocery list now'),
+                      value: _shareGroceryOnCreate,
+                      onChanged: _working
+                          ? null
+                          : (value) =>
+                              setState(() => _shareGroceryOnCreate = value),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Recipes',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SegmentedButton<_RecipeShareMode>(
+                        segments: _RecipeShareMode.values
+                            .map(
+                              (mode) => ButtonSegment(
+                                value: mode,
+                                label: Text(mode.shortLabel),
+                              ),
+                            )
+                            .toList(),
+                        selected: <_RecipeShareMode>{_createRecipeShareMode},
+                        onSelectionChanged: _working
+                            ? null
+                            : (selected) {
+                                if (selected.isEmpty) return;
+                                setState(() {
+                                  _createRecipeShareMode = selected.first;
+                                });
+                                if (selected.first == _RecipeShareMode.select) {
+                                  _loadCreatePersonalRecipesIfNeeded(user?.id);
+                                }
+                              },
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _createRecipeShareMode.label,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (_createRecipeShareMode == _RecipeShareMode.select) ...[
+                      if (_loadingCreateRecipes)
+                        const Padding(
+                          padding: EdgeInsets.all(AppSpacing.sm),
+                          child: CircularProgressIndicator(),
+                        )
+                      else if (_createPersonalRecipes.isEmpty)
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('No personal recipes to share yet.'),
+                        )
+                      else
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 240),
+                          child: ListView(
+                            shrinkWrap: true,
+                            children: _createPersonalRecipes.map((recipe) {
+                              final selected =
+                                  _createSelectedRecipeIds.contains(recipe.id);
+                              return CheckboxListTile(
+                                value: selected,
+                                title: Text(recipe.title),
+                                onChanged: _working
+                                    ? null
+                                    : (value) {
+                                        setState(() {
+                                          if (value == true) {
+                                            _createSelectedRecipeIds
+                                                .add(recipe.id);
+                                          } else {
+                                            _createSelectedRecipeIds
+                                                .remove(recipe.id);
+                                          }
+                                        });
+                                      },
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                    ],
                   ],
                 ),
               );
@@ -344,12 +606,14 @@ class _HouseholdSettingsScreenState
 
 class _HouseholdMigrationWizard extends ConsumerStatefulWidget {
   const _HouseholdMigrationWizard({
-    required this.personalRecipeIds,
-    required this.personalRecipeTitles,
+    required this.personalRecipes,
+    required this.initialSharePlanner,
+    required this.initialShareGrocery,
   });
 
-  final List<String> personalRecipeIds;
-  final Map<String, String> personalRecipeTitles;
+  final List<Recipe> personalRecipes;
+  final bool initialSharePlanner;
+  final bool initialShareGrocery;
 
   @override
   ConsumerState<_HouseholdMigrationWizard> createState() =>
@@ -358,10 +622,18 @@ class _HouseholdMigrationWizard extends ConsumerStatefulWidget {
 
 class _HouseholdMigrationWizardState
     extends ConsumerState<_HouseholdMigrationWizard> {
-  bool _sharePlanner = false;
-  bool _shareGrocery = false;
+  late bool _sharePlanner;
+  late bool _shareGrocery;
+  _RecipeShareMode _recipeShareMode = _RecipeShareMode.none;
   final Set<String> _selectedRecipeIds = {};
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _sharePlanner = widget.initialSharePlanner;
+    _shareGrocery = widget.initialShareGrocery;
+  }
 
   Future<void> _apply() async {
     setState(() => _saving = true);
@@ -373,19 +645,27 @@ class _HouseholdMigrationWizardState
       if (_shareGrocery) {
         await repo.migrateGroceryToHousehold();
       }
-      if (_selectedRecipeIds.isNotEmpty) {
+      if (_recipeShareMode == _RecipeShareMode.all) {
+        await repo.shareAllPersonalRecipes();
+      } else if (_recipeShareMode == _RecipeShareMode.select &&
+          _selectedRecipeIds.isNotEmpty) {
         await repo.shareSelectedRecipes(_selectedRecipeIds.toList());
       }
       ref.invalidate(recipesProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Migration applied.')),
+        const SnackBar(content: Text('Sharing changes applied.')),
       );
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(
+        _AppliedSharingState(
+          sharePlanner: _sharePlanner,
+          shareGrocery: _shareGrocery,
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Migration failed: $error')),
+        SnackBar(content: Text('Could not apply sharing changes: $error')),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -407,7 +687,7 @@ class _HouseholdMigrationWizardState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Household Migration Wizard',
+              'Edit household sharing',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -426,40 +706,100 @@ class _HouseholdMigrationWizardState
                   : (value) => setState(() => _shareGrocery = value),
             ),
             const SizedBox(height: AppSpacing.sm),
-            const Text('Choose personal recipes to share'),
+            const Text('Recipes'),
             const SizedBox(height: AppSpacing.xs),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: widget.personalRecipeIds.map((id) {
-                  final selected = _selectedRecipeIds.contains(id);
-                  return CheckboxListTile(
-                    value: selected,
-                    title: Text(widget.personalRecipeTitles[id] ?? 'Recipe'),
-                    onChanged: _saving
-                        ? null
-                        : (value) {
-                            setState(() {
-                              if (value == true) {
-                                _selectedRecipeIds.add(id);
-                              } else {
-                                _selectedRecipeIds.remove(id);
-                              }
-                            });
-                          },
-                  );
-                }).toList(),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SegmentedButton<_RecipeShareMode>(
+                segments: _RecipeShareMode.values
+                    .map(
+                      (mode) => ButtonSegment(
+                        value: mode,
+                        label: Text(mode.shortLabel),
+                      ),
+                    )
+                    .toList(),
+                selected: <_RecipeShareMode>{_recipeShareMode},
+                onSelectionChanged: _saving
+                    ? null
+                    : (selected) {
+                        if (selected.isEmpty) return;
+                        setState(() => _recipeShareMode = selected.first);
+                      },
               ),
             ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              _recipeShareMode.label,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            if (_recipeShareMode == _RecipeShareMode.select)
+              const Text('Choose personal recipes to share'),
+            const SizedBox(height: AppSpacing.xs),
+            if (_recipeShareMode == _RecipeShareMode.select)
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: widget.personalRecipes.map((recipe) {
+                    final selected = _selectedRecipeIds.contains(recipe.id);
+                    return CheckboxListTile(
+                      value: selected,
+                      title: Text(recipe.title),
+                      onChanged: _saving
+                          ? null
+                          : (value) {
+                              setState(() {
+                                if (value == true) {
+                                  _selectedRecipeIds.add(recipe.id);
+                                } else {
+                                  _selectedRecipeIds.remove(recipe.id);
+                                }
+                              });
+                            },
+                    );
+                  }).toList(),
+                ),
+              ),
             const SizedBox(height: AppSpacing.sm),
             FilledButton.icon(
               onPressed: _saving ? null : _apply,
               icon: const Icon(Icons.check_rounded),
-              label: const Text('Apply migration choices'),
+              label: const Text('Apply sharing changes'),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _AppliedSharingState {
+  const _AppliedSharingState({
+    required this.sharePlanner,
+    required this.shareGrocery,
+  });
+
+  final bool sharePlanner;
+  final bool shareGrocery;
+}
+
+enum _RecipeShareMode {
+  none,
+  all,
+  select,
+}
+
+extension _RecipeShareModeX on _RecipeShareMode {
+  String get shortLabel => switch (this) {
+        _RecipeShareMode.none => 'None',
+        _RecipeShareMode.all => 'All',
+        _RecipeShareMode.select => 'Select',
+      };
+
+  String get label => switch (this) {
+        _RecipeShareMode.none => 'Do not share recipes now',
+        _RecipeShareMode.all => 'Share all personal recipes',
+        _RecipeShareMode.select => 'Choose individual recipes',
+      };
 }

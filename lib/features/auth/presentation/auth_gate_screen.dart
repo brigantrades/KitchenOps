@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthGateScreen extends ConsumerStatefulWidget {
@@ -16,6 +17,15 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
   final _passwordCtrl = TextEditingController();
   bool _busy = false;
   ProviderSubscription<User?>? _userSubscription;
+  Future<void> _routeForUser(User user) async {
+    final repo = ref.read(profileRepositoryProvider);
+    final profile = await repo.fetchProfile(user.id);
+    if (!mounted) return;
+    final needsOnboarding = profile == null ||
+        profile.goals.isEmpty ||
+        profile.preferredCuisines.isEmpty;
+    context.go(needsOnboarding ? '/onboarding' : '/');
+  }
 
   @override
   void dispose() {
@@ -41,7 +51,8 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -49,11 +60,13 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
     super.initState();
     _userSubscription = ref.listenManual<User?>(currentUserProvider, (_, next) {
       if (next == null || !mounted) return;
-      context.go('/');
+      _routeForUser(next);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final user = ref.read(currentUserProvider);
-      if (user != null) context.go('/');
+      if (user != null) {
+        _routeForUser(user);
+      }
     });
   }
 
@@ -67,7 +80,7 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
     if (user != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        context.go('/');
+        _routeForUser(user);
       });
     }
 
@@ -125,7 +138,7 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'KitchenOps',
+                          'Leckerly',
                           textAlign: TextAlign.center,
                           style: theme.textTheme.headlineMedium?.copyWith(
                             fontWeight: FontWeight.w800,
@@ -133,7 +146,7 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Plan meals together, build grocery lists, and stay synced with your household.',
+                          'Plan meals together, build lists, and stay synced with your household.',
                           textAlign: TextAlign.center,
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: scheme.onSurfaceVariant,
@@ -174,7 +187,11 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                                       _passwordCtrl.text.trim(),
                                     );
                                     if (!context.mounted) return;
-                                    context.go('/');
+                                    final signedInUser =
+                                        ref.read(currentUserProvider);
+                                    if (signedInUser != null) {
+                                      await _routeForUser(signedInUser);
+                                    }
                                   } on AuthException catch (error) {
                                     _showMessage(error.message);
                                   } catch (_) {
@@ -235,7 +252,13 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                                       _passwordCtrl.text.trim(),
                                     );
                                     if (!context.mounted) return;
-                                    context.go('/onboarding');
+                                    final signedInUser =
+                                        ref.read(currentUserProvider);
+                                    if (signedInUser != null) {
+                                      await _routeForUser(signedInUser);
+                                    } else {
+                                      context.go('/onboarding');
+                                    }
                                   } on AuthException catch (error) {
                                     _showMessage(error.message);
                                   } catch (_) {

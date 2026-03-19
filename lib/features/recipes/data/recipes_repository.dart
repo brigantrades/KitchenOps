@@ -18,7 +18,7 @@ class RecipesRepository {
   Future<void> _ensureProfileRow(String userId) async {
     await _client.from('profiles').upsert({
       'id': userId,
-      'name': 'ForkFlow User',
+      'name': 'Leckerly User',
     });
   }
 
@@ -39,7 +39,10 @@ class RecipesRepository {
           .eq('user_id', userId)
           .eq('visibility', 'personal')
           .order('created_at', ascending: false);
-      final recipes = (rows as List).whereType<Map<String, dynamic>>().map(Recipe.fromJson).toList();
+      final recipes = (rows as List)
+          .whereType<Map<String, dynamic>>()
+          .map(Recipe.fromJson)
+          .toList();
       return _sortByCreatedFallback(recipes);
     } catch (_) {
       return [];
@@ -87,8 +90,12 @@ class RecipesRepository {
     return recipes;
   }
 
-  Future<void> create(String userId, Recipe recipe,
-      {bool shareWithHousehold = false}) async {
+  Future<void> create(
+    String userId,
+    Recipe recipe, {
+    bool shareWithHousehold = false,
+    RecipeVisibility? visibilityOverride,
+  }) async {
     final payload = recipe.toJson()
       ..remove('id')
       ..remove('user_id')
@@ -96,21 +103,39 @@ class RecipesRepository {
       ..remove('visibility');
     await _ensureProfileRow(userId);
     final householdId = await _householdForUser(userId);
-    final visibility = shareWithHousehold ? 'household' : 'personal';
+    final visibility = (visibilityOverride ??
+            (shareWithHousehold
+                ? RecipeVisibility.household
+                : RecipeVisibility.personal))
+        .name;
     await _client.from('recipes').insert({
       ...payload,
       'user_id': userId,
-      'household_id': shareWithHousehold ? householdId : null,
+      'household_id':
+          visibility == RecipeVisibility.household.name ? householdId : null,
       'visibility': visibility,
+      'is_public': visibility == RecipeVisibility.public.name,
     });
   }
 
+  Future<void> updateRecipe(String recipeId, Recipe recipe) async {
+    final payload = recipe.toJson()
+      ..remove('id')
+      ..remove('user_id');
+    payload['is_public'] = recipe.visibility == RecipeVisibility.public;
+    await _client.from('recipes').update(payload).eq('id', recipeId);
+  }
+
   Future<void> toggleFavorite(String recipeId, bool value) {
-    return _client.from('recipes').update({'is_favorite': value}).eq('id', recipeId);
+    return _client
+        .from('recipes')
+        .update({'is_favorite': value}).eq('id', recipeId);
   }
 
   Future<void> toggleToTry(String recipeId, bool value) {
-    return _client.from('recipes').update({'is_to_try': value}).eq('id', recipeId);
+    return _client
+        .from('recipes')
+        .update({'is_to_try': value}).eq('id', recipeId);
   }
 
   Future<void> copyPersonalRecipeToHousehold({
@@ -153,23 +178,29 @@ class RecipesRepository {
 
   Future<List<Recipe>> searchSpoonacular(String query) async {
     final items = await _spoonacular.searchRecipes(query);
-    return items
-        .map((raw) {
-          final nutrients = (raw['nutrition']?['nutrients'] as List?)?.whereType<Map<String, dynamic>>().toList() ?? const [];
-          final caloriesEntry = nutrients.where((n) => n['name'] == 'Calories').cast<Map<String, dynamic>>().toList();
-          final calories = caloriesEntry.isEmpty ? 0 : ((caloriesEntry.first['amount'] as num?)?.round() ?? 0);
+    return items.map((raw) {
+      final nutrients = (raw['nutrition']?['nutrients'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          const [];
+      final caloriesEntry = nutrients
+          .where((n) => n['name'] == 'Calories')
+          .cast<Map<String, dynamic>>()
+          .toList();
+      final calories = caloriesEntry.isEmpty
+          ? 0
+          : ((caloriesEntry.first['amount'] as num?)?.round() ?? 0);
 
-          return Recipe(
-            id: 'spoon-${raw['id'] ?? Random().nextInt(999999)}',
-            title: raw['title']?.toString() ?? 'Recipe',
-            mealType: MealType.dinner,
-            cuisineTags: const ['Spoonacular'],
-            source: 'spoonacular',
-            imageUrl: raw['image']?.toString(),
-            nutrition: Nutrition(calories: calories),
-          );
-        })
-        .toList();
+      return Recipe(
+        id: 'spoon-${raw['id'] ?? Random().nextInt(999999)}',
+        title: raw['title']?.toString() ?? 'Recipe',
+        mealType: MealType.entree,
+        cuisineTags: const ['Spoonacular'],
+        source: 'spoonacular',
+        imageUrl: raw['image']?.toString(),
+        nutrition: Nutrition(calories: calories),
+      );
+    }).toList();
   }
 }
 
@@ -178,7 +209,8 @@ final spoonacularServiceProvider = Provider<SpoonacularService>((ref) {
 });
 
 final recipesRepositoryProvider = Provider<RecipesRepository>((ref) {
-  return RecipesRepository(ref.watch(localCacheProvider), ref.watch(spoonacularServiceProvider));
+  return RecipesRepository(
+      ref.watch(localCacheProvider), ref.watch(spoonacularServiceProvider));
 });
 
 final recipesProvider = FutureProvider<List<Recipe>>((ref) async {

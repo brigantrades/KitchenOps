@@ -1,6 +1,6 @@
 import 'package:collection/collection.dart';
 
-enum MealType { breakfast, lunch, dinner, snack, dessert }
+enum MealType { entree, side, sauce, snack, dessert }
 
 enum GroceryCategory {
   produce,
@@ -12,6 +12,8 @@ enum GroceryCategory {
 }
 
 enum RecipeVisibility { personal, household, public }
+
+enum ListScope { private, household }
 
 enum HouseholdRole { owner, member }
 
@@ -210,10 +212,7 @@ class Recipe {
         servings: (json['servings'] as num?)?.toInt() ?? 2,
         prepTime: (json['prep_time'] as num?)?.toInt(),
         cookTime: (json['cook_time'] as num?)?.toInt(),
-        mealType: MealType.values.firstWhereOrNull(
-              (m) => m.name == json['meal_type'],
-            ) ??
-            MealType.dinner,
+        mealType: _mealTypeFromDb(json['meal_type']?.toString()),
         cuisineTags: (json['cuisine_tags'] as List?)
                 ?.map((e) => e.toString())
                 .toList() ??
@@ -249,6 +248,9 @@ class MealPlanSlot {
     required this.dayOfWeek,
     required this.mealLabel,
     this.recipeId,
+    this.mealText,
+    this.sauceRecipeId,
+    this.sauceText,
     this.servingsUsed = 1,
     this.slotOrder = 0,
   });
@@ -258,8 +260,20 @@ class MealPlanSlot {
   final int dayOfWeek;
   final String mealLabel;
   final String? recipeId;
+  final String? mealText;
+  final String? sauceRecipeId;
+  final String? sauceText;
   final int servingsUsed;
   final int slotOrder;
+
+  bool get hasPlannedContent {
+    final hasMealText = (mealText ?? '').trim().isNotEmpty;
+    final hasSauceText = (sauceText ?? '').trim().isNotEmpty;
+    return recipeId != null ||
+        hasMealText ||
+        sauceRecipeId != null ||
+        hasSauceText;
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -267,6 +281,9 @@ class MealPlanSlot {
         'day_of_week': dayOfWeek,
         'meal_type': mealLabel,
         'recipe_id': recipeId,
+        'meal_text': mealText,
+        'sauce_recipe_id': sauceRecipeId,
+        'sauce_text': sauceText,
         'servings_used': servingsUsed,
         'slot_order': slotOrder,
       };
@@ -277,6 +294,9 @@ class MealPlanSlot {
         dayOfWeek: (json['day_of_week'] as num).toInt(),
         mealLabel: json['meal_type']?.toString() ?? 'meal',
         recipeId: json['recipe_id']?.toString(),
+        mealText: json['meal_text']?.toString(),
+        sauceRecipeId: json['sauce_recipe_id']?.toString(),
+        sauceText: json['sauce_text']?.toString(),
         servingsUsed: (json['servings_used'] as num?)?.toInt() ?? 1,
         slotOrder: (json['slot_order'] as num?)?.toInt() ?? 0,
       );
@@ -290,6 +310,8 @@ class GroceryItem {
     this.quantity,
     this.unit,
     this.fromRecipeId,
+    this.listId,
+    this.sourceSlotId,
   });
 
   final String id;
@@ -298,6 +320,8 @@ class GroceryItem {
   final String? quantity;
   final String? unit;
   final String? fromRecipeId;
+  final String? listId;
+  final String? sourceSlotId;
 
   bool get fromPlanner => fromRecipeId != null;
 
@@ -308,6 +332,8 @@ class GroceryItem {
         'quantity': quantity,
         'unit': unit,
         'from_recipe_id': fromRecipeId,
+        'list_id': listId,
+        'source_slot_id': sourceSlotId,
       };
 
   factory GroceryItem.fromJson(Map<String, dynamic> json) => GroceryItem(
@@ -320,7 +346,60 @@ class GroceryItem {
         quantity: json['quantity']?.toString(),
         unit: json['unit']?.toString(),
         fromRecipeId: json['from_recipe_id']?.toString(),
+        listId: json['list_id']?.toString(),
+        sourceSlotId: json['source_slot_id']?.toString(),
       );
+}
+
+class AppList {
+  const AppList({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.scope,
+    this.householdId,
+    required this.ownerUserId,
+  });
+
+  final String id;
+  final String name;
+  final String kind;
+  final ListScope scope;
+  final String? householdId;
+  final String ownerUserId;
+
+  factory AppList.fromJson(Map<String, dynamic> json) => AppList(
+        id: json['id'].toString(),
+        name: json['name']?.toString() ?? 'List',
+        kind: json['kind']?.toString() ?? 'general',
+        scope: ListScope.values.firstWhereOrNull(
+              (s) => s.name == json['scope'],
+            ) ??
+            ListScope.private,
+        householdId: json['household_id']?.toString(),
+        ownerUserId: json['owner_user_id']?.toString() ?? '',
+      );
+}
+
+MealType _mealTypeFromDb(String? value) {
+  final raw = (value ?? '').trim().toLowerCase();
+  switch (raw) {
+    case 'breakfast':
+    case 'entree':
+      return MealType.entree;
+    case 'lunch':
+    case 'side':
+      return MealType.side;
+    case 'dinner':
+    case 'sauce':
+      return MealType.sauce;
+    case 'snack':
+      return MealType.snack;
+    case 'dessert':
+      return MealType.dessert;
+    default:
+      return MealType.entree;
+  }
 }
 
 class Profile {

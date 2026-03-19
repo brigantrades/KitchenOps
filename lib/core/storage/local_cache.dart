@@ -7,6 +7,8 @@ class LocalCache {
   static const _recipesBox = 'recipes_cache';
   static const _groceryBox = 'grocery_cache';
   static const _discoverBox = 'discover_cache';
+  static const _homePinnedListIdKey = 'home_pinned_list_id';
+  static const _householdCtaHiddenUntilKey = 'home_household_cta_hidden_until';
 
   static Future<void> init() async {
     await Hive.initFlutter();
@@ -39,7 +41,8 @@ class LocalCache {
     return (jsonDecode(raw) as List).whereType<Map<String, dynamic>>().toList();
   }
 
-  Future<void> saveGeneratedRecipe(String key, Map<String, dynamic> recipe) async {
+  Future<void> saveGeneratedRecipe(
+      String key, Map<String, dynamic> recipe) async {
     final box = Hive.box<String>(_discoverBox);
     await box.put(key, jsonEncode(recipe));
   }
@@ -50,6 +53,38 @@ class LocalCache {
     if (raw == null || raw.isEmpty) return null;
     final decoded = jsonDecode(raw);
     return decoded is Map<String, dynamic> ? decoded : null;
+  }
+
+  Future<void> saveHomePinnedListId(String? listId) async {
+    final box = Hive.box<String>(_discoverBox);
+    if (listId == null || listId.isEmpty) {
+      await box.delete(_homePinnedListIdKey);
+      return;
+    }
+    await box.put(_homePinnedListIdKey, listId);
+  }
+
+  String? loadHomePinnedListId() {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get(_homePinnedListIdKey);
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
+  }
+
+  Future<void> saveHouseholdCtaHiddenUntil(DateTime? hiddenUntil) async {
+    final box = Hive.box<String>(_discoverBox);
+    if (hiddenUntil == null) {
+      await box.delete(_householdCtaHiddenUntilKey);
+      return;
+    }
+    await box.put(_householdCtaHiddenUntilKey, hiddenUntil.toIso8601String());
+  }
+
+  DateTime? loadHouseholdCtaHiddenUntil() {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get(_householdCtaHiddenUntilKey);
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
   }
 }
 

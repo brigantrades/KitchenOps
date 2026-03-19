@@ -6,9 +6,12 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
+import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/profile/presentation/profile_form.dart';
+import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
 class ProfileSettingsScreen extends ConsumerWidget {
   const ProfileSettingsScreen({super.key});
@@ -41,7 +44,8 @@ class ProfileSettingsScreen extends ConsumerWidget {
               } catch (_) {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Could not log out. Try again.')),
+                  const SnackBar(
+                      content: Text('Could not log out. Try again.')),
                 );
               }
             },
@@ -60,7 +64,8 @@ class ProfileSettingsScreen extends ConsumerWidget {
       ),
       body: profileAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('Could not load profile: $error')),
+        error: (error, _) =>
+            Center(child: Text('Could not load profile: $error')),
         data: (profile) => ProfileForm(
           topSections: [
             pendingInvitesAsync.when(
@@ -88,7 +93,8 @@ class ProfileSettingsScreen extends ConsumerWidget {
                     children: invites
                         .map(
                           (invite) => Container(
-                            margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                            margin:
+                                const EdgeInsets.only(bottom: AppSpacing.sm),
                             padding: const EdgeInsets.all(AppSpacing.sm),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(12),
@@ -117,8 +123,10 @@ class ProfileSettingsScreen extends ConsumerWidget {
                                         onPressed: () async {
                                           try {
                                             await ref
-                                                .read(householdRepositoryProvider)
-                                                .rejectInvite(invite.householdId);
+                                                .read(
+                                                    householdRepositoryProvider)
+                                                .rejectInvite(
+                                                    invite.householdId);
                                             ref.invalidate(
                                                 pendingHouseholdInvitesProvider);
                                             ref.invalidate(
@@ -127,8 +135,8 @@ class ProfileSettingsScreen extends ConsumerWidget {
                                             ScaffoldMessenger.of(context)
                                                 .showSnackBar(
                                               const SnackBar(
-                                                content: Text(
-                                                    'Invite declined.'),
+                                                content:
+                                                    Text('Invite declined.'),
                                               ),
                                             );
                                           } catch (error) {
@@ -152,8 +160,10 @@ class ProfileSettingsScreen extends ConsumerWidget {
                                         onPressed: () async {
                                           try {
                                             await ref
-                                                .read(householdRepositoryProvider)
-                                                .acceptInvite(invite.householdId);
+                                                .read(
+                                                    householdRepositoryProvider)
+                                                .acceptInvite(
+                                                    invite.householdId);
                                             ref.invalidate(profileProvider);
                                             ref.invalidate(
                                                 activeHouseholdProvider);
@@ -163,12 +173,18 @@ class ProfileSettingsScreen extends ConsumerWidget {
                                                 householdMembersProvider);
                                             ref.invalidate(
                                                 pendingHouseholdInvitesProvider);
+                                            ref.invalidate(
+                                                plannerSlotsProvider);
+                                            ref.invalidate(
+                                                groceryItemsProvider);
+                                            ref.invalidate(listsProvider);
+                                            ref.invalidate(recipesProvider);
                                             if (!context.mounted) return;
                                             ScaffoldMessenger.of(context)
                                                 .showSnackBar(
                                               const SnackBar(
-                                                content: Text(
-                                                    'Joined household.'),
+                                                content:
+                                                    Text('Joined household.'),
                                               ),
                                             );
                                           } catch (error) {

@@ -9,9 +9,9 @@ import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum DiscoverMealType {
-  breakfast('Breakfast'),
-  lunch('Lunch'),
-  dinner('Dinner');
+  entree('Entree'),
+  side('Side'),
+  sauce('Sauce');
 
   const DiscoverMealType(this.label);
   final String label;
@@ -86,11 +86,11 @@ const _dinnerChips = <DiscoverFilterChip>[
 
 List<DiscoverFilterChip> discoverChipsForMeal(DiscoverMealType meal) {
   switch (meal) {
-    case DiscoverMealType.breakfast:
+    case DiscoverMealType.entree:
       return _breakfastChips;
-    case DiscoverMealType.lunch:
+    case DiscoverMealType.side:
       return _lunchChips;
-    case DiscoverMealType.dinner:
+    case DiscoverMealType.sauce:
       return _dinnerChips;
   }
 }
@@ -106,7 +106,7 @@ class DiscoverRepository {
   Future<void> _ensureProfileRow(String userId) async {
     await _client.from('profiles').upsert({
       'id': userId,
-      'name': 'KitchenOps User',
+      'name': 'Leckerly User',
     });
   }
 
@@ -119,7 +119,7 @@ class DiscoverRepository {
             title: entry['title']?.toString() ?? 'AI Recipe',
             mealType: MealType.values.firstWhere(
               (m) => m.name == entry['meal_type'],
-              orElse: () => MealType.dinner,
+              orElse: () => MealType.entree,
             ),
             cuisineTags: (entry['cuisine_tags'] as List?)
                     ?.map((e) => e.toString())
@@ -241,7 +241,7 @@ class DiscoverRepository {
       title: generated['title']?.toString() ?? 'Fridge Recipe',
       mealType: MealType.values.firstWhere(
         (m) => m.name == generated['meal_type'],
-        orElse: () => MealType.dinner,
+        orElse: () => MealType.entree,
       ),
       cuisineTags: (generated['cuisine_tags'] as List?)
               ?.map((e) => e.toString())
@@ -302,7 +302,7 @@ class DiscoverRepository {
           title: entry['title']?.toString() ?? 'AI Recipe',
           mealType: MealType.values.firstWhere(
             (m) => m.name == entry['meal_type'],
-            orElse: () => MealType.dinner,
+            orElse: () => MealType.entree,
           ),
           prepTime: (entry['prep_time'] as num?)?.toInt(),
           cookTime: (entry['cook_time'] as num?)?.toInt(),
@@ -358,7 +358,7 @@ class DiscoverRepository {
   }) {
     final resolvedMealType = MealType.values.firstWhere(
       (m) => m.name == mealType,
-      orElse: () => MealType.dinner,
+      orElse: () => MealType.entree,
     );
     final ingredientNames = ingredients.isEmpty
         ? <String>['Olive oil', 'Garlic', 'Salt']
@@ -401,7 +401,7 @@ class DiscoverRepository {
     final rows = await _client
         .from('recipes')
         .select()
-        .eq('is_public', true)
+        .eq('visibility', RecipeVisibility.public.name)
         .eq('meal_type', meal.name)
         .order('created_at', ascending: false);
     return (rows as List)
@@ -511,7 +511,7 @@ final generatedWeeklyProvider = FutureProvider<List<Recipe>>((ref) async {
 });
 
 final discoverMealTypeProvider =
-    StateProvider<DiscoverMealType>((ref) => DiscoverMealType.dinner);
+    StateProvider<DiscoverMealType>((ref) => DiscoverMealType.entree);
 
 final discoverChipIdProvider = StateProvider<String>((ref) => 'all');
 

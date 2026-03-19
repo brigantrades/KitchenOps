@@ -21,17 +21,29 @@ final activeHouseholdIdProvider = Provider<String?>((ref) {
 });
 
 final householdMembersProvider =
-    FutureProvider<List<HouseholdMember>>((ref) async {
+    StreamProvider<List<HouseholdMember>>((ref) async* {
   final householdId = ref.watch(activeHouseholdIdProvider);
-  if (householdId == null || householdId.isEmpty) return [];
-  return ref.watch(householdRepositoryProvider).listMembers(householdId);
+  if (householdId == null || householdId.isEmpty) {
+    yield const [];
+    return;
+  }
+  final repo = ref.watch(householdRepositoryProvider);
+  final initial = await repo.listMembers(householdId);
+  yield initial;
+  yield* repo.streamMembers(householdId);
 });
 
 final pendingHouseholdInvitesProvider =
-    FutureProvider<List<HouseholdInvite>>((ref) async {
+    StreamProvider<List<HouseholdInvite>>((ref) async* {
   final user = ref.watch(currentUserProvider);
-  if (user == null) return const [];
-  return ref.watch(householdRepositoryProvider).listPendingInvites();
+  if (user == null) {
+    yield const [];
+    return;
+  }
+  final repo = ref.watch(householdRepositoryProvider);
+  final initial = await repo.listPendingInvites();
+  yield initial;
+  yield* repo.streamPendingInvites();
 });
 
 final hasSharedHouseholdProvider = FutureProvider<bool>((ref) async {
@@ -40,6 +52,7 @@ final hasSharedHouseholdProvider = FutureProvider<bool>((ref) async {
   final members = await ref.watch(householdMembersProvider.future);
   return members.any(
     (member) =>
-        member.userId != user.id && member.status == HouseholdMemberStatus.active,
+        member.userId != user.id &&
+        member.status == HouseholdMemberStatus.active,
   );
 });

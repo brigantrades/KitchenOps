@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart';
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
@@ -20,7 +21,7 @@ class GroceryRepository {
   Future<void> _ensureProfileRow(String userId) async {
     await _client.from('profiles').upsert({
       'id': userId,
-      'name': 'KitchenOps User',
+      'name': 'Leckerly User',
     });
   }
 
@@ -288,13 +289,13 @@ class GroceryRepository {
   }
 
   Future<List<GroceryItem>> listItems(String userId) async {
-    final householdId = await _householdForUser(userId);
-    if (householdId == null || householdId.isEmpty) return [];
+    final listId = await _defaultListIdForUser(userId);
+    if (listId == null || listId.isEmpty) return [];
     try {
       final rows = await _client
-          .from('grocery_items')
+          .from('list_items')
           .select()
-          .eq('household_id', householdId)
+          .eq('list_id', listId)
           .order('created_at');
       final items = (rows as List)
           .whereType<Map<String, dynamic>>()
@@ -308,8 +309,8 @@ class GroceryRepository {
   }
 
   Stream<List<GroceryItem>> streamItems(String userId) async* {
-    final householdId = await _householdForUser(userId);
-    if (householdId == null || householdId.isEmpty) {
+    final listId = await _defaultListIdForUser(userId);
+    if (listId == null || listId.isEmpty) {
       yield const [];
       return;
     }
@@ -318,9 +319,9 @@ class GroceryRepository {
     yield initial;
 
     yield* _client
-        .from('grocery_items')
+        .from('list_items')
         .stream(primaryKey: ['id'])
-        .eq('household_id', householdId)
+        .eq('list_id', listId)
         .order('created_at')
         .map((rows) {
           final items = rows
@@ -332,8 +333,21 @@ class GroceryRepository {
         });
   }
 
+  Stream<List<GroceryItem>> streamItemsForList(String listId) {
+    return _client
+        .from('list_items')
+        .stream(primaryKey: ['id'])
+        .eq('list_id', listId)
+        .order('created_at')
+        .map((rows) => rows
+            .whereType<Map<String, dynamic>>()
+            .map(GroceryItem.fromJson)
+            .toList());
+  }
+
   Future<void> addItem({
     required String userId,
+    String? listId,
     required String name,
     String? quantity,
     String? unit,
@@ -342,6 +356,7 @@ class GroceryRepository {
   }) {
     return _insertItem(
       userId: userId,
+      listId: listId,
       name: name,
       quantity: quantity,
       unit: unit,
@@ -351,24 +366,21 @@ class GroceryRepository {
   }
 
   Future<void> removeItem(String itemId) {
-    return _client.from('grocery_items').delete().eq('id', itemId);
+    return _client.from('list_items').delete().eq('id', itemId);
   }
 
   Future<void> updateItemQuantity(String itemId, String quantity) {
     return _client
-        .from('grocery_items')
+        .from('list_items')
         .update({'quantity': quantity}).eq('id', itemId);
   }
 
   Future<void> removeItemsByRecipe(String recipeId) {
-    return _client
-        .from('grocery_items')
-        .delete()
-        .eq('from_recipe_id', recipeId);
+    return _client.from('list_items').delete().eq('from_recipe_id', recipeId);
   }
 
-  Future<void> clear(String userId) {
-    return _clearHouseholdItems(userId);
+  Future<void> clear(String userId, {String? listId}) {
+    return _clearHouseholdItems(userId, listId: listId);
   }
 
   Future<void> shareText(List<GroceryItem> items) {
@@ -379,9 +391,12 @@ class GroceryRepository {
   }
 
   Future<void> addIngredientsFromRecipe(Recipe recipe,
-      {required String userId, required int servingsUsed}) async {
-    final householdId = await _householdForUser(userId);
-    if (householdId == null || householdId.isEmpty) return;
+      {required String userId,
+      required int servingsUsed,
+      String? listId,
+      String? sourceSlotId}) async {
+    final targetListId = listId ?? await _defaultListIdForUser(userId);
+    if (targetListId == null || targetListId.isEmpty) return;
     final ratio = servingsUsed / recipe.servings;
     final existing = await listItems(userId);
 
@@ -390,45 +405,145 @@ class GroceryRepository {
           (e) => e.name.toLowerCase() == ingredient.name.toLowerCase());
       if (current != null) continue;
 
-      await _client.from('grocery_items').insert({
+      await _client.from('list_items').insert({
+        'list_id': targetListId,
         'user_id': userId,
-        'household_id': householdId,
         'name': ingredient.name,
         'category': ingredient.category.dbValue,
         'quantity': (ingredient.amount * ratio).toStringAsFixed(1),
         'unit': ingredient.unit,
         'from_recipe_id': recipe.id,
+        'source_type': 'planner_recipe',
+        'source_slot_id': sourceSlotId,
       });
     }
   }
 
   Future<void> _insertItem({
     required String userId,
+    String? listId,
     required String name,
     String? quantity,
     String? unit,
     required GroceryCategory category,
     String? fromRecipeId,
   }) async {
-    final householdId = await _householdForUser(userId);
-    if (householdId == null || householdId.isEmpty) {
-      throw StateError('Could not initialize your personal grocery list.');
+    final targetListId = listId ?? await _defaultListIdForUser(userId);
+    if (targetListId == null || targetListId.isEmpty) {
+      throw StateError('Could not initialize your list.');
     }
-    await _client.from('grocery_items').insert({
+    await _client.from('list_items').insert({
+      'list_id': targetListId,
       'user_id': userId,
-      'household_id': householdId,
       'name': name,
       'category': category.dbValue,
       'quantity': quantity,
       'unit': unit,
       'from_recipe_id': fromRecipeId,
+      'source_type': fromRecipeId == null ? 'manual' : 'planner_recipe',
     });
   }
 
-  Future<void> _clearHouseholdItems(String userId) async {
+  Future<void> _clearHouseholdItems(String userId, {String? listId}) async {
+    final targetListId = listId ?? await _defaultListIdForUser(userId);
+    if (targetListId == null || targetListId.isEmpty) return;
+    await _client.from('list_items').delete().eq('list_id', targetListId);
+  }
+
+  Future<List<AppList>> listLists(String userId) async {
+    final rows = await _client.from('lists').select().order('created_at');
+    return (rows as List)
+        .whereType<Map<String, dynamic>>()
+        .map(AppList.fromJson)
+        .toList();
+  }
+
+  Future<AppList> createList({
+    required String userId,
+    required String name,
+    required ListScope scope,
+  }) async {
+    String? householdId;
+    if (scope == ListScope.household) {
+      householdId = await _householdForUser(userId);
+      if (householdId == null || householdId.isEmpty) {
+        throw StateError('No household found for a shared list.');
+      }
+    }
+    final row = await _client
+        .from('lists')
+        .insert({
+          'owner_user_id': userId,
+          'household_id': householdId,
+          'name': name.trim(),
+          'kind': 'general',
+          'scope': scope.name,
+        })
+        .select()
+        .single();
+    return AppList.fromJson(row);
+  }
+
+  Future<String?> _defaultListIdForUser(String userId) async {
     final householdId = await _householdForUser(userId);
-    if (householdId == null || householdId.isEmpty) return;
-    await _client.from('grocery_items').delete().eq('household_id', householdId);
+    if (householdId != null && householdId.isNotEmpty) {
+      final existingHousehold = await _client
+          .from('lists')
+          .select('id')
+          .eq('household_id', householdId)
+          .eq('scope', ListScope.household.name)
+          .eq('kind', 'grocery')
+          .limit(1)
+          .maybeSingle();
+      if (existingHousehold != null) {
+        return existingHousehold['id']?.toString();
+      }
+      final inserted = await _client
+          .from('lists')
+          .insert({
+            'owner_user_id': userId,
+            'household_id': householdId,
+            'name': 'Household Grocery',
+            'kind': 'grocery',
+            'scope': ListScope.household.name,
+          })
+          .select('id')
+          .single();
+      return inserted['id']?.toString();
+    }
+
+    final existingPrivate = await _client
+        .from('lists')
+        .select('id')
+        .eq('owner_user_id', userId)
+        .eq('scope', ListScope.private.name)
+        .eq('kind', 'grocery')
+        .limit(1)
+        .maybeSingle();
+    if (existingPrivate != null) {
+      return existingPrivate['id']?.toString();
+    }
+    final inserted = await _client
+        .from('lists')
+        .insert({
+          'owner_user_id': userId,
+          'name': 'My List',
+          'kind': 'grocery',
+          'scope': ListScope.private.name,
+        })
+        .select('id')
+        .single();
+    return inserted['id']?.toString();
+  }
+
+  Future<void> upsertDeviceToken(String userId, String token) async {
+    final platform = Platform.operatingSystem;
+    await _client.from('user_device_tokens').upsert({
+      'user_id': userId,
+      'platform': platform,
+      'token': token,
+      'last_seen_at': DateTime.now().toIso8601String(),
+    });
   }
 }
 
@@ -436,8 +551,25 @@ final groceryRepositoryProvider = Provider<GroceryRepository>((ref) {
   return GroceryRepository(ref.watch(localCacheProvider));
 });
 
-final groceryItemsProvider = StreamProvider<List<GroceryItem>>((ref) {
+final listsProvider = FutureProvider<List<AppList>>((ref) async {
   final user = ref.watch(currentUserProvider);
-  if (user == null) return Stream<List<GroceryItem>>.value(const []);
-  return ref.watch(groceryRepositoryProvider).streamItems(user.id);
+  if (user == null) return const [];
+  return ref.watch(groceryRepositoryProvider).listLists(user.id);
+});
+
+final selectedListIdProvider = StateProvider<String?>((ref) => null);
+
+final groceryItemsProvider = StreamProvider<List<GroceryItem>>((ref) async* {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) {
+    yield const [];
+    return;
+  }
+  final selectedListId = ref.watch(selectedListIdProvider);
+  final repo = ref.watch(groceryRepositoryProvider);
+  if (selectedListId != null && selectedListId.isNotEmpty) {
+    yield* repo.streamItemsForList(selectedListId);
+    return;
+  }
+  yield* repo.streamItems(user.id);
 });

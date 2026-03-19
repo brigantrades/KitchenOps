@@ -9,7 +9,7 @@ class PlannerRepository {
   Future<void> _ensureProfileRow(String userId) async {
     await _client.from('profiles').upsert({
       'id': userId,
-      'name': 'KitchenOps User',
+      'name': 'Leckerly User',
     });
   }
 
@@ -89,6 +89,29 @@ class PlannerRepository {
         .toList();
   }
 
+  Stream<List<MealPlanSlot>> streamSlots(
+      String userId, DateTime weekStart) async* {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) {
+      yield const [];
+      return;
+    }
+    final date = weekStart.toIso8601String().split('T').first;
+    final initial = await listSlots(userId, weekStart);
+    yield initial;
+    yield* _client
+        .from('meal_plan_slots')
+        .stream(primaryKey: ['id'])
+        .order('slot_order')
+        .map((rows) => rows
+            .whereType<Map<String, dynamic>>()
+            .where((row) =>
+                row['household_id']?.toString() == householdId &&
+                row['week_start']?.toString() == date)
+            .map(MealPlanSlot.fromJson)
+            .toList());
+  }
+
   Future<void> ensureDefaultSlots(String userId, DateTime weekStart) async {
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) return;
@@ -96,7 +119,7 @@ class PlannerRepository {
     final existingKeys = existing
         .map((s) => '${s.dayOfWeek}:${s.mealLabel.toLowerCase()}')
         .toSet();
-    const defaults = ['breakfast', 'lunch', 'dinner'];
+    const defaults = ['entree', 'side', 'sauce'];
 
     for (var day = 0; day < 7; day++) {
       final daySlots = existing.where((s) => s.dayOfWeek == day).toList();
@@ -135,14 +158,22 @@ class PlannerRepository {
     required String mealLabel,
     required int slotOrder,
     String? slotId,
-    required String recipeId,
+    String? recipeId,
+    String? mealText,
+    String? sauceRecipeId,
+    String? sauceText,
     int servings = 1,
   }) async {
+    final payload = <String, dynamic>{
+      'recipe_id': recipeId,
+      'meal_text': mealText?.trim().isEmpty == true ? null : mealText?.trim(),
+      'sauce_recipe_id': sauceRecipeId,
+      'sauce_text':
+          sauceText?.trim().isEmpty == true ? null : sauceText?.trim(),
+      'servings_used': servings,
+    };
     if (slotId != null) {
-      return _client.from('meal_plan_slots').update({
-        'recipe_id': recipeId,
-        'servings_used': servings,
-      }).eq('id', slotId);
+      return _client.from('meal_plan_slots').update(payload).eq('id', slotId);
     }
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) return;
@@ -153,8 +184,7 @@ class PlannerRepository {
       'day_of_week': dayOfWeek,
       'meal_type': mealLabel,
       'slot_order': slotOrder,
-      'recipe_id': recipeId,
-      'servings_used': servings,
+      ...payload,
     });
   }
 
@@ -163,6 +193,9 @@ class PlannerRepository {
   }) {
     return _client.from('meal_plan_slots').update({
       'recipe_id': null,
+      'meal_text': null,
+      'sauce_recipe_id': null,
+      'sauce_text': null,
       'servings_used': 1,
     }).eq('id', slotId);
   }
@@ -252,6 +285,9 @@ class PlannerRepository {
         'meal_type': mealLabel,
         'slot_order': slotOrder,
         'recipe_id': null,
+        'meal_text': null,
+        'sauce_recipe_id': null,
+        'sauce_text': null,
         'servings_used': 1,
       });
     } on PostgrestException catch (error) {
@@ -282,13 +318,17 @@ final weekStartProvider = StateProvider<DateTime>((ref) {
   return now.subtract(Duration(days: now.weekday - 1));
 });
 
-final plannerSlotsProvider = FutureProvider<List<MealPlanSlot>>((ref) async {
+final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
   final user = ref.watch(currentUserProvider);
   final weekStart = ref.watch(weekStartProvider);
-  if (user == null) return [];
+  if (user == null) {
+    yield const [];
+    return;
+  }
   final repo = ref.watch(plannerRepositoryProvider);
   final current = await repo.listSlots(user.id, weekStart);
-  if (current.isNotEmpty) return current;
-  await repo.ensureDefaultSlots(user.id, weekStart);
-  return repo.listSlots(user.id, weekStart);
+  if (current.isEmpty) {
+    await repo.ensureDefaultSlots(user.id, weekStart);
+  }
+  yield* repo.streamSlots(user.id, weekStart);
 });

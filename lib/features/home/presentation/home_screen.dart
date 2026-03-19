@@ -4,11 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:collection/collection.dart';
 import 'package:plateplan/core/ui/action_pill.dart';
 import 'package:plateplan/core/ui/app_surface.dart';
-import 'package:plateplan/core/ui/hero_panel.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
-import 'package:plateplan/core/theme/theme_extensions.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
@@ -25,10 +23,14 @@ class HomeScreen extends ConsumerWidget {
     final recipes = ref.watch(recipesProvider);
     final pendingInvites = ref.watch(pendingHouseholdInvitesProvider);
     final pendingInviteCount = pendingInvites.valueOrNull?.length ?? 0;
+    final plannedCount = planner.valueOrNull
+            ?.where((slot) => slot.dayOfWeek == DateTime.now().weekday - 1)
+            .length ??
+        0;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('KitchenOps'),
+        title: const Text('Leckerly'),
         actions: [
           IconButton(
             tooltip: 'Profile',
@@ -45,12 +47,7 @@ class HomeScreen extends ConsumerWidget {
       body: AppSurface(
         child: Column(
           children: [
-            _HeroCard(
-              title: 'Plan less, cook more',
-              subtitle: 'Build your week in one tap and keep groceries in sync.',
-              actionLabel: 'Open Planner',
-              onTap: () => context.go('/planner'),
-            ),
+            _HomeHeader(plannedCount: plannedCount),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -68,7 +65,8 @@ class HomeScreen extends ConsumerWidget {
                       final slots = planner.valueOrNull;
                       if (slots == null) return;
                       final todaySlots = slots
-                          .where((s) => s.dayOfWeek == DateTime.now().weekday - 1)
+                          .where(
+                              (s) => s.dayOfWeek == DateTime.now().weekday - 1)
                           .toList();
                       if (todaySlots.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -78,7 +76,8 @@ class HomeScreen extends ConsumerWidget {
                         );
                         return;
                       }
-                      final allRecipes = recipes.valueOrNull ?? const <Recipe>[];
+                      final allRecipes =
+                          recipes.valueOrNull ?? const <Recipe>[];
                       _showTodayMealsPreview(
                         context,
                         slots: todaySlots,
@@ -149,175 +148,133 @@ class HomeScreen extends ConsumerWidget {
       showDragHandle: true,
       builder: (context) {
         return BrandedSheetScaffold(
-            title: 'Today\'s Meals',
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 4),
-                ...slots.map((slot) {
-                  final recipe = recipes.firstWhereOrNull(
-                    (r) => r.id == slot.recipeId,
-                  );
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.restaurant_menu_rounded),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(_mealLabelDisplay(slot.mealLabel)),
-                              Text(
-                                recipe?.title ?? 'No recipe assigned yet',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.tonal(
-                    onPressed: () => context.go('/planner'),
-                    child: const Text('Open Planner'),
+          title: 'Today\'s Meals',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 4),
+              ...slots.map((slot) {
+                final recipe = recipes.firstWhereOrNull(
+                  (r) => r.id == slot.recipeId,
+                );
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.45),
                   ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.restaurant_menu_rounded),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_mealLabelDisplay(slot.mealLabel)),
+                            Text(
+                              recipe?.title ?? 'No recipe assigned yet',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonal(
+                  onPressed: () => context.go('/planner'),
+                  child: const Text('Open Planner'),
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
         );
       },
     );
   }
 }
 
-class _HeroCard extends StatelessWidget {
-  const _HeroCard({
-    required this.title,
-    required this.subtitle,
-    required this.actionLabel,
-    required this.onTap,
-  });
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.plannedCount});
 
-  final String title;
-  final String subtitle;
-  final String actionLabel;
-  final VoidCallback onTap;
+  final int plannedCount;
 
   @override
   Widget build(BuildContext context) {
-    final colors =
-        Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
-    final textTheme = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final weekday = switch (now.weekday) {
+      DateTime.monday => 'Monday',
+      DateTime.tuesday => 'Tuesday',
+      DateTime.wednesday => 'Wednesday',
+      DateTime.thursday => 'Thursday',
+      DateTime.friday => 'Friday',
+      DateTime.saturday => 'Saturday',
+      DateTime.sunday => 'Sunday',
+      _ => 'Today',
+    };
+    final statusLine = plannedCount == 0
+        ? 'No meals planned yet. Start one for tonight.'
+        : '$plannedCount meal slots already planned.';
 
-    return HeroPanel(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      child: Stack(
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        borderRadius: AppRadius.md,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.primaryContainer,
+            scheme.tertiaryContainer,
+          ],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Positioned(
-            top: -30,
-            right: -10,
-            child: _HeaderOrb(size: 120, opacity: 0.2),
-          ),
-          const Positioned(
-            bottom: -28,
-            left: -20,
-            child: _HeaderOrb(size: 88, opacity: 0.17),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm,
-                  vertical: AppSpacing.xs,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: AppRadius.pill,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.28),
-                  ),
-                ),
-                child: Text(
-                  'Kitchen flow',
-                  style: textTheme.labelMedium?.copyWith(
-                    color: scheme.onPrimary.withValues(alpha: 0.95),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+              Icon(
+                Icons.wb_sunny_outlined,
+                color: scheme.onPrimaryContainer,
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(width: AppSpacing.xs),
               Text(
-                title,
-                style: textTheme.headlineMedium?.copyWith(
-                  color: scheme.onPrimary,
-                  fontWeight: FontWeight.w800,
-                  height: 1.08,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                subtitle,
-                style: textTheme.bodyMedium?.copyWith(
-                  color: scheme.onPrimary.withValues(alpha: 0.93),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: onTap,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: colors.highlight,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: Text(actionLabel),
-                ),
+                '$weekday focus',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: scheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
               ),
             ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Home',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w900,
+                ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            statusLine,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onPrimaryContainer.withValues(alpha: 0.9),
+                ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _HeaderOrb extends StatelessWidget {
-  const _HeaderOrb({required this.size, required this.opacity});
-
-  final double size;
-  final double opacity;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [
-              Colors.white.withValues(alpha: opacity + 0.08),
-              Colors.white.withValues(alpha: opacity),
-              Colors.transparent,
-            ],
-          ),
-        ),
       ),
     );
   }

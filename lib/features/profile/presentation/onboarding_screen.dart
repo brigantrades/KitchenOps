@@ -24,7 +24,8 @@ class OnboardingScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Welcome')),
       body: profileAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('Could not load profile: $error')),
+        error: (error, _) =>
+            Center(child: Text('Could not load profile: $error')),
         data: (profile) => ProfileForm(
           initialName: profile?.name ?? '',
           initialPrimaryGoal: profile?.goals.firstOrNull ?? 'more_veg',
@@ -52,8 +53,12 @@ class OnboardingScreen extends ConsumerWidget {
             await profileRepo.upsertProfile(
               Profile(
                 id: user.id,
-                name: profile?.name.trim().isNotEmpty == true ? profile!.name : 'KitchenOps User',
-                goals: profile?.goals.isNotEmpty == true ? profile!.goals : const ['more_veg'],
+                name: profile?.name.trim().isNotEmpty == true
+                    ? profile!.name
+                    : 'Leckerly User',
+                goals: profile?.goals.isNotEmpty == true
+                    ? profile!.goals
+                    : const ['more_veg'],
                 dietaryRestrictions: profile?.dietaryRestrictions ?? const [],
                 preferredCuisines: profile?.preferredCuisines ?? const [],
                 dislikedIngredients: profile?.dislikedIngredients ?? const [],

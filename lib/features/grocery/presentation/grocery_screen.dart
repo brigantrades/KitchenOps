@@ -10,6 +10,7 @@ import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const double _groceryCardGridSpacing = 8;
@@ -24,6 +25,7 @@ class GroceryScreen extends ConsumerStatefulWidget {
 
 class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   bool _addSheetOpen = false;
+  int _listScopeIndex = 0;
 
   @override
   void initState() {
@@ -84,8 +86,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       return;
     }
     try {
+      final selectedListId = ref.read(selectedListIdProvider);
       await repo.addItem(
         userId: user.id,
+        listId: selectedListId,
         name: draftItem.name,
         quantity: draftItem.quantity,
       );
@@ -99,7 +103,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message ?? 'Could not add item.')),
+        SnackBar(content: Text(error.message)),
       );
       return;
     } on PostgrestException catch (error) {
@@ -185,8 +189,94 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     if (confirmed != true) {
       return;
     }
-    await ref.read(groceryRepositoryProvider).clear(user.id);
+    await ref.read(groceryRepositoryProvider).clear(
+          user.id,
+          listId: ref.read(selectedListIdProvider),
+        );
     ref.invalidate(groceryItemsProvider);
+  }
+
+  Future<void> _openCreateListSheet(ListScope defaultScope) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    final nameCtrl = TextEditingController();
+    var scope = defaultScope;
+    final result = await showModalBottomSheet<({String id, ListScope scope})>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => BrandedSheetScaffold(
+          title: 'Create list',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'List name',
+                ),
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<ListScope>(
+                segments: const [
+                  ButtonSegment(
+                    value: ListScope.private,
+                    label: Text('Private'),
+                  ),
+                  ButtonSegment(
+                    value: ListScope.household,
+                    label: Text('Household'),
+                  ),
+                ],
+                selected: {scope},
+                onSelectionChanged: (value) {
+                  setModalState(() => scope = value.first);
+                },
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () async {
+                    if (nameCtrl.text.trim().isEmpty) return;
+                    try {
+                      final createdList = await ref
+                          .read(groceryRepositoryProvider)
+                          .createList(
+                            userId: user.id,
+                            name: nameCtrl.text.trim(),
+                            scope: scope,
+                          );
+                      if (!ctx.mounted) return;
+                      Navigator.of(ctx).pop(
+                        (id: createdList.id, scope: scope),
+                      );
+                    } catch (_) {
+                      if (!ctx.mounted) return;
+                      Navigator.of(ctx).pop(null);
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text('Could not create list.'),
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Create'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    ref.invalidate(listsProvider);
+    ref.read(selectedListIdProvider.notifier).state = result.id;
+    final newScopeIdx = result.scope == ListScope.private ? 0 : 1;
+    if (_listScopeIndex != newScopeIdx) {
+      setState(() => _listScopeIndex = newScopeIdx);
+    }
   }
 
   Future<void> _promptUpdateQuantity(GroceryItem item) async {
@@ -309,11 +399,15 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   @override
   Widget build(BuildContext context) {
     final itemsAsync = ref.watch(groceryItemsProvider);
+    final listsAsync = ref.watch(listsProvider);
+    final selectedListId = ref.watch(selectedListIdProvider);
+    final hasSharedHousehold =
+        ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        title: const Text('Grocery List'),
+        title: const Text('Lists'),
         actions: [
           IconButton(
             icon: const Icon(Icons.share_outlined),
@@ -345,8 +439,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Center(child: Text('Error: $error')),
         data: (items) {
-          final plannerCount = items.where((e) => e.fromPlanner).length;
-
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
             children: [
@@ -364,7 +456,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '${items.length} items • $plannerCount from planner',
+                        '${items.length} items',
                         style:
                             Theme.of(context).textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
@@ -375,6 +467,87 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              listsAsync.when(
+                data: (lists) {
+                  final effectiveScopeIndex =
+                      hasSharedHousehold ? _listScopeIndex : 0;
+                  final scopeFilter = effectiveScopeIndex == 0
+                      ? ListScope.private
+                      : ListScope.household;
+                  final filteredLists = hasSharedHousehold
+                      ? lists
+                          .where((l) => l.scope == scopeFilter)
+                          .toList()
+                      : lists;
+
+                  if ((selectedListId == null || selectedListId.isEmpty) &&
+                      filteredLists.isNotEmpty) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      ref.read(selectedListIdProvider.notifier).state =
+                          filteredLists.first.id;
+                    });
+                  }
+
+                  return Column(
+                    children: [
+                      if (hasSharedHousehold) ...[
+                        SegmentedPills(
+                          labels: const ['Private', 'Shared'],
+                          selectedIndex: effectiveScopeIndex,
+                          onSelect: (idx) {
+                            setState(() => _listScopeIndex = idx);
+                            final newScope = idx == 0
+                                ? ListScope.private
+                                : ListScope.household;
+                            final newScopeLists = lists
+                                .where((l) => l.scope == newScope)
+                                .toList();
+                            final currentStillVisible = newScopeLists
+                                .any((l) => l.id == selectedListId);
+                            if (!currentStillVisible &&
+                                newScopeLists.isNotEmpty) {
+                              ref
+                                  .read(selectedListIdProvider.notifier)
+                                  .state = newScopeLists.first.id;
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ...filteredLists.map(
+                              (list) => ChoiceChip(
+                                label: Text(list.name),
+                                selected: list.id == selectedListId,
+                                onSelected: (_) {
+                                  ref
+                                      .read(
+                                          selectedListIdProvider.notifier)
+                                      .state = list.id;
+                                },
+                              ),
+                            ),
+                            ActionChip(
+                              avatar: const Icon(Icons.add, size: 18),
+                              label: const Text('New list'),
+                              onPressed: () =>
+                                  _openCreateListSheet(scopeFilter),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+                loading: () => const SizedBox.shrink(),
+                error: (_, __) => const SizedBox.shrink(),
+              ),
+              const SizedBox(height: 4),
               const SizedBox(height: 4),
               if (_addSheetOpen)
                 SectionCard(
@@ -630,8 +803,8 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                                     child: InkWell(
                                       borderRadius: BorderRadius.circular(12),
                                       onTap: () {
-                                        final existing =
-                                            widget.currentItems.firstWhereOrNull(
+                                        final existing = widget.currentItems
+                                            .firstWhereOrNull(
                                           (item) =>
                                               _normalizedItemName(item.name) ==
                                               _normalizedItemName(suggestion),
@@ -759,7 +932,7 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                             ),
                           );
                         },
-                  child: const Text('Add to grocery list'),
+                  child: const Text('Add to list'),
                 ),
               ),
             ],
@@ -768,7 +941,6 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
       ),
     );
   }
-
 }
 
 class _GroceryItemCard extends StatelessWidget {
@@ -919,10 +1091,7 @@ IconData _iconForName(String name, {required IconData fallback}) {
 }
 
 String _normalizedItemName(String value) {
-  return value
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'\s+'), ' ');
+  return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
 
 double _safeQuantity(String? raw, {required double fallback}) {

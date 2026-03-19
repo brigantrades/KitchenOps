@@ -2,7 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:plateplan/core/config/env.dart';
 
 class AuthRepository {
-  static const _mobileAuthRedirect = 'plateplan://login-callback/';
+  static const _mobileAuthRedirect = 'leckerly://login-callback/';
 
   SupabaseClient get _client {
     if (!Env.hasSupabase) {

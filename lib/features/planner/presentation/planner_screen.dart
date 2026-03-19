@@ -22,8 +22,24 @@ final selectedPlannerDayProvider = StateProvider<int>((ref) {
   return current;
 });
 
+final plannerEditModeProvider = StateProvider<bool>((ref) => false);
+
 class PlannerScreen extends ConsumerWidget {
   const PlannerScreen({super.key});
+  Future<_SlotPlanDraft?> _editSlotPlan(
+    BuildContext context, {
+    required MealPlanSlot slot,
+    required List<Recipe> recipes,
+  }) async {
+    return showDialog<_SlotPlanDraft>(
+      context: context,
+      builder: (context) => _SlotPlanEditorDialog(
+        slot: slot,
+        recipes: recipes,
+        pickRecipeForMeal: _pickRecipeForMeal,
+      ),
+    );
+  }
 
   String _weekLabel(DateTime weekStart) {
     final weekEnd = weekStart.add(const Duration(days: 6));
@@ -191,6 +207,7 @@ class PlannerScreen extends ConsumerWidget {
                   const SizedBox(height: 10),
                   TextField(
                     controller: customCtrl,
+                    autofocus: true,
                     decoration:
                         const InputDecoration(labelText: 'Custom meal label'),
                   ),
@@ -231,39 +248,43 @@ class PlannerScreen extends ConsumerWidget {
     return result;
   }
 
-  Future<List<_IngredientSelectionDraft>?> _pickIngredientsForGrocery(
+  Future<_GroceryPickResult?> _openGrocerySheet(
     BuildContext context, {
-    required Recipe recipe,
-    required int servingsUsed,
+    Recipe? recipe,
+    required String mealName,
+    int servingsUsed = 1,
   }) {
-    final drafts = recipe.ingredients
-        .map(
-          (ingredient) => _IngredientSelectionDraft(
-            ingredient: ingredient,
-            selected: true,
-            quantity: 1,
-          ),
-        )
-        .toList();
+    final drafts = recipe?.ingredients
+            .map(
+              (ingredient) => _IngredientSelectionDraft(
+                ingredient: ingredient,
+                selected: true,
+                quantity: 1,
+              ),
+            )
+            .toList() ??
+        <_IngredientSelectionDraft>[];
+    final customItems = <TextEditingController>[];
 
-    if (drafts.isEmpty) return Future.value(const []);
-
-    return showModalBottomSheet<List<_IngredientSelectionDraft>>(
+    return showModalBottomSheet<_GroceryPickResult>(
       context: context,
       isScrollControlled: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
+          final bottomInset = MediaQuery.of(context).viewInsets.bottom;
           return SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottomInset),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
                     children: [
                       Expanded(
-                        child: Text('Add ingredients to Grocery',
-                            style: Theme.of(context).textTheme.titleLarge),
+                        child: Text(
+                          'Add to grocery list',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(),
@@ -271,87 +292,164 @@ class PlannerScreen extends ConsumerWidget {
                       ),
                     ],
                   ),
+                  if (recipe != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Ingredients from ${recipe.title}',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelLarge
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
                   Flexible(
-                    child: ListView.builder(
+                    child: ListView(
                       shrinkWrap: true,
-                      itemCount: drafts.length,
-                      itemBuilder: (context, index) {
-                        final draft = drafts[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          color: const Color(0xFFF8FCFF),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            side: BorderSide(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withValues(alpha: 0.12),
+                      children: [
+                        ...drafts.map((draft) {
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            color: const Color(0xFFF8FCFF),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.12),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Row(
+                                children: [
+                                  Checkbox(
+                                    value: draft.selected,
+                                    onChanged: (value) => setModalState(
+                                        () => draft.selected = value ?? false),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      draft.ingredient.name,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEAF5FF),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: () {
+                                            setModalState(() {
+                                              if (draft.quantity > 1) {
+                                                draft.quantity -= 1;
+                                              }
+                                            });
+                                          },
+                                          icon: const Icon(
+                                              Icons.remove_circle_outline),
+                                        ),
+                                        Text(
+                                          '${draft.quantity}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
+                                                  fontWeight: FontWeight.w700),
+                                        ),
+                                        IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: () {
+                                            setModalState(() {
+                                              draft.quantity += 1;
+                                            });
+                                          },
+                                          icon: const Icon(
+                                              Icons.add_circle_outline),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                        if (drafts.isNotEmpty && customItems.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Additional items',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
                             ),
                           ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(10),
+                        ...customItems.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
                             child: Row(
                               children: [
-                                Checkbox(
-                                  value: draft.selected,
-                                  onChanged: (value) => setModalState(
-                                      () => draft.selected = value ?? false),
-                                ),
                                 Expanded(
-                                  child: Text(
-                                    draft.ingredient.name,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w600),
+                                  child: TextField(
+                                    controller: entry.value,
+                                    decoration: InputDecoration(
+                                      hintText: 'Item ${index + 1}',
+                                      prefixIcon: const Icon(
+                                          Icons.shopping_bag_outlined,
+                                          size: 20),
+                                    ),
+                                    onSubmitted: (_) {
+                                      setModalState(() {
+                                        customItems
+                                            .add(TextEditingController());
+                                      });
+                                    },
                                   ),
                                 ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFEAF5FF),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      IconButton(
-                                        visualDensity: VisualDensity.compact,
-                                        onPressed: () {
-                                          setModalState(() {
-                                            if (draft.quantity > 1) {
-                                              draft.quantity -= 1;
-                                            }
-                                          });
-                                        },
-                                        icon: const Icon(
-                                            Icons.remove_circle_outline),
-                                      ),
-                                      Text(
-                                        '${draft.quantity}',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.w700),
-                                      ),
-                                      IconButton(
-                                        visualDensity: VisualDensity.compact,
-                                        onPressed: () {
-                                          setModalState(() {
-                                            draft.quantity += 1;
-                                          });
-                                        },
-                                        icon: const Icon(
-                                            Icons.add_circle_outline),
-                                      ),
-                                    ],
-                                  ),
+                                IconButton(
+                                  onPressed: () {
+                                    setModalState(() {
+                                      customItems[index].dispose();
+                                      customItems.removeAt(index);
+                                    });
+                                  },
+                                  icon: const Icon(
+                                      Icons.remove_circle_outline, size: 20),
                                 ),
                               ],
                             ),
-                          ),
-                        );
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        setModalState(() {
+                          customItems.add(TextEditingController());
+                        });
                       },
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Add additional item'),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -367,11 +465,18 @@ class PlannerScreen extends ConsumerWidget {
                       Expanded(
                         child: FilledButton(
                           onPressed: () {
-                            final selected =
+                            final picks =
                                 drafts.where((d) => d.selected).toList();
-                            Navigator.of(context).pop(selected);
+                            final custom = customItems
+                                .map((c) => c.text.trim())
+                                .where((t) => t.isNotEmpty)
+                                .toList();
+                            Navigator.of(context).pop(_GroceryPickResult(
+                              ingredientPicks: picks,
+                              customItems: custom,
+                            ));
                           },
-                          child: const Text('Add selected'),
+                          child: const Text('Add to list'),
                         ),
                       ),
                     ],
@@ -418,7 +523,7 @@ class PlannerScreen extends ConsumerWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Edit Grocery Items',
+                        'Edit List Items',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
@@ -553,13 +658,16 @@ class PlannerScreen extends ConsumerWidget {
     final recipesAsync = ref.watch(recipesProvider);
     final groceryItems =
         ref.watch(groceryItemsProvider).valueOrNull ?? const [];
+    final isEditMode = ref.watch(plannerEditModeProvider);
     final groceryRecipeIds = groceryItems
         .where((item) => item.fromRecipeId != null)
         .map((item) => item.fromRecipeId!)
         .toSet();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Weekly Planner')),
+      appBar: AppBar(
+        title: const Text('Weekly Planner'),
+      ),
       body: slotsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Center(child: Text('Error: $error')),
@@ -749,7 +857,23 @@ class PlannerScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => ref
+                        .read(plannerEditModeProvider.notifier)
+                        .state = !isEditMode,
+                    icon: Icon(
+                      isEditMode
+                          ? Icons.check_rounded
+                          : Icons.edit_rounded,
+                      size: 18,
+                    ),
+                    label: Text(isEditMode ? 'Done' : 'Edit meal slots'),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
@@ -771,6 +895,7 @@ class PlannerScreen extends ConsumerWidget {
                           buildDefaultDragHandles: false,
                           itemCount: daySlots.length,
                           onReorder: (oldIndex, newIndex) async {
+                            if (!isEditMode) return;
                             if (newIndex > oldIndex) newIndex -= 1;
                             final reordered = [...daySlots];
                             final moved = reordered.removeAt(oldIndex);
@@ -816,16 +941,22 @@ class PlannerScreen extends ConsumerWidget {
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(24),
                                 onTap: () async {
-                                  if (recipes.isEmpty) return;
-                                  final selected = await _pickRecipeForMeal(
+                                  final draft = await _editSlotPlan(
                                     context,
-                                    mealLabel: slot.mealLabel,
+                                    slot: slot,
                                     recipes: recipes,
                                   );
-                                  if (selected == null) return;
+                                  if (draft == null) return;
                                   final user = ref.read(currentUserProvider);
                                   if (user == null) return;
                                   try {
+                                    if (draft.clearAll) {
+                                      await ref
+                                          .read(plannerRepositoryProvider)
+                                          .unassignSlot(slotId: slot.id);
+                                      ref.invalidate(plannerSlotsProvider);
+                                      return;
+                                    }
                                     await ref
                                         .read(plannerRepositoryProvider)
                                         .assignSlot(
@@ -835,7 +966,10 @@ class PlannerScreen extends ConsumerWidget {
                                           mealLabel: slot.mealLabel,
                                           slotOrder: slot.slotOrder,
                                           slotId: slot.id,
-                                          recipeId: selected.id,
+                                          recipeId: draft.mealRecipeId,
+                                          mealText: draft.mealText,
+                                          sauceRecipeId: draft.sauceRecipeId,
+                                          sauceText: draft.sauceText,
                                         );
                                     ref.invalidate(plannerSlotsProvider);
                                   } on PostgrestException catch (error) {
@@ -852,11 +986,17 @@ class PlannerScreen extends ConsumerWidget {
                                       horizontal: 10, vertical: 10),
                                   child: Row(
                                     children: [
-                                      ReorderableDragStartListener(
-                                        index: i,
-                                        child: const Icon(
-                                            Icons.drag_indicator_rounded),
-                                      ),
+                                      isEditMode
+                                          ? ReorderableDragStartListener(
+                                              index: i,
+                                              child: const Icon(
+                                                Icons.drag_indicator_rounded,
+                                              ),
+                                            )
+                                          : Icon(
+                                              Icons.drag_indicator_rounded,
+                                              color: scheme.outlineVariant,
+                                            ),
                                       const SizedBox(width: 6),
                                       Expanded(
                                         child: Column(
@@ -874,200 +1014,248 @@ class PlannerScreen extends ConsumerWidget {
                                                   ),
                                             ),
                                             Text(
-                                              recipe?.title ??
-                                                  'Tap to assign recipe',
+                                              slot.mealText
+                                                          ?.trim()
+                                                          .isNotEmpty ==
+                                                      true
+                                                  ? slot.mealText!
+                                                  : (recipe?.title ??
+                                                      'Tap to plan meal'),
                                               style: Theme.of(context)
                                                   .textTheme
                                                   .titleMedium,
                                             ),
+                                            if (slot.sauceText
+                                                        ?.trim()
+                                                        .isNotEmpty ==
+                                                    true ||
+                                                slot.sauceRecipeId != null)
+                                              Text(
+                                                'Sauce: ${slot.sauceText?.trim().isNotEmpty == true ? slot.sauceText : recipes.firstWhereOrNull((r) => r.id == slot.sauceRecipeId)?.title ?? ''}',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall,
+                                              ),
                                           ],
                                         ),
                                       ),
-                                      recipe == null
-                                          ? Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                IconButton(
-                                                  tooltip: 'Remove meal slot',
-                                                  icon: const Icon(
-                                                    Icons
-                                                        .delete_outline_rounded,
-                                                  ),
-                                                  onPressed: () =>
-                                                      removeMealSlot(slot),
-                                                ),
-                                              ],
-                                            )
-                                          : Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                IconButton(
-                                                  tooltip: 'Unassign recipe',
-                                                  icon: const Icon(Icons
-                                                      .remove_circle_outline),
-                                                  onPressed: () async {
-                                                    try {
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (isEditMode && recipe == null)
+                                            IconButton(
+                                              tooltip: 'Remove meal slot',
+                                              icon: const Icon(
+                                                Icons
+                                                    .delete_outline_rounded,
+                                              ),
+                                              onPressed: () =>
+                                                  removeMealSlot(slot),
+                                            ),
+                                          if (isEditMode && recipe != null)
+                                            IconButton(
+                                              tooltip: 'Unassign recipe',
+                                              icon: const Icon(Icons
+                                                  .remove_circle_outline),
+                                              onPressed: () async {
+                                                try {
+                                                  await ref
+                                                      .read(
+                                                          plannerRepositoryProvider)
+                                                      .unassignSlot(
+                                                          slotId: slot.id);
+                                                  ref.invalidate(
+                                                      plannerSlotsProvider);
+                                                } on PostgrestException catch (error) {
+                                                  if (!context.mounted) {
+                                                    return;
+                                                  }
+                                                  ScaffoldMessenger.of(
+                                                          context)
+                                                      .showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                          'Could not unassign recipe: ${error.message}'),
+                                                    ),
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                          if (recipe != null &&
+                                              isAlreadyAdded)
+                                            IconButton(
+                                              tooltip: 'Edit list items',
+                                              icon: const Icon(
+                                                Icons.check_circle_rounded,
+                                                color: Color(0xFF4ECDC4),
+                                              ),
+                                              onPressed: () async {
+                                                final edits =
+                                                    await _editRecipeGroceryItems(
+                                                  context,
+                                                  recipe: recipe,
+                                                  groceryItems: groceryItems,
+                                                );
+                                                if (edits == null ||
+                                                    edits.isEmpty) {
+                                                  return;
+                                                }
+                                                try {
+                                                  for (final edit in edits) {
+                                                    if (edit.removed) {
                                                       await ref
                                                           .read(
-                                                              plannerRepositoryProvider)
-                                                          .unassignSlot(
-                                                              slotId: slot.id);
-                                                      ref.invalidate(
-                                                          plannerSlotsProvider);
-                                                    } on PostgrestException catch (error) {
-                                                      if (!context.mounted) {
-                                                        return;
-                                                      }
-                                                      ScaffoldMessenger.of(
-                                                              context)
-                                                          .showSnackBar(
-                                                        SnackBar(
-                                                          content: Text(
-                                                              'Could not unassign recipe: ${error.message}'),
-                                                        ),
-                                                      );
-                                                    }
-                                                  },
-                                                ),
-                                                isAlreadyAdded
-                                                    ? IconButton(
-                                                        tooltip:
-                                                            'Edit grocery items',
-                                                        icon: const Icon(
-                                                          Icons
-                                                              .check_circle_rounded,
-                                                          color:
-                                                              Color(0xFF4ECDC4),
-                                                        ),
-                                                        onPressed: () async {
-                                                          final edits =
-                                                              await _editRecipeGroceryItems(
-                                                            context,
-                                                            recipe: recipe,
-                                                            groceryItems:
-                                                                groceryItems,
+                                                              groceryRepositoryProvider)
+                                                          .removeItem(
+                                                              edit.item.id);
+                                                    } else {
+                                                      await ref
+                                                          .read(
+                                                              groceryRepositoryProvider)
+                                                          .updateItemQuantity(
+                                                            edit.item.id,
+                                                            edit.quantity
+                                                                .toString(),
                                                           );
-                                                          if (edits == null ||
-                                                              edits.isEmpty) {
-                                                            return;
-                                                          }
-                                                          try {
-                                                            for (final edit
-                                                                in edits) {
-                                                              if (edit
-                                                                  .removed) {
-                                                                await ref
-                                                                    .read(
-                                                                        groceryRepositoryProvider)
-                                                                    .removeItem(
-                                                                        edit.item
-                                                                            .id);
-                                                              } else {
-                                                                await ref
-                                                                    .read(
-                                                                        groceryRepositoryProvider)
-                                                                    .updateItemQuantity(
-                                                                      edit.item
-                                                                          .id,
-                                                                      edit.quantity
-                                                                          .toString(),
-                                                                    );
-                                                              }
-                                                            }
-                                                            ref.invalidate(
-                                                                groceryItemsProvider);
-                                                          } on PostgrestException catch (error) {
-                                                            if (!context
-                                                                .mounted) {
-                                                              return;
-                                                            }
-                                                            ScaffoldMessenger
-                                                                    .of(context)
-                                                                .showSnackBar(
-                                                              SnackBar(
-                                                                content: Text(
-                                                                  'Could not update grocery items: ${error.message}',
-                                                                ),
-                                                              ),
-                                                            );
-                                                          }
-                                                        },
-                                                      )
-                                                    : IconButton(
-                                                        tooltip:
-                                                            'Add ingredients to Grocery',
-                                                        icon: const Icon(Icons
-                                                            .add_shopping_cart_rounded),
-                                                        onPressed: () async {
-                                                          final user = ref.read(
-                                                              currentUserProvider);
-                                                          if (user == null) {
-                                                            return;
-                                                          }
-                                                          final picks =
-                                                              await _pickIngredientsForGrocery(
-                                                            context,
-                                                            recipe: recipe,
+                                                    }
+                                                  }
+                                                  ref.invalidate(
+                                                      groceryItemsProvider);
+                                                } on PostgrestException catch (error) {
+                                                  if (!context.mounted) return;
+                                                  ScaffoldMessenger.of(context)
+                                                      .showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        'Could not update grocery items: ${error.message}',
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                          if (recipe != null ||
+                                              (slot.mealText
+                                                      ?.trim()
+                                                      .isNotEmpty ==
+                                                  true))
+                                            if (!(recipe != null &&
+                                                isAlreadyAdded))
+                                              IconButton(
+                                                tooltip:
+                                                    'Add to grocery list',
+                                                icon: const Icon(Icons
+                                                    .add_shopping_cart_rounded),
+                                                onPressed: () async {
+                                                  final user = ref.read(
+                                                      currentUserProvider);
+                                                  if (user == null) return;
+                                                  final selectedListId =
+                                                      ref.read(
+                                                          selectedListIdProvider);
+                                                  final mealName =
+                                                      recipe?.title ??
+                                                          slot.mealText
+                                                              ?.trim() ??
+                                                          'meal';
+                                                  final result =
+                                                      await _openGrocerySheet(
+                                                    context,
+                                                    recipe: recipe,
+                                                    mealName: mealName,
+                                                    servingsUsed:
+                                                        slot.servingsUsed,
+                                                  );
+                                                  if (result == null ||
+                                                      result.isEmpty) {
+                                                    return;
+                                                  }
+                                                  try {
+                                                    for (final pick
+                                                        in result
+                                                            .ingredientPicks) {
+                                                      await ref
+                                                          .read(
+                                                              groceryRepositoryProvider)
+                                                          .addItem(
+                                                            userId: user.id,
+                                                            listId:
+                                                                selectedListId,
+                                                            name: pick
+                                                                .ingredient
+                                                                .name,
+                                                            quantity: pick
+                                                                .quantity
+                                                                .toString(),
+                                                            unit: null,
+                                                            category: pick
+                                                                .ingredient
+                                                                .category,
+                                                            fromRecipeId:
+                                                                recipe?.id,
+                                                          );
+                                                    }
+                                                    for (final name
+                                                        in result
+                                                            .customItems) {
+                                                      await ref
+                                                          .read(
+                                                              groceryRepositoryProvider)
+                                                          .addItem(
+                                                            userId: user.id,
+                                                            listId:
+                                                                selectedListId,
+                                                            name: name,
+                                                            quantity: '1',
+                                                            unit: null,
+                                                          );
+                                                    }
+                                                    final sauceRecipe = slot
+                                                                .sauceRecipeId ==
+                                                            null
+                                                        ? null
+                                                        : recipes
+                                                            .firstWhereOrNull(
+                                                            (r) =>
+                                                                r.id ==
+                                                                slot
+                                                                    .sauceRecipeId,
+                                                          );
+                                                    if (sauceRecipe !=
+                                                        null) {
+                                                      await ref
+                                                          .read(
+                                                              groceryRepositoryProvider)
+                                                          .addIngredientsFromRecipe(
+                                                            sauceRecipe,
+                                                            userId: user.id,
                                                             servingsUsed: slot
                                                                 .servingsUsed,
+                                                            listId:
+                                                                selectedListId,
+                                                            sourceSlotId:
+                                                                slot.id,
                                                           );
-                                                          if (picks == null ||
-                                                              picks.isEmpty) {
-                                                            return;
-                                                          }
-                                                          try {
-                                                            for (final pick
-                                                                in picks) {
-                                                              await ref
-                                                                  .read(
-                                                                      groceryRepositoryProvider)
-                                                                  .addItem(
-                                                                    userId:
-                                                                        user.id,
-                                                                    name: pick
-                                                                        .ingredient
-                                                                        .name,
-                                                                    quantity: pick
-                                                                        .quantity
-                                                                        .toString(),
-                                                                    unit: null,
-                                                                    category: pick
-                                                                        .ingredient
-                                                                        .category,
-                                                                    fromRecipeId:
-                                                                        recipe
-                                                                            .id,
-                                                                  );
-                                                            }
-                                                            ref.invalidate(
-                                                                groceryItemsProvider);
-                                                          } on PostgrestException catch (error) {
-                                                            if (!context
-                                                                .mounted) {
-                                                              return;
-                                                            }
-                                                            ScaffoldMessenger
-                                                                    .of(context)
-                                                                .showSnackBar(
-                                                              SnackBar(
-                                                                content: Text(
-                                                                    'Could not add to grocery: ${error.message}'),
-                                                              ),
-                                                            );
-                                                          }
-                                                        },
+                                                    }
+                                                    ref.invalidate(
+                                                        groceryItemsProvider);
+                                                  } on PostgrestException catch (error) {
+                                                    if (!context.mounted) {
+                                                      return;
+                                                    }
+                                                    ScaffoldMessenger.of(
+                                                            context)
+                                                        .showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(
+                                                            'Could not add to list: ${error.message}'),
                                                       ),
-                                                IconButton(
-                                                  tooltip: 'Remove meal slot',
-                                                  icon: const Icon(
-                                                    Icons
-                                                        .delete_outline_rounded,
-                                                  ),
-                                                  onPressed: () =>
-                                                      removeMealSlot(slot),
-                                                ),
-                                              ],
-                                            ),
+                                                    );
+                                                  }
+                                                },
+                                              ),
+                                        ],
+                                      ),
                                     ],
                                   ),
                                 ),
@@ -1124,9 +1312,9 @@ class PlannerScreen extends ConsumerWidget {
 }
 
 String _mealTypeLabel(MealType mealType) => switch (mealType) {
-      MealType.breakfast => 'Breakfast',
-      MealType.lunch => 'Lunch',
-      MealType.dinner => 'Dinner',
+      MealType.entree => 'Entree',
+      MealType.side => 'Side',
+      MealType.sauce => 'Sauce',
       MealType.snack => 'Snack',
       MealType.dessert => 'Dessert',
     };
@@ -1135,6 +1323,285 @@ String _mealLabelDisplay(String mealLabel) {
   if (mealLabel.isEmpty) return 'Meal';
   final lower = mealLabel.toLowerCase();
   return lower[0].toUpperCase() + lower.substring(1);
+}
+
+typedef _PickRecipeForMeal = Future<Recipe?> Function(
+  BuildContext context, {
+  required String mealLabel,
+  required List<Recipe> recipes,
+});
+
+class _SlotPlanEditorDialog extends StatefulWidget {
+  const _SlotPlanEditorDialog({
+    required this.slot,
+    required this.recipes,
+    required this.pickRecipeForMeal,
+  });
+
+  final MealPlanSlot slot;
+  final List<Recipe> recipes;
+  final _PickRecipeForMeal pickRecipeForMeal;
+
+  @override
+  State<_SlotPlanEditorDialog> createState() => _SlotPlanEditorDialogState();
+}
+
+class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
+  late final TextEditingController _mealTextCtrl;
+  late final TextEditingController _sauceTextCtrl;
+  late final FocusNode _mealFocus;
+  late final FocusNode _sauceFocus;
+  Recipe? _mealRecipe;
+  Recipe? _sauceRecipe;
+  bool _showSauce = false;
+  int _mealMode = 0; // 0 = pick a recipe, 1 = type a meal
+  int _sauceMode = 0; // 0 = pick a recipe, 1 = type a sauce
+
+  @override
+  void initState() {
+    super.initState();
+    _mealTextCtrl = TextEditingController(text: widget.slot.mealText ?? '');
+    _sauceTextCtrl = TextEditingController(text: widget.slot.sauceText ?? '');
+    _mealFocus = FocusNode();
+    _sauceFocus = FocusNode();
+    _mealRecipe = widget.slot.recipeId == null
+        ? null
+        : widget.recipes.firstWhereOrNull((r) => r.id == widget.slot.recipeId);
+    _sauceRecipe = widget.slot.sauceRecipeId == null
+        ? null
+        : widget.recipes
+            .firstWhereOrNull((r) => r.id == widget.slot.sauceRecipeId);
+    _showSauce =
+        _sauceTextCtrl.text.trim().isNotEmpty || _sauceRecipe != null;
+    if (_mealTextCtrl.text.trim().isNotEmpty && _mealRecipe == null) {
+      _mealMode = 1;
+    }
+    if (_sauceTextCtrl.text.trim().isNotEmpty && _sauceRecipe == null) {
+      _sauceMode = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _mealTextCtrl.dispose();
+    _sauceTextCtrl.dispose();
+    _mealFocus.dispose();
+    _sauceFocus.dispose();
+    super.dispose();
+  }
+
+  Widget _buildRecipeRow({
+    required Recipe? recipe,
+    required String emptyLabel,
+    required VoidCallback onSelect,
+    VoidCallback? onRemove,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            recipe != null
+                ? Icons.restaurant_rounded
+                : Icons.restaurant_menu_rounded,
+            color: scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              recipe?.title ?? emptyLabel,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: recipe != null ? null : scheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+          if (recipe != null && onRemove != null) ...[
+            IconButton(
+              onPressed: onRemove,
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: scheme.onSurfaceVariant),
+              tooltip: 'Remove',
+            ),
+            const SizedBox(width: 4),
+          ],
+          FilledButton.tonal(
+            onPressed: onSelect,
+            child: Text(recipe != null ? 'Change' : 'Select'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Edit ${_mealLabelDisplay(widget.slot.mealLabel)}',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SegmentedPills(
+                labels: const ['Pick a recipe', 'Type a meal'],
+                selectedIndex: _mealMode,
+                onSelect: (idx) => setState(() => _mealMode = idx),
+              ),
+              const SizedBox(height: 16),
+              if (_mealMode == 0)
+                _buildRecipeRow(
+                  recipe: _mealRecipe,
+                  emptyLabel: 'No recipe selected',
+                  onSelect: () async {
+                    final picked = await widget.pickRecipeForMeal(
+                      context,
+                      mealLabel: widget.slot.mealLabel,
+                      recipes: widget.recipes,
+                    );
+                    if (picked == null) return;
+                    setState(() => _mealRecipe = picked);
+                  },
+                  onRemove: () => setState(() => _mealRecipe = null),
+                )
+              else
+                TextFormField(
+                  controller: _mealTextCtrl,
+                  focusNode: _mealFocus,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: 'Meal name',
+                    hintText: 'e.g., Canned Soup',
+                  ),
+                ),
+              const SizedBox(height: 12),
+              const Divider(),
+              if (!_showSauce)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _showSauce = true),
+                    icon: const Icon(Icons.add_rounded, size: 20),
+                    label: const Text('Add sauce'),
+                  ),
+                )
+              else ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Sauce',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      tooltip: 'Remove sauce',
+                      onPressed: () => setState(() {
+                        _showSauce = false;
+                        _sauceMode = 0;
+                        _sauceTextCtrl.clear();
+                        _sauceRecipe = null;
+                      }),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SegmentedPills(
+                  labels: const ['Pick a recipe', 'Type a sauce'],
+                  selectedIndex: _sauceMode,
+                  onSelect: (idx) => setState(() => _sauceMode = idx),
+                ),
+                const SizedBox(height: 12),
+                if (_sauceMode == 0)
+                  _buildRecipeRow(
+                    recipe: _sauceRecipe,
+                    emptyLabel: 'No sauce recipe selected',
+                    onSelect: () async {
+                      final picked = await widget.pickRecipeForMeal(
+                        context,
+                        mealLabel: 'sauce',
+                        recipes: widget.recipes,
+                      );
+                      if (picked == null) return;
+                      setState(() => _sauceRecipe = picked);
+                    },
+                    onRemove: () => setState(() => _sauceRecipe = null),
+                  )
+                else
+                  TextFormField(
+                    controller: _sauceTextCtrl,
+                    focusNode: _sauceFocus,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(
+                      labelText: 'Sauce name',
+                      hintText: 'e.g., Chili crisp',
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(
+                        const _SlotPlanDraft(clearAll: true),
+                      ),
+                      child: const Text('Clear slot'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(
+                        _SlotPlanDraft(
+                          mealRecipeId:
+                              _mealMode == 0 ? _mealRecipe?.id : null,
+                          mealText: _mealMode == 1
+                              ? _mealTextCtrl.text.trim()
+                              : null,
+                          sauceRecipeId:
+                              _sauceMode == 0 ? _sauceRecipe?.id : null,
+                          sauceText: _sauceMode == 1
+                              ? _sauceTextCtrl.text.trim()
+                              : null,
+                        ),
+                      ),
+                      child: const Text('Save'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _IngredientSelectionDraft {
@@ -1149,6 +1616,18 @@ class _IngredientSelectionDraft {
   int quantity;
 }
 
+class _GroceryPickResult {
+  const _GroceryPickResult({
+    this.ingredientPicks = const [],
+    this.customItems = const [],
+  });
+
+  final List<_IngredientSelectionDraft> ingredientPicks;
+  final List<String> customItems;
+
+  bool get isEmpty => ingredientPicks.isEmpty && customItems.isEmpty;
+}
+
 class _GroceryEditDraft {
   _GroceryEditDraft({
     required this.item,
@@ -1159,4 +1638,20 @@ class _GroceryEditDraft {
   final GroceryItem item;
   int quantity;
   bool removed;
+}
+
+class _SlotPlanDraft {
+  const _SlotPlanDraft({
+    this.mealRecipeId,
+    this.mealText,
+    this.sauceRecipeId,
+    this.sauceText,
+    this.clearAll = false,
+  });
+
+  final String? mealRecipeId;
+  final String? mealText;
+  final String? sauceRecipeId;
+  final String? sauceText;
+  final bool clearAll;
 }

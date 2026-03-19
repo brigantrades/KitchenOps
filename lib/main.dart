@@ -44,5 +44,5 @@ Future<void> main() async {
     }
   }
 
-  runApp(const ProviderScope(child: KitchenOpsApp()));
+  runApp(const ProviderScope(child: LeckerlyApp()));
 }

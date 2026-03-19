@@ -25,13 +25,6 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
 
   Future<void> _createRecipeManually() async {
     final user = ref.read(currentUserProvider);
-    final householdId = ref.read(activeHouseholdProvider).valueOrNull?.id;
-    bool hasSharedHousehold = false;
-    try {
-      hasSharedHousehold = await ref.read(hasSharedHouseholdProvider.future);
-    } catch (_) {
-      hasSharedHousehold = false;
-    }
     if (user == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -50,44 +43,22 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     if (recipe == null) return;
 
     try {
-      var shareWithHousehold = false;
-      if (hasSharedHousehold && householdId != null && householdId.isNotEmpty) {
-        if (!mounted) return;
-        final selection = await showModalBottomSheet<String>(
-          context: context,
-          builder: (context) {
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.person_outline_rounded),
-                    title: const Text('Save to My Recipes'),
-                    onTap: () => Navigator.of(context).pop('personal'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.groups_2_outlined),
-                    title: const Text('Save to Household Recipes'),
-                    onTap: () => Navigator.of(context).pop('household'),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-        shareWithHousehold = selection == 'household';
-      }
-      await ref
-          .read(recipesRepositoryProvider)
-          .create(user.id, recipe, shareWithHousehold: shareWithHousehold);
+      final isHousehold = recipe.visibility == RecipeVisibility.household;
+      await ref.read(recipesRepositoryProvider).create(
+            user.id,
+            recipe,
+            shareWithHousehold: isHousehold,
+            visibilityOverride: recipe.visibility,
+          );
       ref.invalidate(recipesProvider);
       if (!mounted) return;
+      final dest = switch (recipe.visibility) {
+        RecipeVisibility.household => 'Household Recipes',
+        RecipeVisibility.public => 'My Recipes (public)',
+        _ => 'My Recipes',
+      };
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Recipe "${recipe.title}" created in ${shareWithHousehold ? 'Household Recipes' : 'My Recipes'}.',
-          ),
-        ),
+        SnackBar(content: Text('Recipe "${recipe.title}" saved to $dest.')),
       );
     } on PostgrestException catch (error) {
       if (!mounted) return;
@@ -98,6 +69,32 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not create recipe. Try again.')),
+      );
+    }
+  }
+
+  Future<void> _editRecipe(Recipe recipe) async {
+    final updated = await showModalBottomSheet<Recipe>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => _RecipeBuilderSheet(initialRecipe: recipe),
+    );
+    if (updated == null) return;
+    try {
+      await ref
+          .read(recipesRepositoryProvider)
+          .updateRecipe(recipe.id, updated);
+      ref.invalidate(recipesProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Updated "${updated.title}".')),
+      );
+    } on PostgrestException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update recipe: ${error.message}')),
       );
     }
   }
@@ -117,8 +114,9 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
     final effectiveLibraryIndex = hasSharedHousehold ? _libraryIndex : 0;
-    final libraryLabels =
-        hasSharedHousehold ? const ['Household Recipes', 'My Recipes'] : const ['My Recipes'];
+    final libraryLabels = hasSharedHousehold
+        ? const ['Household Recipes', 'My Recipes']
+        : const ['My Recipes'];
 
     return Scaffold(
       appBar: AppBar(
@@ -157,14 +155,21 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                   SegmentedPills(
                     labels: libraryLabels,
                     selectedIndex: effectiveLibraryIndex,
-                    onSelect: (idx) => setState(() => _libraryIndex = idx),
+                    onSelect: (idx) => setState(() {
+                      _libraryIndex = idx;
+                      _segmentIndex = 0;
+                    }),
                   ),
-                  const SizedBox(height: 10),
-                  SegmentedPills(
-                    labels: const ['Favorites', 'To Try'],
-                    selectedIndex: _segmentIndex,
-                    onSelect: (idx) => setState(() => _segmentIndex = idx),
-                  ),
+                  if (!(hasSharedHousehold &&
+                      effectiveLibraryIndex == 0)) ...[
+                    const SizedBox(height: 10),
+                    SegmentedPills(
+                      labels: const ['Favorites', 'To Try'],
+                      selectedIndex: _segmentIndex,
+                      onSelect: (idx) =>
+                          setState(() => _segmentIndex = idx),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -182,22 +187,36 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                   }
 
                   final filtered = recipes.where(matches).toList();
-                  final byLibrary = filtered.where((recipe) {
-                    if (hasSharedHousehold && effectiveLibraryIndex == 0) {
-                      return recipe.visibility == RecipeVisibility.household;
-                    }
-                    return recipe.visibility == RecipeVisibility.personal;
-                  }).toList();
-                  final favorites =
-                      byLibrary.where((r) => r.isFavorite).toList();
-                  final toTry = byLibrary.where((r) => r.isToTry).toList();
-                  final visible = switch (_segmentIndex) {
-                    1 => toTry,
-                    _ => favorites,
-                  };
+                  final isHouseholdLibrary =
+                      hasSharedHousehold && effectiveLibraryIndex == 0;
+                  final List<Recipe> visible;
+                  if (isHouseholdLibrary) {
+                    visible = filtered
+                        .where((r) =>
+                            r.visibility == RecipeVisibility.household &&
+                            r.isFavorite)
+                        .toList();
+                  } else {
+                    final personal = filtered
+                        .where((r) =>
+                            r.visibility != RecipeVisibility.household)
+                        .toList();
+                    final favorites =
+                        personal.where((r) => r.isFavorite).toList();
+                    final allFavorites = filtered
+                        .where((r) => r.isFavorite)
+                        .toList();
+                    final toTry =
+                        personal.where((r) => r.isToTry).toList();
+                    visible = switch (_segmentIndex) {
+                      1 => toTry,
+                      _ => allFavorites,
+                    };
+                  }
                   return _RecipeList(
                     recipes: visible,
                     hasSharedHousehold: hasSharedHousehold,
+                    onEditRecipe: _editRecipe,
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -220,10 +239,12 @@ class _RecipeList extends ConsumerWidget {
   const _RecipeList({
     required this.recipes,
     required this.hasSharedHousehold,
+    required this.onEditRecipe,
   });
 
   final List<Recipe> recipes;
   final bool hasSharedHousehold;
+  final Future<void> Function(Recipe recipe) onEditRecipe;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -302,6 +323,10 @@ class _RecipeList extends ConsumerWidget {
                         PopupMenuButton<String>(
                           tooltip: 'Recipe actions',
                           onSelected: (value) async {
+                            if (value == 'edit_recipe') {
+                              await onEditRecipe(recipe);
+                              return;
+                            }
                             if (value != 'copy_to_household') {
                               return;
                             }
@@ -317,7 +342,7 @@ class _RecipeList extends ConsumerWidget {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    'Copied "${recipe.title}" to Household Recipes.',
+                                    'Shared "${recipe.title}" to Household Recipes.',
                                   ),
                                 ),
                               );
@@ -343,12 +368,22 @@ class _RecipeList extends ConsumerWidget {
                           },
                           itemBuilder: (context) => const [
                             PopupMenuItem<String>(
+                              value: 'edit_recipe',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined),
+                                  SizedBox(width: 8),
+                                  Text('Edit recipe'),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem<String>(
                               value: 'copy_to_household',
                               child: Row(
                                 children: [
                                   Icon(Icons.content_copy_rounded),
                                   SizedBox(width: 8),
-                                  Text('Copy to Household'),
+                                  Text('Share to Household'),
                                 ],
                               ),
                             ),
@@ -361,23 +396,9 @@ class _RecipeList extends ConsumerWidget {
                       ],
                     )
                   : IconButton.filledTonal(
-                      onPressed: () async {
-                        await ref
-                            .read(recipesRepositoryProvider)
-                            .toggleFavorite(
-                              recipe.id,
-                              !recipe.isFavorite,
-                            );
-                        ref.invalidate(recipesProvider);
-                      },
-                      icon: Icon(
-                        recipe.isFavorite
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        color: recipe.isFavorite
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant,
-                      ),
+                      onPressed: () => onEditRecipe(recipe),
+                      icon: Icon(Icons.edit_outlined,
+                          color: scheme.onSurfaceVariant),
                     ),
             ),
           ),
@@ -388,9 +409,9 @@ class _RecipeList extends ConsumerWidget {
 }
 
 String _mealTypeLabel(MealType mealType) => switch (mealType) {
-      MealType.breakfast => 'Breakfast',
-      MealType.lunch => 'Lunch',
-      MealType.dinner => 'Dinner',
+      MealType.entree => 'Entree',
+      MealType.side => 'Side',
+      MealType.sauce => 'Sauce',
       MealType.snack => 'Snack',
       MealType.dessert => 'Dessert',
     };
@@ -400,12 +421,17 @@ class _IngredientInput {
     required String name,
     required this.unitOptions,
     required this.selectedUnit,
+    String? customUnit,
   }) {
     nameCtrl.text = name;
+    if (customUnit != null) {
+      customUnitCtrl.text = customUnit;
+    }
   }
 
   final TextEditingController nameCtrl = TextEditingController();
   final TextEditingController amountCtrl = TextEditingController();
+  final TextEditingController customUnitCtrl = TextEditingController();
   final List<String> unitOptions;
   String selectedUnit;
 
@@ -414,6 +440,7 @@ class _IngredientInput {
   void dispose() {
     nameCtrl.dispose();
     amountCtrl.dispose();
+    customUnitCtrl.dispose();
   }
 }
 
@@ -440,7 +467,9 @@ class _DirectionDraft {
 }
 
 class _RecipeBuilderSheet extends ConsumerStatefulWidget {
-  const _RecipeBuilderSheet();
+  const _RecipeBuilderSheet({this.initialRecipe});
+
+  final Recipe? initialRecipe;
 
   @override
   ConsumerState<_RecipeBuilderSheet> createState() =>
@@ -454,6 +483,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   final _servingsCtrl = TextEditingController(text: '2');
   final _tagCtrl = TextEditingController();
   final _ingredientSearchCtrl = TextEditingController();
+  final _titleFocusNode = FocusNode();
   final List<String> _cuisineTags = [];
   final List<String> _presetCuisines = const [
     'Italian',
@@ -499,8 +529,12 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     'Cilantro',
     'Basil',
   ];
-  MealType _mealType = MealType.dinner;
+  MealType _mealType = MealType.entree;
   bool _markFavorite = false;
+  bool _markToTry = false;
+  bool _makePublic = false;
+  bool _saveToHousehold = false;
+  bool _showCustomTag = false;
   int _step = 0;
   String? _validationMessage;
   bool _isSubmitting = false;
@@ -508,10 +542,12 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   @override
   void initState() {
     super.initState();
+    _hydrateFromInitialRecipe();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(recipeCreationGuardProvider.notifier).open();
       ref.read(recipeCreationGuardProvider.notifier).setStep(_step);
+      _titleFocusNode.requestFocus();
     });
   }
 
@@ -522,6 +558,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _servingsCtrl.dispose();
     _tagCtrl.dispose();
     _ingredientSearchCtrl.dispose();
+    _titleFocusNode.dispose();
     for (final ingredient in _ingredients) {
       ingredient.dispose();
     }
@@ -531,9 +568,71 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     super.dispose();
   }
 
+  void _hydrateFromInitialRecipe() {
+    final initial = widget.initialRecipe;
+    if (initial == null) return;
+    _titleCtrl.text = initial.title;
+    _servingsCtrl.text = '${initial.servings}';
+    _mealType = initial.mealType;
+    _cuisineTags
+      ..clear()
+      ..addAll(initial.cuisineTags);
+    _markFavorite = initial.isFavorite;
+    _markToTry = initial.isToTry;
+    _makePublic = initial.visibility == RecipeVisibility.public;
+    _ingredients.clear();
+    for (final ingredient in initial.ingredients) {
+      final profile = _detectUnitProfile(ingredient.name);
+      final normalizedUnit = ingredient.unit.trim().toLowerCase();
+      final isCustom = !profile.options.contains(normalizedUnit);
+      final units = [...profile.options, 'custom'];
+      final row = _IngredientInput(
+        name: ingredient.name,
+        unitOptions: units,
+        selectedUnit: isCustom ? 'custom' : normalizedUnit,
+        customUnit: isCustom ? ingredient.unit : null,
+      );
+      row.amountCtrl.text = ingredient.amount.toString();
+      _ingredients.add(row);
+    }
+    for (final draft in _directionDrafts) {
+      draft.dispose();
+    }
+    _directionDrafts
+      ..clear()
+      ..addAll(
+        initial.instructions.isEmpty
+            ? [_DirectionDraft()]
+            : initial.instructions.map((step) => _DirectionDraft(text: step)),
+      );
+  }
+
   void _closeWizard([Recipe? recipe]) {
     ref.read(recipeCreationGuardProvider.notifier).close();
     Navigator.of(context).pop(recipe);
+  }
+
+  Future<void> _confirmClose() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Discard recipe?'),
+        content: const Text(
+          'Your changes have not been saved and will be lost.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep editing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) _closeWizard();
   }
 
   int? _parseIntOrNull(String value) {
@@ -601,18 +700,18 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     ];
     if (liquidWords.any(lower.contains)) {
       return const _UnitProfile(
-        options: ['ml', 'l', 'cup', 'tbsp', 'tsp'],
+        options: ['ml', 'l', 'cup', 'tbsp', 'tsp', 'custom'],
         defaultUnit: 'ml',
       );
     }
     if (powderWords.any(lower.contains)) {
       return const _UnitProfile(
-        options: ['tsp', 'tbsp', 'g', 'cup'],
+        options: ['tsp', 'tbsp', 'g', 'cup', 'custom'],
         defaultUnit: 'tsp',
       );
     }
     return const _UnitProfile(
-      options: ['g', 'kg', 'piece', 'cup', 'tbsp', 'tsp'],
+      options: ['g', 'kg', 'piece', 'cup', 'tbsp', 'tsp', 'custom'],
       defaultUnit: 'g',
     );
   }
@@ -665,7 +764,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         (row) =>
             row.amountCtrl.text.trim().isEmpty ||
             double.tryParse(row.amountCtrl.text.trim()) == null ||
-            row.selectedUnit.trim().isEmpty,
+            row.selectedUnit.trim().isEmpty ||
+            (row.selectedUnit == 'custom' &&
+                row.customUnitCtrl.text.trim().isEmpty),
       );
       if (hasAmountIssue) {
         setState(() =>
@@ -702,7 +803,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
 
   void _nextStep() {
     if (!_validateCurrentStep()) return;
-    if (_step >= 3) {
+    if (_step >= 4) {
       _submit();
       return;
     }
@@ -876,16 +977,19 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     if (_isSubmitting) return;
     if (!_validateCurrentStep()) return;
 
-    final ingredients = _ingredients
-        .map(
-          (row) => Ingredient(
-            name: row.name.trim(),
-            amount: double.tryParse(row.amountCtrl.text.trim()) ?? 0,
-            unit: row.selectedUnit,
-            category: GroceryCategory.other,
-          ),
-        )
-        .toList();
+    final ingredients = _ingredients.map(
+      (row) {
+        final unit = row.selectedUnit == 'custom'
+            ? row.customUnitCtrl.text.trim()
+            : row.selectedUnit;
+        return Ingredient(
+          name: row.name.trim(),
+          amount: double.tryParse(row.amountCtrl.text.trim()) ?? 0,
+          unit: unit,
+          category: GroceryCategory.other,
+        );
+      },
+    ).toList();
 
     final directions = _directionDrafts
         .map((d) {
@@ -923,6 +1027,12 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       ingredients: ingredients,
       instructions: directions,
       isFavorite: _markFavorite,
+      isToTry: _markToTry,
+      visibility: _makePublic
+          ? RecipeVisibility.public
+          : _saveToHousehold
+              ? RecipeVisibility.household
+              : RecipeVisibility.personal,
       source: 'user_created',
     );
     _closeWizard(recipe);
@@ -936,15 +1046,18 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       0 => 'Step 1: Name your recipe',
       1 => 'Step 2: Serving + labels',
       2 => 'Step 3: Ingredients',
-      _ => 'Step 4: Directions',
+      3 => 'Step 4: Directions',
+      _ => 'Step 5: Final touches',
     };
 
     return WillPopScope(
       onWillPop: () async => false,
-      child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: Form(
+      child: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: Form(
             key: _formKey,
             child: Theme(
               data: Theme.of(context).copyWith(
@@ -997,17 +1110,17 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                             borderRadius: BorderRadius.circular(8),
                             child: LinearProgressIndicator(
                               minHeight: 8,
-                              value: (_step + 1) / 4,
+                              value: (_step + 1) / 5,
                             ),
                           ),
                           const SizedBox(height: 10),
                           Row(
                             children: List.generate(
-                              4,
+                              5,
                               (index) => Expanded(
                                 child: Container(
                                   margin: EdgeInsets.only(
-                                      right: index == 3 ? 0 : 6),
+                                      right: index == 4 ? 0 : 6),
                                   height: 6,
                                   decoration: BoxDecoration(
                                     color: index <= _step
@@ -1022,7 +1135,14 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _confirmClose,
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        label: const Text('Cancel'),
+                      ),
+                    ),
                     Expanded(
                       child: PageView(
                         controller: _stepCtrl,
@@ -1032,7 +1152,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                             title: 'Name your recipe',
                             child: TextFormField(
                               controller: _titleCtrl,
-                              autofocus: true,
+                              focusNode: _titleFocusNode,
                               decoration: const InputDecoration(
                                 labelText: 'Recipe name',
                                 hintText: 'e.g., Spicy Garlic Chicken Pasta',
@@ -1043,165 +1163,154 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                                       : null,
                             ),
                           ),
-                          _StepCard(
-                            title: 'Serving size and labels',
+                          SingleChildScrollView(
                             child: Column(
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(14),
-                                    color: const Color(0xFFEFF8FF),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      IconButton(
-                                        onPressed: _decrementServings,
-                                        icon: const Icon(
-                                            Icons.remove_circle_outline),
-                                      ),
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _servingsCtrl,
-                                          textAlign: TextAlign.center,
-                                          keyboardType: TextInputType.number,
-                                          decoration: const InputDecoration(
-                                            labelText: 'Serving size',
-                                            border: InputBorder.none,
+                                SectionCard(
+                                  title: 'Serving size',
+                                  child: Center(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          onPressed: _decrementServings,
+                                          icon: const Icon(
+                                              Icons.remove_circle_outline),
+                                        ),
+                                        SizedBox(
+                                          width: 64,
+                                          child: TextFormField(
+                                            controller: _servingsCtrl,
+                                            textAlign: TextAlign.center,
+                                            keyboardType: TextInputType.number,
+                                            decoration: const InputDecoration(
+                                              border: InputBorder.none,
+                                              contentPadding: EdgeInsets.zero,
+                                              isDense: true,
+                                            ),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .headlineMedium
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w700),
                                           ),
                                         ),
-                                      ),
-                                      IconButton(
-                                        onPressed: _incrementServings,
-                                        icon: const Icon(
-                                            Icons.add_circle_outline),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Meal Label',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelLarge
-                                        ?.copyWith(
-                                          color: scheme.primary,
-                                          fontWeight: FontWeight.w700,
+                                        IconButton(
+                                          onPressed: _incrementServings,
+                                          icon: const Icon(
+                                              Icons.add_circle_outline),
                                         ),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: MealType.values
-                                        .map(
-                                          (type) => ChoiceChip(
-                                            label: Text(_mealTypeLabel(type)),
-                                            selected: _mealType == type,
-                                            onSelected: (_) => setState(
-                                                () => _mealType = type),
-                                          ),
-                                        )
-                                        .toList(),
+                                      ],
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 12),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: _presetCuisines
-                                        .map(
-                                          (cuisine) => FilterChip(
-                                            label: Text(cuisine),
-                                            selected:
-                                                _cuisineTags.contains(cuisine),
-                                            onSelected: (_) =>
-                                                _toggleCuisinePreset(cuisine),
-                                            selectedColor:
-                                                const Color(0xFFD6EBFF),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _tagCtrl,
-                                        decoration: const InputDecoration(
-                                          hintText: 'Add custom cuisine tag',
-                                        ),
-                                        onSubmitted: (_) => _addCuisineTag(),
-                                      ),
+                                SectionCard(
+                                  title: 'Meal type',
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: MealType.values
+                                          .map(
+                                            (type) => ChoiceChip(
+                                              label:
+                                                  Text(_mealTypeLabel(type)),
+                                              selected: _mealType == type,
+                                              onSelected: (_) => setState(
+                                                  () => _mealType = type),
+                                            ),
+                                          )
+                                          .toList(),
                                     ),
-                                    IconButton(
-                                      onPressed: _addCuisineTag,
-                                      icon: const Icon(Icons.add_circle),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    children: _cuisineTags
-                                        .map(
-                                          (tag) => Chip(
-                                            label: Text(tag),
-                                            onDeleted: () => setState(
-                                                () => _cuisineTags.remove(tag)),
-                                          ),
-                                        )
-                                        .toList(),
                                   ),
                                 ),
                                 const SizedBox(height: 12),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Save to section',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelLarge
-                                        ?.copyWith(
-                                          color: scheme.primary,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
+                                SectionCard(
+                                  title: 'Cuisine',
+                                  child: Column(
                                     children: [
-                                      FilterChip(
-                                        avatar: Icon(
-                                          _markFavorite
-                                              ? Icons.star_rounded
-                                              : Icons.star_border_rounded,
-                                          size: 16,
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: [
+                                            ..._presetCuisines.map(
+                                              (cuisine) => FilterChip(
+                                                label: Text(cuisine),
+                                                selected: _cuisineTags
+                                                    .contains(cuisine),
+                                                onSelected: (_) =>
+                                                    _toggleCuisinePreset(
+                                                        cuisine),
+                                                selectedColor:
+                                                    const Color(0xFFD6EBFF),
+                                              ),
+                                            ),
+                                            ActionChip(
+                                              avatar: const Icon(Icons.add,
+                                                  size: 18),
+                                              label: const Text('Custom'),
+                                              onPressed: () => setState(() =>
+                                                  _showCustomTag = true),
+                                            ),
+                                          ],
                                         ),
-                                        label: const Text('Favorites'),
-                                        selected: _markFavorite,
-                                        onSelected: (_) {
-                                          setState(() =>
-                                              _markFavorite = !_markFavorite);
-                                        },
                                       ),
+                                      if (_showCustomTag) ...[
+                                        const SizedBox(height: 10),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: TextField(
+                                                controller: _tagCtrl,
+                                                autofocus: true,
+                                                decoration:
+                                                    const InputDecoration(
+                                                  hintText:
+                                                      'Add custom cuisine tag',
+                                                ),
+                                                onSubmitted: (_) =>
+                                                    _addCuisineTag(),
+                                              ),
+                                            ),
+                                            IconButton(
+                                              onPressed: _addCuisineTag,
+                                              icon: const Icon(
+                                                  Icons.add_circle),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                      if (_cuisineTags
+                                          .where((tag) =>
+                                              !_presetCuisines.contains(tag))
+                                          .isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Wrap(
+                                            spacing: 8,
+                                            children: _cuisineTags
+                                                .where((tag) =>
+                                                    !_presetCuisines
+                                                        .contains(tag))
+                                                .map(
+                                                  (tag) => Chip(
+                                                    label: Text(tag),
+                                                    onDeleted: () =>
+                                                        setState(() =>
+                                                            _cuisineTags
+                                                                .remove(tag)),
+                                                  ),
+                                                )
+                                                .toList(),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -1369,11 +1478,43 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                                               ),
                                             ],
                                           ),
+                                          if (row.selectedUnit == 'custom') ...[
+                                            const SizedBox(height: 8),
+                                            TextField(
+                                              controller: row.customUnitCtrl,
+                                              decoration: const InputDecoration(
+                                                labelText: 'Custom unit',
+                                                hintText:
+                                                    'e.g., clove, pinch, can',
+                                              ),
+                                            ),
+                                          ],
                                         ],
                                       ),
                                     ),
                                   );
                                 }),
+                                const SizedBox(height: 6),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: OutlinedButton.icon(
+                                    onPressed: () {
+                                      setState(() {
+                                        final profile =
+                                            _detectUnitProfile('');
+                                        _ingredients.add(_IngredientInput(
+                                          name: '',
+                                          unitOptions: profile.options,
+                                          selectedUnit: profile.defaultUnit,
+                                        ));
+                                        _validationMessage = null;
+                                      });
+                                    },
+                                    icon: const Icon(
+                                        Icons.add_circle_outline_rounded),
+                                    label: const Text('Add ingredient'),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -1516,6 +1657,92 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                               ],
                             ),
                           ),
+                          _StepCard(
+                            title: 'Final touches',
+                            child: Column(
+                              children: [
+                                SwitchListTile.adaptive(
+                                  contentPadding: EdgeInsets.zero,
+                                  secondary: Icon(
+                                    _markFavorite
+                                        ? Icons.favorite_rounded
+                                        : Icons.favorite_border_rounded,
+                                    color: _markFavorite
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                  title: const Text('Add to Favorites'),
+                                  subtitle: const Text(
+                                    'Quick access from your Favorites list.',
+                                  ),
+                                  value: _markFavorite,
+                                  onChanged: (value) =>
+                                      setState(() => _markFavorite = value),
+                                ),
+                                const Divider(height: 1),
+                                SwitchListTile.adaptive(
+                                  contentPadding: EdgeInsets.zero,
+                                  secondary: Icon(
+                                    _markToTry
+                                        ? Icons.flag_rounded
+                                        : Icons.outlined_flag_rounded,
+                                    color: _markToTry
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                  title: const Text('Add to To Try'),
+                                  subtitle: const Text(
+                                    'Save to your To Try list for later.',
+                                  ),
+                                  value: _markToTry,
+                                  onChanged: (value) =>
+                                      setState(() => _markToTry = value),
+                                ),
+                                const Divider(height: 1),
+                                SwitchListTile.adaptive(
+                                  contentPadding: EdgeInsets.zero,
+                                  secondary: Icon(
+                                    _makePublic
+                                        ? Icons.public_rounded
+                                        : Icons.public_off_rounded,
+                                    color: _makePublic
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                  title: const Text('Make public'),
+                                  subtitle: const Text(
+                                    'Public recipes appear in Discover for all users.',
+                                  ),
+                                  value: _makePublic,
+                                  onChanged: (value) =>
+                                      setState(() => _makePublic = value),
+                                ),
+                                if (ref
+                                        .watch(hasSharedHouseholdProvider)
+                                        .valueOrNull ??
+                                    false) ...[
+                                  const Divider(height: 1),
+                                  SwitchListTile.adaptive(
+                                    contentPadding: EdgeInsets.zero,
+                                    secondary: Icon(
+                                      Icons.groups_2_outlined,
+                                      color: _saveToHousehold
+                                          ? scheme.primary
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                    title:
+                                        const Text('Save to Household'),
+                                    subtitle: const Text(
+                                      'Share this recipe with your household members.',
+                                    ),
+                                    value: _saveToHousehold,
+                                    onChanged: (value) => setState(
+                                        () => _saveToHousehold = value),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1535,7 +1762,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                             onPressed: _isSubmitting
                                 ? null
                                 : (_step == 0
-                                    ? () => _closeWizard()
+                                    ? _confirmClose
                                     : _prevStep),
                             icon: Icon(_step == 0
                                 ? Icons.close_rounded
@@ -1552,10 +1779,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                         Expanded(
                           child: FilledButton.icon(
                             onPressed: _isSubmitting ? null : _nextStep,
-                            icon: Icon(_step == 3
+                            icon: Icon(_step == 4
                                 ? Icons.check_rounded
                                 : Icons.arrow_forward_rounded),
-                            label: Text(_step == 3
+                            label: Text(_step == 4
                                 ? (_isSubmitting ? 'Saving...' : 'Save Recipe')
                                 : 'Next'),
                             style: FilledButton.styleFrom(
@@ -1575,6 +1802,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

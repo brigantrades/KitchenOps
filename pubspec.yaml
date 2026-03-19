@@ -1,5 +1,5 @@
 name: plateplan
-description: KitchenOps mobile meal planning app.
+description: Leckerly meal planning and shared lists app.
 publish_to: 'none'
 version: 0.1.1+2
 
@@ -29,6 +29,7 @@ dependencies:
   flutter_tts: ^4.0.2
   intl: ^0.19.0
   collection: ^1.18.0
+  firebase_messaging: ^15.2.10
 
 dev_dependencies:
   flutter_test:
