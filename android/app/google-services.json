@@ -7,7 +7,7 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1040237027470:android:384a205d61218cdf0929df",
+        "mobilesdk_app_id": "1:1040237027470:android:e4fbc647f4901ce40929df",
         "android_client_info": {
           "package_name": "com.example.leckerly"
         }
@@ -16,31 +16,6 @@
       "api_key": [
         {
           "current_key": "AIzaSyDSq7NyFkTnIYYl3E-4B5uaco_ijEph2KY"
-        },
-        {
-          "current_key": "AIzaSyDe4Q2I-TzahUQ9LB-ZcJwtkXknPzheCFw"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:1040237027470:android:84885c2d601730f70929df",
-        "android_client_info": {
-          "package_name": "com.example.plateplan"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDSq7NyFkTnIYYl3E-4B5uaco_ijEph2KY"
-        },
-        {
-          "current_key": "AIzaSyDe4Q2I-TzahUQ9LB-ZcJwtkXknPzheCFw"
         }
       ],
       "services": {

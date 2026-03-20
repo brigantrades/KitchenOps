@@ -46,4 +46,21 @@ class ProfileRepository {
     }
     await updateGroceryListOrder(userId, current.withIdsFor(scope, ids));
   }
+
+  /// Removes [listId] from the saved order for [scope] (e.g. after deleting a list).
+  Future<void> removeGroceryListId(
+    String userId,
+    ListScope scope,
+    String listId,
+  ) async {
+    final row = await _client
+        .from('profiles')
+        .select('grocery_list_order')
+        .eq('id', userId)
+        .maybeSingle();
+    final current = GroceryListOrder.fromJson(row?['grocery_list_order']);
+    final ids = List<String>.from(current.idsFor(scope))
+      ..removeWhere((id) => id == listId);
+    await updateGroceryListOrder(userId, current.withIdsFor(scope, ids));
+  }
 }

@@ -25,7 +25,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDSq7NyFkTnIYYl3E-4B5uaco_ijEph2KY',
-    appId: '1:1040237027470:android:384a205d61218cdf0929df',
+    appId: '1:1040237027470:android:e4fbc647f4901ce40929df',
     messagingSenderId: '1040237027470',
     projectId: 'forkflow-4e529',
     storageBucket: 'forkflow-4e529.firebasestorage.app',

@@ -526,6 +526,15 @@ class GroceryRepository {
     return list;
   }
 
+  /// Deletes the list and its items (DB cascade). Updates saved list order for [userId].
+  Future<void> deleteList({
+    required String userId,
+    required AppList list,
+  }) async {
+    await _client.from('lists').delete().eq('id', list.id);
+    await _profileRepo.removeGroceryListId(userId, list.scope, list.id);
+  }
+
   Future<String?> _defaultListIdForUser(String userId) async {
     final householdId = await _householdForUser(userId);
     if (householdId != null && householdId.isNotEmpty) {
