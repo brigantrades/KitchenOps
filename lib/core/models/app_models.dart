@@ -511,6 +511,32 @@ class Profile {
         groceryListOrder:
             GroceryListOrder.fromJson(json['grocery_list_order']),
       );
+
+  Profile copyWith({
+    String? id,
+    String? name,
+    String? avatarUrl,
+    List<String>? goals,
+    List<String>? dietaryRestrictions,
+    List<String>? preferredCuisines,
+    List<String>? dislikedIngredients,
+    int? householdServings,
+    String? householdId,
+    GroceryListOrder? groceryListOrder,
+  }) {
+    return Profile(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      goals: goals ?? this.goals,
+      dietaryRestrictions: dietaryRestrictions ?? this.dietaryRestrictions,
+      preferredCuisines: preferredCuisines ?? this.preferredCuisines,
+      dislikedIngredients: dislikedIngredients ?? this.dislikedIngredients,
+      householdServings: householdServings ?? this.householdServings,
+      householdId: householdId ?? this.householdId,
+      groceryListOrder: groceryListOrder ?? this.groceryListOrder,
+    );
+  }
 }
 
 class Household {

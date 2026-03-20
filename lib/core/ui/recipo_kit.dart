@@ -150,25 +150,19 @@ class SegmentedPills extends StatelessWidget {
   }
 }
 
-class MediaRecipeCard extends StatelessWidget {
-  const MediaRecipeCard({
+class RecipeListCard extends StatelessWidget {
+  const RecipeListCard({
     super.key,
     required this.title,
     required this.meta,
-    required this.imageUrl,
     required this.onTap,
-    this.heroTag,
     this.tags = const <String>[],
     this.trailing,
   });
 
-  static const double _thumbSize = 88;
-
   final String title;
   final String meta;
-  final String imageUrl;
   final VoidCallback onTap;
-  final Object? heroTag;
   final List<String> tags;
   final Widget? trailing;
 
@@ -176,28 +170,6 @@ class MediaRecipeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
-    final thumbContent = ColoredBox(
-      color: colors.panelStrong,
-      child: FoodMedia(
-        imageUrl: imageUrl,
-        width: _thumbSize,
-        height: _thumbSize,
-        fit: BoxFit.contain,
-      ),
-    );
-    final thumb = SizedBox(
-      width: _thumbSize,
-      height: _thumbSize,
-      child: ClipRRect(
-        borderRadius: const BorderRadius.horizontal(
-          right: Radius.circular(12),
-        ),
-        child: heroTag == null
-            ? thumbContent
-            : Hero(tag: heroTag!, child: thumbContent),
-      ),
-    );
-
     return InkWell(
       borderRadius: AppRadius.md,
       onTap: onTap,
@@ -208,63 +180,46 @@ class MediaRecipeCard extends StatelessWidget {
           boxShadow: AppShadows.soft,
         ),
         clipBehavior: Clip.antiAlias,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            thumb,
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.sm,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                ),
-                child: Row(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
                           ),
-                          const SizedBox(height: AppSpacing.xs),
-                          Text(meta,
-                              style: Theme.of(context).textTheme.bodySmall),
-                          if (tags.isNotEmpty) ...[
-                            const SizedBox(height: AppSpacing.sm),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: tags.take(3).map((tag) {
-                                return Chip(
-                                  label: Text(tag),
-                                  visualDensity: VisualDensity.compact,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                );
-                              }).toList(),
-                            ),
-                          ],
-                        ],
-                      ),
                     ),
-                    if (trailing != null) trailing!,
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(meta, style: Theme.of(context).textTheme.bodySmall),
+                    if (tags.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: tags.take(3).map((tag) {
+                          return Chip(
+                            label: Text(tag),
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          );
+                        }).toList(),
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ),
-          ],
+              if (trailing != null) trailing!,
+            ],
+          ),
         ),
       ),
     );
@@ -321,12 +276,14 @@ class FoodMedia extends StatelessWidget {
     this.height,
     this.width,
     this.fit = BoxFit.cover,
+    this.alignment = Alignment.center,
   });
 
   final String? imageUrl;
   final double? height;
   final double? width;
   final BoxFit fit;
+  final AlignmentGeometry alignment;
 
   @override
   Widget build(BuildContext context) {
@@ -336,6 +293,7 @@ class FoodMedia extends StatelessWidget {
     return Image.network(
       imageUrl!,
       fit: fit,
+      alignment: alignment,
       width: width ?? double.infinity,
       height: height,
       errorBuilder: (_, __, ___) =>

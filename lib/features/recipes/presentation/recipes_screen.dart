@@ -201,8 +201,6 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                         .where((r) =>
                             r.visibility != RecipeVisibility.household)
                         .toList();
-                    final favorites =
-                        personal.where((r) => r.isFavorite).toList();
                     final allFavorites = filtered
                         .where((r) => r.isFavorite)
                         .toList();
@@ -263,7 +261,6 @@ class _RecipeList extends ConsumerWidget {
         final canCopyToHousehold = user != null &&
             hasSharedHousehold &&
             recipe.visibility == RecipeVisibility.personal;
-        final heroTag = 'recipe-image-${recipe.id}';
         final tags = <String>[
           _mealTypeLabel(recipe.mealType),
           '${recipe.ingredients.length} ingredients',
@@ -286,17 +283,14 @@ class _RecipeList extends ConsumerWidget {
           },
           child: Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: MediaRecipeCard(
+            child: RecipeListCard(
               title: recipe.title,
               meta:
                   '${_mealTypeLabel(recipe.mealType)} • Serves ${recipe.servings}',
-              imageUrl: recipe.imageUrl ?? '',
-              heroTag: heroTag,
               tags: recipe.cuisineTags.isEmpty
                   ? tags
                   : [recipe.cuisineTags.first, ...tags],
-              onTap: () =>
-                  context.push('/cooking/${recipe.id}?heroTag=$heroTag'),
+              onTap: () => context.push('/cooking/${recipe.id}'),
               trailing: canCopyToHousehold
                   ? Row(
                       mainAxisSize: MainAxisSize.min,

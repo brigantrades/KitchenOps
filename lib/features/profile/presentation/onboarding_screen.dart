@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:collection/collection.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
-import 'package:plateplan/features/profile/presentation/profile_form.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class OnboardingScreen extends ConsumerWidget {
   const OnboardingScreen({super.key});
@@ -17,7 +17,6 @@ class OnboardingScreen extends ConsumerWidget {
       return const Scaffold(body: Center(child: Text('Sign in required')));
     }
 
-    final profileRepo = ref.watch(profileRepositoryProvider);
     final profileAsync = ref.watch(profileProvider);
 
     return Scaffold(
@@ -26,49 +25,155 @@ class OnboardingScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) =>
             Center(child: Text('Could not load profile: $error')),
-        data: (profile) => ProfileForm(
-          initialName: profile?.name ?? '',
-          initialPrimaryGoal: profile?.goals.firstOrNull ?? 'more_veg',
-          initialDietaryRestrictions: profile?.dietaryRestrictions ?? const [],
-          initialPreferredCuisines: profile?.preferredCuisines ?? const [],
-          initialDislikedIngredients: profile?.dislikedIngredients ?? const [],
-          initialHouseholdServings: profile?.householdServings ?? 2,
-          submitLabel: 'Continue',
-          onSubmit: (form) async {
-            final updated = Profile(
-              id: user.id,
-              name: form.name,
-              goals: [form.primaryGoal],
-              dietaryRestrictions: form.dietaryRestrictions,
-              preferredCuisines: form.preferredCuisines,
-              dislikedIngredients: form.dislikedIngredients,
-              householdServings: form.householdServings,
-              householdId: profile?.householdId,
-            );
-            await profileRepo.upsertProfile(updated);
-            if (!context.mounted) return;
-            context.go('/');
-          },
-          onSkip: () async {
-            await profileRepo.upsertProfile(
-              Profile(
-                id: user.id,
-                name: profile?.name.trim().isNotEmpty == true
-                    ? profile!.name
-                    : 'Leckerly User',
-                goals: profile?.goals.isNotEmpty == true
-                    ? profile!.goals
-                    : const ['more_veg'],
-                dietaryRestrictions: profile?.dietaryRestrictions ?? const [],
-                preferredCuisines: profile?.preferredCuisines ?? const [],
-                dislikedIngredients: profile?.dislikedIngredients ?? const [],
-                householdServings: profile?.householdServings ?? 2,
-                householdId: profile?.householdId,
+        data: (profile) => _NameOnboardingBody(profile: profile, user: user),
+      ),
+    );
+  }
+}
+
+class _NameOnboardingBody extends ConsumerStatefulWidget {
+  const _NameOnboardingBody({
+    required this.profile,
+    required this.user,
+  });
+
+  final Profile? profile;
+  final User user;
+
+  @override
+  ConsumerState<_NameOnboardingBody> createState() =>
+      _NameOnboardingBodyState();
+}
+
+class _NameOnboardingBodyState extends ConsumerState<_NameOnboardingBody> {
+  late final TextEditingController _nameCtrl;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.profile?.name ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  Profile _profileWithName(String name) {
+    final p = widget.profile;
+    if (p != null) {
+      return p.copyWith(name: name);
+    }
+    return Profile(
+      id: widget.user.id,
+      name: name,
+      goals: const [],
+      dietaryRestrictions: const [],
+      preferredCuisines: const [],
+      dislikedIngredients: const [],
+      householdServings: 2,
+      householdId: null,
+      groceryListOrder: GroceryListOrder.empty,
+    );
+  }
+
+  Future<void> _continue() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your name.')),
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await ref.read(profileRepositoryProvider).upsertProfile(_profileWithName(name));
+      if (!mounted) return;
+      context.go('/');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _skip() async {
+    final name = widget.profile?.name.trim().isNotEmpty == true
+        ? widget.profile!.name
+        : 'Leckerly User';
+    setState(() => _busy = true);
+    try {
+      await ref.read(profileRepositoryProvider).upsertProfile(_profileWithName(name));
+      if (!mounted) return;
+      context.go('/');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: MediaQuery.sizeOf(context).height - kToolbarHeight - 48,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'What should we call you?',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Your name appears in your profile. You can change it anytime.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            TextField(
+              controller: _nameCtrl,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                border: OutlineInputBorder(),
               ),
-            );
-            if (!context.mounted) return;
-            context.go('/');
-          },
+              onSubmitted: (_) {
+                if (!_busy) _continue();
+              },
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            FilledButton(
+              onPressed: _busy ? null : _continue,
+              child: _busy
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Continue'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextButton(
+              onPressed: _busy ? null : _skip,
+              child: const Text('Skip for now'),
+            ),
+          ],
         ),
       ),
     );

@@ -1,4 +1,3 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,14 +9,41 @@ import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
-import 'package:plateplan/features/profile/presentation/profile_form.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
-class ProfileSettingsScreen extends ConsumerWidget {
+class ProfileSettingsScreen extends ConsumerStatefulWidget {
   const ProfileSettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProfileSettingsScreen> createState() =>
+      _ProfileSettingsScreenState();
+}
+
+class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
+  TextEditingController? _nameCtrl;
+  String? _nameCtrlUserId;
+  bool _savingName = false;
+
+  @override
+  void dispose() {
+    _nameCtrl?.dispose();
+    super.dispose();
+  }
+
+  void _syncNameController(String userId, String name) {
+    if (_nameCtrlUserId != userId || _nameCtrl == null) {
+      _nameCtrl?.dispose();
+      _nameCtrl = TextEditingController(text: name);
+      _nameCtrlUserId = userId;
+    }
+  }
+
+  static const _householdTooltip =
+      'A household lets you share your planner, grocery lists, and recipes '
+      'with family or roommates.';
+
+  @override
+  Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider);
     if (user == null) {
       return const Scaffold(
@@ -28,6 +54,7 @@ class ProfileSettingsScreen extends ConsumerWidget {
     final profileRepo = ref.watch(profileRepositoryProvider);
     final profileAsync = ref.watch(profileProvider);
     final pendingInvitesAsync = ref.watch(pendingHouseholdInvitesProvider);
+    final householdAsync = ref.watch(activeHouseholdProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -66,182 +93,338 @@ class ProfileSettingsScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) =>
             Center(child: Text('Could not load profile: $error')),
-        data: (profile) => ProfileForm(
-          topSections: [
-            pendingInvitesAsync.when(
-              loading: () => const SectionCard(
-                title: 'Household Invites',
-                child: Padding(
-                  padding: EdgeInsets.all(AppSpacing.sm),
-                  child: Center(child: CircularProgressIndicator()),
+        data: (profile) {
+          _syncNameController(user.id, profile?.name ?? '');
+          final ctrl = _nameCtrl!;
+
+          Future<void> saveName() async {
+            final trimmed = ctrl.text.trim();
+            if (trimmed.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Name cannot be empty.')),
+              );
+              return;
+            }
+            setState(() => _savingName = true);
+            FocusScope.of(context).unfocus();
+            try {
+              final toSave = profile != null
+                  ? profile.copyWith(name: trimmed)
+                  : Profile(
+                      id: user.id,
+                      name: trimmed,
+                      goals: const [],
+                      dietaryRestrictions: const [],
+                      preferredCuisines: const [],
+                      dislikedIngredients: const [],
+                      householdServings: 2,
+                      householdId: null,
+                      groceryListOrder: GroceryListOrder.empty,
+                    );
+              await profileRepo.upsertProfile(toSave);
+              ref.invalidate(profileProvider);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Name updated')),
+              );
+            } catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Could not save: $e')),
+              );
+            } finally {
+              if (mounted) setState(() => _savingName = false);
+            }
+          }
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+            children: [
+              pendingInvitesAsync.when(
+                loading: () => const SectionCard(
+                  title: 'Household Invites',
+                  child: Padding(
+                    padding: EdgeInsets.all(AppSpacing.sm),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ),
+                error: (error, _) => SectionCard(
+                  title: 'Household Invites',
+                  child: Text('Could not load invites: $error'),
+                ),
+                data: (invites) {
+                  if (invites.isEmpty) {
+                    return const SizedBox.shrink();
+                  }
+                  return SectionCard(
+                    title: invites.length == 1
+                        ? 'Household Invite'
+                        : 'Household Invites',
+                    subtitle: 'Accept or reject without leaving the app.',
+                    child: Column(
+                      children: invites
+                          .map(
+                            (invite) => Container(
+                              margin: const EdgeInsets.only(
+                                  bottom: AppSpacing.sm),
+                              padding: const EdgeInsets.all(AppSpacing.sm),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.5),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    invite.householdName,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Role: ${invite.role.name}',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                  const SizedBox(height: AppSpacing.sm),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: () async {
+                                            try {
+                                              await ref
+                                                  .read(
+                                                      householdRepositoryProvider)
+                                                  .rejectInvite(
+                                                      invite.householdId);
+                                              ref.invalidate(
+                                                  pendingHouseholdInvitesProvider);
+                                              ref.invalidate(
+                                                  householdMembersProvider);
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                      'Invite declined.'),
+                                                ),
+                                              );
+                                            } catch (error) {
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Could not decline invite: $error',
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          },
+                                          child: const Text('Reject'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: AppSpacing.sm),
+                                      Expanded(
+                                        child: FilledButton(
+                                          onPressed: () async {
+                                            try {
+                                              await ref
+                                                  .read(
+                                                      householdRepositoryProvider)
+                                                  .acceptInvite(
+                                                      invite.householdId);
+                                              ref.invalidate(profileProvider);
+                                              ref.invalidate(
+                                                  activeHouseholdProvider);
+                                              ref.invalidate(
+                                                  activeHouseholdIdProvider);
+                                              ref.invalidate(
+                                                  householdMembersProvider);
+                                              ref.invalidate(
+                                                  pendingHouseholdInvitesProvider);
+                                              ref.invalidate(
+                                                  plannerSlotsProvider);
+                                              ref.invalidate(
+                                                  groceryItemsProvider);
+                                              ref.invalidate(listsProvider);
+                                              ref.invalidate(recipesProvider);
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                const SnackBar(
+                                                  content:
+                                                      Text('Joined household.'),
+                                                ),
+                                              );
+                                            } catch (error) {
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Could not accept invite: $error',
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          },
+                                          child: const Text('Accept'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  );
+                },
+              ),
+              SectionCard(
+                title: 'Account',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Email',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      user.email ?? 'Not available',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  ],
                 ),
               ),
-              error: (error, _) => SectionCard(
-                title: 'Household Invites',
-                child: Text('Could not load invites: $error'),
+              const SizedBox(height: AppSpacing.sm),
+              SectionCard(
+                title: 'Name',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: ctrl,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: 'Your name',
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    FilledButton(
+                      onPressed: _savingName ? null : saveName,
+                      child: _savingName
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text('Save name'),
+                    ),
+                  ],
+                ),
               ),
-              data: (invites) {
-                if (invites.isEmpty) {
-                  return const SizedBox.shrink();
-                }
-                return SectionCard(
-                  title: invites.length == 1
-                      ? 'Household Invite'
-                      : 'Household Invites',
-                  subtitle: 'Accept or reject without leaving the app.',
-                  child: Column(
-                    children: invites
-                        .map(
-                          (invite) => Container(
-                            margin:
-                                const EdgeInsets.only(bottom: AppSpacing.sm),
-                            padding: const EdgeInsets.all(AppSpacing.sm),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.5),
+              const SizedBox(height: AppSpacing.sm),
+              SectionCard(
+                title: 'Household',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        icon: const Icon(Icons.info_outline_rounded),
+                        tooltip: _householdTooltip,
+                        onPressed: () {
+                          showModalBottomSheet<void>(
+                            context: context,
+                            showDragHandle: true,
+                            builder: (ctx) => Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                  20, 0, 20, 24),
+                              child: Text(
+                                _householdTooltip,
+                                style: Theme.of(ctx).textTheme.bodyLarge,
+                              ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  invite.householdName,
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Role: ${invite.role.name}',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                const SizedBox(height: AppSpacing.sm),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton(
-                                        onPressed: () async {
-                                          try {
-                                            await ref
-                                                .read(
-                                                    householdRepositoryProvider)
-                                                .rejectInvite(
-                                                    invite.householdId);
-                                            ref.invalidate(
-                                                pendingHouseholdInvitesProvider);
-                                            ref.invalidate(
-                                                householdMembersProvider);
-                                            if (!context.mounted) return;
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              const SnackBar(
-                                                content:
-                                                    Text('Invite declined.'),
-                                              ),
-                                            );
-                                          } catch (error) {
-                                            if (!context.mounted) return;
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'Could not decline invite: $error',
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        child: const Text('Reject'),
-                                      ),
+                          );
+                        },
+                      ),
+                    ),
+                    householdAsync.when(
+                      loading: () => const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                      error: (e, _) => Text('Could not load household: $e'),
+                      data: (household) {
+                        if (household != null) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                household.name,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyLarge
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'You can share planner, grocery lists, and recipes with your household.',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
                                     ),
-                                    const SizedBox(width: AppSpacing.sm),
-                                    Expanded(
-                                      child: FilledButton(
-                                        onPressed: () async {
-                                          try {
-                                            await ref
-                                                .read(
-                                                    householdRepositoryProvider)
-                                                .acceptInvite(
-                                                    invite.householdId);
-                                            ref.invalidate(profileProvider);
-                                            ref.invalidate(
-                                                activeHouseholdProvider);
-                                            ref.invalidate(
-                                                activeHouseholdIdProvider);
-                                            ref.invalidate(
-                                                householdMembersProvider);
-                                            ref.invalidate(
-                                                pendingHouseholdInvitesProvider);
-                                            ref.invalidate(
-                                                plannerSlotsProvider);
-                                            ref.invalidate(
-                                                groceryItemsProvider);
-                                            ref.invalidate(listsProvider);
-                                            ref.invalidate(recipesProvider);
-                                            if (!context.mounted) return;
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              const SnackBar(
-                                                content:
-                                                    Text('Joined household.'),
-                                              ),
-                                            );
-                                          } catch (error) {
-                                            if (!context.mounted) return;
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'Could not accept invite: $error',
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        child: const Text('Accept'),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              OutlinedButton.icon(
+                                onPressed: () =>
+                                    context.push('/household'),
+                                icon: const Icon(Icons.groups_2_outlined),
+                                label: const Text('Manage household'),
+                              ),
+                            ],
+                          );
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Create a household to plan and shop together.',
+                              style: Theme.of(context).textTheme.bodyMedium,
                             ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                );
-              },
-            ),
-          ],
-          initialName: profile?.name ?? '',
-          initialPrimaryGoal: profile?.goals.firstOrNull ?? 'more_veg',
-          initialDietaryRestrictions: profile?.dietaryRestrictions ?? const [],
-          initialPreferredCuisines: profile?.preferredCuisines ?? const [],
-          initialDislikedIngredients: profile?.dislikedIngredients ?? const [],
-          initialHouseholdServings: profile?.householdServings ?? 2,
-          submitLabel: 'Save changes',
-          onSubmit: (form) async {
-            await profileRepo.upsertProfile(
-              Profile(
-                id: user.id,
-                name: form.name,
-                goals: [form.primaryGoal],
-                dietaryRestrictions: form.dietaryRestrictions,
-                preferredCuisines: form.preferredCuisines,
-                dislikedIngredients: form.dislikedIngredients,
-                householdServings: form.householdServings,
-                householdId: profile?.householdId,
+                            const SizedBox(height: AppSpacing.sm),
+                            FilledButton.icon(
+                              onPressed: () => context.push('/household'),
+                              icon: const Icon(Icons.add_home_outlined),
+                              label: const Text('Create a household'),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-            );
-            ref.invalidate(profileProvider);
-            if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Profile updated')),
-            );
-            context.go('/');
-          },
-        ),
+            ],
+          );
+        },
       ),
     );
   }

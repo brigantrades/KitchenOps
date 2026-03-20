@@ -21,9 +21,8 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
     final repo = ref.read(profileRepositoryProvider);
     final profile = await repo.fetchProfile(user.id);
     if (!mounted) return;
-    final needsOnboarding = profile == null ||
-        profile.goals.isEmpty ||
-        profile.preferredCuisines.isEmpty;
+    final needsOnboarding =
+        profile == null || profile.name.trim().isEmpty;
     context.go(needsOnboarding ? '/onboarding' : '/');
   }
 

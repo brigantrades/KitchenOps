@@ -172,10 +172,9 @@ class DiscoverScreen extends ConsumerWidget {
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final recipe = recipes[index];
-        return MediaRecipeCard(
+        return RecipeListCard(
           title: recipe.title,
           meta: _recipeMeta(recipe),
-          imageUrl: recipe.imageUrl ?? '',
           tags: recipe.cuisineTags,
           trailing: _nutritionChip(recipe),
           onTap: () => _showPublicRecipeDetail(context, ref, recipe),
