@@ -230,7 +230,9 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Drag the grip icon beside each name to reorder. The top list opens first.',
+                    working.length > 1
+                        ? 'Drag the grip to reorder. The top list opens first. Use the trash icon to delete a list.'
+                        : 'Use the trash icon to delete this list.',
                     style: Theme.of(ctx).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 12),
@@ -278,18 +280,52 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                           key: ValueKey(list.id),
                           color: scheme.surfaceContainerLow,
                           child: ListTile(
-                            leading: ReorderableDragStartListener(
-                              index: index,
-                              child: SizedBox(
-                                width: 40,
-                                height: 40,
-                                child: Icon(
-                                  Icons.drag_handle_rounded,
-                                  color: scheme.onSurface,
-                                ),
-                              ),
-                            ),
+                            leading: working.length > 1
+                                ? ReorderableDragStartListener(
+                                    index: index,
+                                    child: SizedBox(
+                                      width: 40,
+                                      height: 40,
+                                      child: Icon(
+                                        Icons.drag_handle_rounded,
+                                        color: scheme.onSurface,
+                                      ),
+                                    ),
+                                  )
+                                : SizedBox(
+                                    width: 40,
+                                    height: 40,
+                                    child: Icon(
+                                      Icons.list_rounded,
+                                      color: scheme.onSurface
+                                          .withValues(alpha: 0.45),
+                                    ),
+                                  ),
                             title: Text(list.name),
+                            trailing: IconButton(
+                              tooltip: 'Delete list',
+                              icon: Icon(
+                                Icons.delete_outline_rounded,
+                                color: scheme.error,
+                              ),
+                              onPressed: () async {
+                                final deleted = await _confirmDeleteList(
+                                  list,
+                                  anchorContext: ctx,
+                                );
+                                if (!deleted || !mounted) return;
+                                setModalState(() {
+                                  working.removeWhere((e) => e.id == list.id);
+                                  liveOrder = liveOrder.withIdsFor(
+                                    scope,
+                                    working.map((e) => e.id).toList(),
+                                  );
+                                });
+                                if (working.isEmpty && sheetCtx.mounted) {
+                                  Navigator.of(sheetCtx).pop();
+                                }
+                              },
+                            ),
                           ),
                         );
                       },
@@ -329,12 +365,12 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
               SegmentedButton<ListScope>(
                 segments: const [
                   ButtonSegment(
-                    value: ListScope.private,
-                    label: Text('Private'),
-                  ),
-                  ButtonSegment(
                     value: ListScope.household,
                     label: Text('Household'),
+                  ),
+                  ButtonSegment(
+                    value: ListScope.private,
+                    label: Text('Private'),
                   ),
                 ],
                 selected: {scope},
@@ -382,9 +418,96 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     ref.invalidate(listsProvider);
     ref.invalidate(profileProvider);
     ref.read(selectedListIdProvider.notifier).state = result.id;
-    final newScopeIdx = result.scope == ListScope.private ? 0 : 1;
+    final newScopeIdx = result.scope == ListScope.household ? 0 : 1;
     if (_listScopeIndex != newScopeIdx) {
       setState(() => _listScopeIndex = newScopeIdx);
+    }
+  }
+
+  /// Returns true if the list was deleted on the server.
+  Future<bool> _confirmDeleteList(
+    AppList list, {
+    BuildContext? anchorContext,
+  }) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return false;
+    final householdNote = list.scope == ListScope.household
+        ? ' Household members will no longer see this list.'
+        : '';
+    final sheetContext = anchorContext ?? context;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: sheetContext,
+      showDragHandle: true,
+      builder: (context) => BrandedSheetScaffold(
+        title: 'Delete list?',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Delete "${list.name}"? All items will be removed. This cannot be undone.$householdNote',
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      foregroundColor: Theme.of(context).colorScheme.onError,
+                    ),
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text('Delete'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return false;
+    try {
+      await ref.read(groceryRepositoryProvider).deleteList(
+            userId: user.id,
+            list: list,
+          );
+      if (ref.read(selectedListIdProvider) == list.id) {
+        ref.read(selectedListIdProvider.notifier).state = null;
+      }
+      ref.invalidate(listsProvider);
+      ref.invalidate(profileProvider);
+      ref.invalidate(groceryItemsProvider);
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Deleted "${list.name}"')),
+      );
+      return true;
+    } on PostgrestException catch (e) {
+      if (!mounted) return false;
+      final msg = e.message.toLowerCase();
+      final friendly = msg.contains('row-level security') ||
+              msg.contains('violates row-level') ||
+              msg.contains('permission denied')
+          ? 'You don\'t have permission to delete this list.'
+          : 'Could not delete list. Try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendly)),
+      );
+      return false;
+    } catch (_) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete list. Try again.')),
+      );
+      return false;
     }
   }
 
@@ -609,9 +732,11 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 data: (lists) {
                   final effectiveScopeIndex =
                       hasSharedHousehold ? _listScopeIndex : 0;
-                  final scopeFilter = effectiveScopeIndex == 0
+                  final scopeFilter = !hasSharedHousehold
                       ? ListScope.private
-                      : ListScope.household;
+                      : (effectiveScopeIndex == 0
+                          ? ListScope.household
+                          : ListScope.private);
                   final listOrder = profileAsync.valueOrNull?.groceryListOrder ??
                       GroceryListOrder.empty;
                   final orderedFilteredLists =
@@ -637,13 +762,13 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     children: [
                       if (hasSharedHousehold) ...[
                         SegmentedPills(
-                          labels: const ['Private', 'Shared'],
+                          labels: const ['Shared', 'Private'],
                           selectedIndex: effectiveScopeIndex,
                           onSelect: (idx) {
                             setState(() => _listScopeIndex = idx);
                             final newScope = idx == 0
-                                ? ListScope.private
-                                : ListScope.household;
+                                ? ListScope.household
+                                : ListScope.private;
                             final order = ref
                                     .read(profileProvider)
                                     .valueOrNull
@@ -710,8 +835,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                   ),
                           ),
                           IconButton(
-                            tooltip: 'Reorder lists',
-                            onPressed: orderedFilteredLists.length < 2
+                            tooltip: 'Reorder or delete lists',
+                            onPressed: orderedFilteredLists.isEmpty
                                 ? null
                                 : () => _openReorderListSheet(
                                       orderedLists: orderedFilteredLists,
