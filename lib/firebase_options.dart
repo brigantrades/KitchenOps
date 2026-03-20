@@ -24,8 +24,8 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDe4Q2I-TzahUQ9LB-ZcJwtkXknPzheCFw',
-    appId: '1:1040237027470:android:84885c2d601730f70929df',
+    apiKey: 'AIzaSyDSq7NyFkTnIYYl3E-4B5uaco_ijEph2KY',
+    appId: '1:1040237027470:android:384a205d61218cdf0929df',
     messagingSenderId: '1040237027470',
     projectId: 'forkflow-4e529',
     storageBucket: 'forkflow-4e529.firebasestorage.app',
@@ -36,6 +36,6 @@ class DefaultFirebaseOptions {
     appId: 'replace_me',
     messagingSenderId: 'replace_me',
     projectId: 'replace_me',
-    iosBundleId: 'com.example.plateplan',
+    iosBundleId: 'com.example.leckerly',
   );
 }

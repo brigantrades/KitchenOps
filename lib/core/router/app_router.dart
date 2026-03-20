@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/config/env.dart';
+import 'package:plateplan/core/router/root_navigation.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/features/auth/presentation/auth_gate_screen.dart';
@@ -25,6 +26,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ]
       : const <NavigatorObserver>[];
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/auth',
     observers: observers,
     redirect: (context, state) {

@@ -312,6 +312,7 @@ class GroceryItem {
     this.fromRecipeId,
     this.listId,
     this.sourceSlotId,
+    this.addedByUserId,
   });
 
   final String id;
@@ -322,6 +323,8 @@ class GroceryItem {
   final String? fromRecipeId;
   final String? listId;
   final String? sourceSlotId;
+  /// Profile id of the member who added this row (list_items.user_id).
+  final String? addedByUserId;
 
   bool get fromPlanner => fromRecipeId != null;
 
@@ -334,6 +337,7 @@ class GroceryItem {
         'from_recipe_id': fromRecipeId,
         'list_id': listId,
         'source_slot_id': sourceSlotId,
+        if (addedByUserId != null) 'user_id': addedByUserId,
       };
 
   factory GroceryItem.fromJson(Map<String, dynamic> json) => GroceryItem(
@@ -348,6 +352,7 @@ class GroceryItem {
         fromRecipeId: json['from_recipe_id']?.toString(),
         listId: json['list_id']?.toString(),
         sourceSlotId: json['source_slot_id']?.toString(),
+        addedByUserId: json['user_id']?.toString(),
       );
 }
 
@@ -359,6 +364,7 @@ class AppList {
     required this.scope,
     this.householdId,
     required this.ownerUserId,
+    this.createdAt,
   });
 
   final String id;
@@ -367,6 +373,7 @@ class AppList {
   final ListScope scope;
   final String? householdId;
   final String ownerUserId;
+  final DateTime? createdAt;
 
   factory AppList.fromJson(Map<String, dynamic> json) => AppList(
         id: json['id'].toString(),
@@ -378,7 +385,49 @@ class AppList {
             ListScope.private,
         householdId: json['household_id']?.toString(),
         ownerUserId: json['owner_user_id']?.toString() ?? '',
+        createdAt: json['created_at'] != null
+            ? DateTime.tryParse(json['created_at'].toString())
+            : null,
       );
+}
+
+/// Saved on `profiles.grocery_list_order` (per-user list ordering).
+class GroceryListOrder {
+  const GroceryListOrder({
+    this.privateIds = const [],
+    this.householdIds = const [],
+  });
+
+  final List<String> privateIds;
+  final List<String> householdIds;
+
+  static const empty = GroceryListOrder();
+
+  List<String> idsFor(ListScope scope) =>
+      scope == ListScope.private ? privateIds : householdIds;
+
+  GroceryListOrder withIdsFor(ListScope scope, List<String> ids) {
+    if (scope == ListScope.private) {
+      return GroceryListOrder(privateIds: ids, householdIds: householdIds);
+    }
+    return GroceryListOrder(privateIds: privateIds, householdIds: ids);
+  }
+
+  Map<String, dynamic> toJsonColumn() => {
+        ListScope.private.name: privateIds,
+        ListScope.household.name: householdIds,
+      };
+
+  factory GroceryListOrder.fromJson(dynamic json) {
+    if (json == null || json is! Map) return const GroceryListOrder();
+    final m = Map<String, dynamic>.from(json);
+    List<String> parse(String key) =>
+        (m[key] as List?)?.map((e) => e.toString()).toList() ?? const [];
+    return GroceryListOrder(
+      privateIds: parse(ListScope.private.name),
+      householdIds: parse(ListScope.household.name),
+    );
+  }
 }
 
 MealType _mealTypeFromDb(String? value) {
@@ -413,6 +462,7 @@ class Profile {
     this.dislikedIngredients = const [],
     this.householdServings,
     this.householdId,
+    this.groceryListOrder = GroceryListOrder.empty,
   });
 
   final String id;
@@ -424,6 +474,7 @@ class Profile {
   final List<String> dislikedIngredients;
   final int? householdServings;
   final String? householdId;
+  final GroceryListOrder groceryListOrder;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -457,6 +508,8 @@ class Profile {
             const [],
         householdServings: (json['household_servings'] as num?)?.toInt(),
         householdId: json['household_id']?.toString(),
+        groceryListOrder:
+            GroceryListOrder.fromJson(json['grocery_list_order']),
       );
 }
 

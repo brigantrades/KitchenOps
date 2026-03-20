@@ -6,13 +6,38 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/profile/data/profile_providers.dart';
+import 'package:plateplan/features/profile/data/profile_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Applies saved [order] for [scope]; unknown ids sort by [AppList.createdAt].
+List<AppList> applyGroceryListOrder(
+  List<AppList> lists,
+  ListScope scope,
+  GroceryListOrder order,
+) {
+  final filtered = lists.where((l) => l.scope == scope).toList();
+  if (filtered.isEmpty) return filtered;
+  final preferred = order.idsFor(scope);
+  final index = {for (var i = 0; i < preferred.length; i++) preferred[i]: i};
+  int rank(AppList l) => index[l.id] ?? (1 << 30);
+  filtered.sort((a, b) {
+    final ra = rank(a);
+    final rb = rank(b);
+    if (ra != rb) return ra.compareTo(rb);
+    final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return da.compareTo(db);
+  });
+  return filtered;
+}
+
 class GroceryRepository {
-  GroceryRepository(this._cache);
+  GroceryRepository(this._cache, this._profileRepo);
 
   final SupabaseClient _client = Supabase.instance.client;
   final LocalCache _cache;
+  final ProfileRepository _profileRepo;
   List<String> _usdaCatalog = const [];
   Map<String, List<String>> _usdaPrefixIndex = const {};
   bool _catalogLoadAttempted = false;
@@ -288,9 +313,7 @@ class GroceryRepository {
     return score;
   }
 
-  Future<List<GroceryItem>> listItems(String userId) async {
-    final listId = await _defaultListIdForUser(userId);
-    if (listId == null || listId.isEmpty) return [];
+  Future<List<GroceryItem>> _fetchListItemsForList(String listId) async {
     try {
       final rows = await _client
           .from('list_items')
@@ -308,41 +331,58 @@ class GroceryRepository {
     }
   }
 
+  Future<List<GroceryItem>> listItems(String userId) async {
+    final listId = await _defaultListIdForUser(userId);
+    if (listId == null || listId.isEmpty) return [];
+    return _fetchListItemsForList(listId);
+  }
+
   Stream<List<GroceryItem>> streamItems(String userId) async* {
     final listId = await _defaultListIdForUser(userId);
     if (listId == null || listId.isEmpty) {
       yield const [];
       return;
     }
-
-    final initial = await listItems(userId);
-    yield initial;
-
-    yield* _client
-        .from('list_items')
-        .stream(primaryKey: ['id'])
-        .eq('list_id', listId)
-        .order('created_at')
-        .map((rows) {
-          final items = rows
-              .whereType<Map<String, dynamic>>()
-              .map(GroceryItem.fromJson)
-              .toList();
-          unawaited(_cache.saveGrocery(items.map((e) => e.toJson()).toList()));
-          return items;
-        });
+    yield* streamItemsForList(listId);
   }
 
+  /// Live updates via Realtime; refetches on each change. No column filter on
+  /// the subscription: DELETE replication often omits `list_id` from the old
+  /// row, so `list_id=eq...` filters block delete events; RLS scopes events.
   Stream<List<GroceryItem>> streamItemsForList(String listId) {
-    return _client
-        .from('list_items')
-        .stream(primaryKey: ['id'])
-        .eq('list_id', listId)
-        .order('created_at')
-        .map((rows) => rows
-            .whereType<Map<String, dynamic>>()
-            .map(GroceryItem.fromJson)
-            .toList());
+    return Stream<List<GroceryItem>>.multi((multi) {
+      RealtimeChannel? channel;
+      final topic =
+          'public:list_items:list=$listId:${DateTime.now().microsecondsSinceEpoch}';
+
+      Future<void> pushFresh() async {
+        if (multi.isClosed) return;
+        final items = await _fetchListItemsForList(listId);
+        if (!multi.isClosed) {
+          multi.add(items);
+        }
+      }
+
+      () async {
+        await pushFresh();
+        if (multi.isClosed) return;
+        channel = _client.channel(topic);
+        channel!
+            .onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'list_items',
+              callback: (_) {
+                pushFresh();
+              },
+            )
+            .subscribe();
+      }();
+
+      multi.onCancel = () {
+        unawaited(channel?.unsubscribe());
+      };
+    });
   }
 
   Future<void> addItem({
@@ -481,7 +521,9 @@ class GroceryRepository {
         })
         .select()
         .single();
-    return AppList.fromJson(row);
+    final list = AppList.fromJson(row);
+    await _profileRepo.appendGroceryListId(userId, scope, list.id);
+    return list;
   }
 
   Future<String?> _defaultListIdForUser(String userId) async {
@@ -548,7 +590,10 @@ class GroceryRepository {
 }
 
 final groceryRepositoryProvider = Provider<GroceryRepository>((ref) {
-  return GroceryRepository(ref.watch(localCacheProvider));
+  return GroceryRepository(
+    ref.watch(localCacheProvider),
+    ref.watch(profileRepositoryProvider),
+  );
 });
 
 final listsProvider = FutureProvider<List<AppList>>((ref) async {
@@ -559,17 +604,35 @@ final listsProvider = FutureProvider<List<AppList>>((ref) async {
 
 final selectedListIdProvider = StateProvider<String?>((ref) => null);
 
-final groceryItemsProvider = StreamProvider<List<GroceryItem>>((ref) async* {
+/// Realtime + fetch per list id. [keepAlive] retains the subscription when you
+/// switch Private/Shared so the UI can show cached data instead of a cold reload.
+final groceryListItemsFamily =
+    StreamProvider.autoDispose.family<List<GroceryItem>, String>(
+  (ref, listId) {
+    ref.keepAlive();
+    return ref.watch(groceryRepositoryProvider).streamItemsForList(listId);
+  },
+);
+
+/// When no list is selected yet, follow the user's default grocery list.
+final groceryItemsDefaultListStreamProvider =
+    StreamProvider<List<GroceryItem>>((ref) async* {
   final user = ref.watch(currentUserProvider);
   if (user == null) {
     yield const [];
     return;
   }
+  yield* ref.watch(groceryRepositoryProvider).streamItems(user.id);
+});
+
+/// Resolves to the active list's [AsyncValue] without tearing down the stream on
+/// every [selectedListId] change (see [groceryListItemsFamily]).
+final groceryItemsProvider = Provider<AsyncValue<List<GroceryItem>>>((ref) {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return const AsyncData([]);
   final selectedListId = ref.watch(selectedListIdProvider);
-  final repo = ref.watch(groceryRepositoryProvider);
   if (selectedListId != null && selectedListId.isNotEmpty) {
-    yield* repo.streamItemsForList(selectedListId);
-    return;
+    return ref.watch(groceryListItemsFamily(selectedListId));
   }
-  yield* repo.streamItems(user.id);
+  return ref.watch(groceryItemsDefaultListStreamProvider);
 });

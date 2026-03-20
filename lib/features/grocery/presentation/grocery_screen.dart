@@ -11,6 +11,7 @@ import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
+import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const double _groceryCardGridSpacing = 8;
@@ -196,6 +197,113 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     ref.invalidate(groceryItemsProvider);
   }
 
+  Future<void> _openReorderListSheet({
+    required List<AppList> orderedLists,
+    required ListScope scope,
+  }) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null || orderedLists.isEmpty) return;
+    final profileRepo = ref.read(profileRepositoryProvider);
+    var working = List<AppList>.from(orderedLists);
+    var liveOrder = ref.read(profileProvider).valueOrNull?.groceryListOrder ??
+        GroceryListOrder.empty;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'List order',
+                    style: Theme.of(ctx).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Drag the grip icon beside each name to reorder. The top list opens first.',
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: (working.length * 56.0).clamp(120, 360),
+                    child: ReorderableListView.builder(
+                      primary: false,
+                      // Mobile: Flutter does NOT paint default handles — only long-press on the
+                      // row (often broken in bottom sheets). Desktop: handle is trailing. Use an
+                      // explicit leading grip + ReorderableDragStartListener on all platforms.
+                      buildDefaultDragHandles: false,
+                      shrinkWrap: true,
+                      physics: working.length > 5
+                          ? const ClampingScrollPhysics()
+                          : const NeverScrollableScrollPhysics(),
+                      itemCount: working.length,
+                      onReorder: (oldIndex, newIndex) async {
+                        if (newIndex > oldIndex) newIndex -= 1;
+                        setModalState(() {
+                          final item = working.removeAt(oldIndex);
+                          working.insert(newIndex, item);
+                        });
+                        final newIds = working.map((e) => e.id).toList();
+                        liveOrder = liveOrder.withIdsFor(scope, newIds);
+                        try {
+                          await profileRepo.updateGroceryListOrder(
+                            user.id,
+                            liveOrder,
+                          );
+                          ref.invalidate(profileProvider);
+                        } catch (_) {
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                content: Text('Could not save list order.'),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      itemBuilder: (ctx, index) {
+                        final list = working[index];
+                        final scheme = Theme.of(ctx).colorScheme;
+                        return Material(
+                          key: ValueKey(list.id),
+                          color: scheme.surfaceContainerLow,
+                          child: ListTile(
+                            leading: ReorderableDragStartListener(
+                              index: index,
+                              child: SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: Icon(
+                                  Icons.drag_handle_rounded,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            title: Text(list.name),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _openCreateListSheet(ListScope defaultScope) async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
@@ -272,6 +380,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     );
     if (!mounted || result == null) return;
     ref.invalidate(listsProvider);
+    ref.invalidate(profileProvider);
     ref.read(selectedListIdProvider.notifier).state = result.id;
     final newScopeIdx = result.scope == ListScope.private ? 0 : 1;
     if (_listScopeIndex != newScopeIdx) {
@@ -401,8 +510,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     final itemsAsync = ref.watch(groceryItemsProvider);
     final listsAsync = ref.watch(listsProvider);
     final selectedListId = ref.watch(selectedListIdProvider);
+    final currentUser = ref.watch(currentUserProvider);
     final hasSharedHousehold =
         ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
+    final profileAsync = ref.watch(profileProvider);
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
@@ -413,7 +524,19 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
             icon: const Icon(Icons.share_outlined),
             onPressed: () async {
               final messenger = ScaffoldMessenger.of(context);
-              final items = await ref.read(groceryItemsProvider.future);
+              final async = ref.read(groceryItemsProvider);
+              final List<GroceryItem> items;
+              if (async.hasValue) {
+                items = async.requireValue;
+              } else {
+                final sid = ref.read(selectedListIdProvider);
+                if (sid != null && sid.isNotEmpty) {
+                  items = await ref.read(groceryListItemsFamily(sid).future);
+                } else {
+                  items =
+                      await ref.read(groceryItemsDefaultListStreamProvider.future);
+                }
+              }
               await ref.read(groceryRepositoryProvider).shareText(items);
               if (!mounted) {
                 return;
@@ -435,10 +558,23 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add item'),
       ),
-      body: itemsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('Error: $error')),
-        data: (items) {
+      body: Builder(
+        builder: (context) {
+          if (itemsAsync.hasError && !itemsAsync.hasValue) {
+            return Center(child: Text('Error: ${itemsAsync.error}'));
+          }
+
+          final lists = listsAsync.valueOrNull ?? [];
+          final selectedScope = lists
+              .firstWhereOrNull((l) => l.id == selectedListId)
+              ?.scope;
+          final householdNewBadges = selectedScope == ListScope.household &&
+              currentUser != null;
+          final viewerId = currentUser?.id;
+          final items = itemsAsync.valueOrNull;
+          final itemsAreaLoading =
+              itemsAsync.isLoading && !itemsAsync.hasValue;
+
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
             children: [
@@ -456,7 +592,9 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '${items.length} items',
+                        itemsAreaLoading
+                            ? 'Loading items…'
+                            : '${items?.length ?? 0} items',
                         style:
                             Theme.of(context).textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
@@ -474,19 +612,26 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                   final scopeFilter = effectiveScopeIndex == 0
                       ? ListScope.private
                       : ListScope.household;
-                  final filteredLists = hasSharedHousehold
-                      ? lists
-                          .where((l) => l.scope == scopeFilter)
-                          .toList()
-                      : lists;
+                  final listOrder = profileAsync.valueOrNull?.groceryListOrder ??
+                      GroceryListOrder.empty;
+                  final orderedFilteredLists =
+                      applyGroceryListOrder(lists, scopeFilter, listOrder);
 
-                  if ((selectedListId == null || selectedListId.isEmpty) &&
-                      filteredLists.isNotEmpty) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      ref.read(selectedListIdProvider.notifier).state =
-                          filteredLists.first.id;
-                    });
+                  if (orderedFilteredLists.isNotEmpty) {
+                    final hasValid = selectedListId != null &&
+                        orderedFilteredLists.any((l) => l.id == selectedListId);
+                    if (!hasValid) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        ref.read(selectedListIdProvider.notifier).state =
+                            orderedFilteredLists.first.id;
+                      });
+                    }
                   }
+
+                  final dropdownValue = selectedListId != null &&
+                          orderedFilteredLists.any((l) => l.id == selectedListId)
+                      ? selectedListId
+                      : orderedFilteredLists.firstOrNull?.id;
 
                   return Column(
                     children: [
@@ -499,9 +644,13 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                             final newScope = idx == 0
                                 ? ListScope.private
                                 : ListScope.household;
-                            final newScopeLists = lists
-                                .where((l) => l.scope == newScope)
-                                .toList();
+                            final order = ref
+                                    .read(profileProvider)
+                                    .valueOrNull
+                                    ?.groceryListOrder ??
+                                GroceryListOrder.empty;
+                            final newScopeLists =
+                                applyGroceryListOrder(lists, newScope, order);
                             final currentStillVisible = newScopeLists
                                 .any((l) => l.id == selectedListId);
                             if (!currentStillVisible &&
@@ -514,32 +663,69 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                         ),
                         const SizedBox(height: 10),
                       ],
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ...filteredLists.map(
-                              (list) => ChoiceChip(
-                                label: Text(list.name),
-                                selected: list.id == selectedListId,
-                                onSelected: (_) {
-                                  ref
-                                      .read(
-                                          selectedListIdProvider.notifier)
-                                      .state = list.id;
-                                },
-                              ),
-                            ),
-                            ActionChip(
-                              avatar: const Icon(Icons.add, size: 18),
-                              label: const Text('New list'),
-                              onPressed: () =>
-                                  _openCreateListSheet(scopeFilter),
-                            ),
-                          ],
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: orderedFilteredLists.isEmpty
+                                ? Text(
+                                    'No lists yet',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium,
+                                  )
+                                : InputDecorator(
+                                    decoration: const InputDecoration(
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 4,
+                                      ),
+                                    ),
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<String>(
+                                        value: dropdownValue,
+                                        isExpanded: true,
+                                        isDense: true,
+                                        items: orderedFilteredLists
+                                            .map(
+                                              (list) =>
+                                                  DropdownMenuItem<String>(
+                                                value: list.id,
+                                                child: Text(list.name),
+                                              ),
+                                            )
+                                            .toList(),
+                                        onChanged: (id) {
+                                          if (id != null) {
+                                            ref
+                                                .read(selectedListIdProvider
+                                                    .notifier)
+                                                .state = id;
+                                          }
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                          IconButton(
+                            tooltip: 'Reorder lists',
+                            onPressed: orderedFilteredLists.length < 2
+                                ? null
+                                : () => _openReorderListSheet(
+                                      orderedLists: orderedFilteredLists,
+                                      scope: scopeFilter,
+                                    ),
+                            icon: const Icon(Icons.sort_rounded),
+                          ),
+                          IconButton(
+                            tooltip: 'New list',
+                            onPressed: () =>
+                                _openCreateListSheet(scopeFilter),
+                            icon: const Icon(Icons.add_circle_outline_rounded),
+                          ),
+                        ],
                       ),
                     ],
                   );
@@ -565,6 +751,13 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                         ),
                       ],
                     ),
+                  ),
+                )
+              else if (itemsAreaLoading || items == null)
+                const SectionCard(
+                  child: SizedBox(
+                    height: 160,
+                    child: Center(child: CircularProgressIndicator()),
                   ),
                 )
               else if (items.isEmpty)
@@ -595,15 +788,21 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: items.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
                           mainAxisSpacing: _groceryCardGridSpacing,
                           crossAxisSpacing: _groceryCardGridSpacing,
                           childAspectRatio: _groceryCardAspectRatio,
                         ),
                         itemBuilder: (context, index) {
+                          final item = items[index];
+                          final showNewBadge = householdNewBadges &&
+                              item.addedByUserId != null &&
+                              item.addedByUserId != viewerId;
                           return _GroceryItemCard(
-                            item: items[index],
+                            item: item,
+                            showNewBadge: showNewBadge,
                             onRemove: _removeItem,
                             onUpdateQuantity: _promptUpdateQuantity,
                           );
@@ -946,11 +1145,13 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
 class _GroceryItemCard extends StatelessWidget {
   const _GroceryItemCard({
     required this.item,
+    required this.showNewBadge,
     required this.onRemove,
     required this.onUpdateQuantity,
   });
 
   final GroceryItem item;
+  final bool showNewBadge;
   final Future<void> Function(String itemId) onRemove;
   final Future<void> Function(GroceryItem item) onUpdateQuantity;
 
@@ -976,97 +1177,148 @@ class _GroceryItemCard extends StatelessWidget {
             final ultraCompact = availableHeight < 126;
             final compact = availableHeight < 150;
             const iconSize = 38.0;
-            return Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: ultraCompact ? 5 : (compact ? 7 : 10),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (foodAsset != null)
-                    Image.asset(
-                      foodAsset,
-                      width: iconSize,
-                      height: iconSize,
-                      filterQuality: FilterQuality.high,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Icon(
-                          _iconForName(
-                            item.name,
-                            fallback: item.category.icon,
-                          ),
-                          color: item.category.tint,
-                          size: iconSize,
-                        );
-                      },
-                    )
-                  else
-                    Icon(
-                      _iconForName(item.name, fallback: item.category.icon),
-                      color: item.category.tint,
-                      size: iconSize,
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned.fill(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: ultraCompact ? 5 : (compact ? 7 : 10),
                     ),
-                  SizedBox(height: ultraCompact ? 4 : (compact ? 6 : 8)),
-                  Text(
-                    item.name,
-                    maxLines: compact ? 1 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                      fontSize: ultraCompact ? 12 : 12,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                        Center(
+                          child: foodAsset != null
+                              ? Image.asset(
+                                  foodAsset,
+                                  width: iconSize,
+                                  height: iconSize,
+                                  filterQuality: FilterQuality.high,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Icon(
+                                      _iconForName(
+                                        item.name,
+                                        fallback: item.category.icon,
+                                      ),
+                                      color: item.category.tint,
+                                      size: iconSize,
+                                    );
+                                  },
+                                )
+                              : Icon(
+                                  _iconForName(
+                                    item.name,
+                                    fallback: item.category.icon,
+                                  ),
+                                  color: item.category.tint,
+                                  size: iconSize,
+                                ),
+                        ),
+                        SizedBox(height: ultraCompact ? 4 : (compact ? 6 : 8)),
+                        SizedBox(
+                          width: double.infinity,
+                          child: Text(
+                            item.name,
+                            maxLines: compact ? 1 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              fontSize: ultraCompact ? 12 : 12,
+                            ),
+                          ),
+                        ),
+                        if (ultraCompact && hasMultipleQuantity) ...[
+                          const SizedBox(height: 2),
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              '(${_displayQuantity(quantityValue)})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color:
+                                    scheme.onSurface.withValues(alpha: 0.78),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (hasMultipleQuantity && !ultraCompact) ...[
+                          SizedBox(height: compact ? 2 : 4),
+                          Align(
+                            alignment: Alignment.center,
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: compact ? 7 : 8,
+                                vertical: compact ? 2 : 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                quantityLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: scheme.onSurface,
+                                  fontSize: compact ? 10 : 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (item.fromPlanner && !compact) ...[
+                          const SizedBox(height: 6),
+                          Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 16,
+                            color: scheme.secondary,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  if (ultraCompact && hasMultipleQuantity) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '(${_displayQuantity(quantityValue)})',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: scheme.onSurface.withValues(alpha: 0.78),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  if (hasMultipleQuantity && !ultraCompact) ...[
-                    SizedBox(height: compact ? 2 : 4),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: compact ? 7 : 8,
-                        vertical: compact ? 2 : 4,
-                      ),
+                ),
+                ),
+                if (showNewBadge)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: scheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(999),
+                        color: scheme.secondaryContainer,
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      child: Text(
-                        quantityLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: scheme.onSurface,
-                          fontSize: compact ? 10 : 12,
-                          fontWeight: FontWeight.w500,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        child: Text(
+                          'New',
+                          style: TextStyle(
+                            color: scheme.onSecondaryContainer,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            height: 1.1,
+                          ),
                         ),
                       ),
                     ),
-                  ],
-                  if (item.fromPlanner && !compact) ...[
-                    const SizedBox(height: 6),
-                    Icon(
-                      Icons.auto_awesome_rounded,
-                      size: 16,
-                      color: scheme.secondary,
-                    ),
-                  ],
-                ],
-              ),
+                  ),
+              ],
             );
           },
         ),

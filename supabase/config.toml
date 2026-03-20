@@ -1,0 +1,5 @@
+# Partial config: run `supabase link` and use full config from `supabase init` if needed.
+# Webhooks call this function without a user JWT — disable JWT verification.
+
+[functions.deliver-list-item-notification]
+verify_jwt = false

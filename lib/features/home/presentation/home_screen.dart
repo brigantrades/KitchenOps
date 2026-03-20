@@ -23,10 +23,9 @@ class HomeScreen extends ConsumerWidget {
     final recipes = ref.watch(recipesProvider);
     final pendingInvites = ref.watch(pendingHouseholdInvitesProvider);
     final pendingInviteCount = pendingInvites.valueOrNull?.length ?? 0;
-    final plannedCount = planner.valueOrNull
-            ?.where((slot) => slot.dayOfWeek == DateTime.now().weekday - 1)
-            .length ??
-        0;
+    final plannedCount = planner.valueOrNull == null
+        ? 0
+        : _filledTodaySlots(planner.valueOrNull!).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -56,19 +55,18 @@ class HomeScreen extends ConsumerWidget {
                     title: 'Today',
                     icon: Icons.calendar_today_rounded,
                     value: planner.when(
-                      data: (slots) =>
-                          '${slots.where((s) => s.dayOfWeek == DateTime.now().weekday - 1).length} meals',
+                      data: (slots) => _todayMealsStatLabel(
+                        _filledTodaySlots(slots).length,
+                      ),
                       loading: () => '...',
                       error: (e, _) => 'Error',
                     ),
                     onTap: () {
                       final slots = planner.valueOrNull;
                       if (slots == null) return;
-                      final todaySlots = slots
-                          .where(
-                              (s) => s.dayOfWeek == DateTime.now().weekday - 1)
-                          .toList();
-                      if (todaySlots.isEmpty) {
+                      final filledToday =
+                          _filledTodaySlots(slots).toList();
+                      if (filledToday.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('No meals planned for today yet.'),
@@ -80,7 +78,7 @@ class HomeScreen extends ConsumerWidget {
                           recipes.valueOrNull ?? const <Recipe>[];
                       _showTodayMealsPreview(
                         context,
-                        slots: todaySlots,
+                        slots: filledToday,
                         recipes: allRecipes,
                       );
                     },
@@ -155,9 +153,6 @@ class HomeScreen extends ConsumerWidget {
             children: [
               const SizedBox(height: 4),
               ...slots.map((slot) {
-                final recipe = recipes.firstWhereOrNull(
-                  (r) => r.id == slot.recipeId,
-                );
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
                   padding: const EdgeInsets.all(12),
@@ -178,7 +173,7 @@ class HomeScreen extends ConsumerWidget {
                           children: [
                             Text(_mealLabelDisplay(slot.mealLabel)),
                             Text(
-                              recipe?.title ?? 'No recipe assigned yet',
+                              _plannedMealDescription(slot, recipes),
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -225,7 +220,9 @@ class _HomeHeader extends StatelessWidget {
     };
     final statusLine = plannedCount == 0
         ? 'No meals planned yet. Start one for tonight.'
-        : '$plannedCount meal slots already planned.';
+        : plannedCount == 1
+            ? '1 meal planned for today.'
+            : '$plannedCount meals planned for today.';
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -323,4 +320,41 @@ String _mealLabelDisplay(String mealLabel) {
   if (mealLabel.isEmpty) return 'Meal';
   final lower = mealLabel.toLowerCase();
   return lower[0].toUpperCase() + lower.substring(1);
+}
+
+DateTime _dateOnlyLocal(DateTime d) => DateTime(d.year, d.month, d.day);
+
+/// True when [slot] is on today's calendar date (local week + weekday).
+bool _isSlotOnToday(MealPlanSlot slot) {
+  final now = DateTime.now();
+  final todayWeekMonday =
+      _dateOnlyLocal(now).subtract(Duration(days: now.weekday - 1));
+  final slotWeekMonday = _dateOnlyLocal(slot.weekStart);
+  return slotWeekMonday == todayWeekMonday &&
+      slot.dayOfWeek == now.weekday - 1;
+}
+
+Iterable<MealPlanSlot> _todaySlots(Iterable<MealPlanSlot> slots) =>
+    slots.where(_isSlotOnToday);
+
+Iterable<MealPlanSlot> _filledTodaySlots(Iterable<MealPlanSlot> slots) =>
+    _todaySlots(slots).where((s) => s.hasPlannedContent);
+
+String _todayMealsStatLabel(int filledCount) {
+  if (filledCount == 0) return 'No meals';
+  if (filledCount == 1) return '1 meal';
+  return '$filledCount meals';
+}
+
+String _plannedMealDescription(MealPlanSlot slot, List<Recipe> recipes) {
+  final main = recipes.firstWhereOrNull((r) => r.id == slot.recipeId);
+  if (main != null) return main.title;
+  final meal = slot.mealText?.trim();
+  if (meal != null && meal.isNotEmpty) return meal;
+  final sauceRecipe =
+      recipes.firstWhereOrNull((r) => r.id == slot.sauceRecipeId);
+  if (sauceRecipe != null) return sauceRecipe.title;
+  final sauce = slot.sauceText?.trim();
+  if (sauce != null && sauce.isNotEmpty) return sauce;
+  return 'Planned';
 }

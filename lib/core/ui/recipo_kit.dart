@@ -162,6 +162,8 @@ class MediaRecipeCard extends StatelessWidget {
     this.trailing,
   });
 
+  static const double _thumbSize = 88;
+
   final String title;
   final String meta;
   final String imageUrl;
@@ -174,6 +176,28 @@ class MediaRecipeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
+    final thumbContent = ColoredBox(
+      color: colors.panelStrong,
+      child: FoodMedia(
+        imageUrl: imageUrl,
+        width: _thumbSize,
+        height: _thumbSize,
+        fit: BoxFit.contain,
+      ),
+    );
+    final thumb = SizedBox(
+      width: _thumbSize,
+      height: _thumbSize,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.horizontal(
+          right: Radius.circular(12),
+        ),
+        child: heroTag == null
+            ? thumbContent
+            : Hero(tag: heroTag!, child: thumbContent),
+      ),
+    );
+
     return InkWell(
       borderRadius: AppRadius.md,
       onTap: onTap,
@@ -184,55 +208,60 @@ class MediaRecipeCard extends StatelessWidget {
           boxShadow: AppShadows.soft,
         ),
         clipBehavior: Clip.antiAlias,
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AspectRatio(
-              aspectRatio: 16 / 10,
-              child: heroTag == null
-                  ? FoodMedia(imageUrl: imageUrl)
-                  : Hero(tag: heroTag!, child: FoodMedia(imageUrl: imageUrl)),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(meta,
-                            style: Theme.of(context).textTheme.bodySmall),
-                        if (tags.isNotEmpty) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: tags.take(3).map((tag) {
-                              return Chip(
-                                label: Text(tag),
-                                visualDensity: VisualDensity.compact,
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                              );
-                            }).toList(),
+            thumb,
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.sm,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                           ),
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(meta,
+                              style: Theme.of(context).textTheme.bodySmall),
+                          if (tags.isNotEmpty) ...[
+                            const SizedBox(height: AppSpacing.sm),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: tags.take(3).map((tag) {
+                                return Chip(
+                                  label: Text(tag),
+                                  visualDensity: VisualDensity.compact,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                );
+                              }).toList(),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  if (trailing != null) trailing!,
-                ],
+                    if (trailing != null) trailing!,
+                  ],
+                ),
               ),
             ),
           ],
@@ -290,39 +319,47 @@ class FoodMedia extends StatelessWidget {
     super.key,
     required this.imageUrl,
     this.height,
+    this.width,
+    this.fit = BoxFit.cover,
   });
 
   final String? imageUrl;
   final double? height;
+  final double? width;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
     if (imageUrl == null || imageUrl!.trim().isEmpty) {
-      return _FoodPlaceholder(height: height);
+      return _FoodPlaceholder(height: height, width: width);
     }
     return Image.network(
       imageUrl!,
-      fit: BoxFit.cover,
-      width: double.infinity,
+      fit: fit,
+      width: width ?? double.infinity,
       height: height,
-      errorBuilder: (_, __, ___) => _FoodPlaceholder(height: height),
+      errorBuilder: (_, __, ___) =>
+          _FoodPlaceholder(height: height, width: width),
     );
   }
 }
 
 class _FoodPlaceholder extends StatelessWidget {
-  const _FoodPlaceholder({this.height});
+  const _FoodPlaceholder({this.height, this.width});
 
   final double? height;
+  final double? width;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final w = width ?? double.infinity;
+    final compact = width != null && height != null;
     return Container(
       height: height,
-      width: double.infinity,
+      width: w,
       decoration: BoxDecoration(
-        borderRadius: AppRadius.hero,
+        borderRadius: compact ? BorderRadius.circular(12) : AppRadius.hero,
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -334,7 +371,7 @@ class _FoodPlaceholder extends StatelessWidget {
       ),
       child: Icon(
         Icons.restaurant_menu_rounded,
-        size: 56,
+        size: compact ? 32 : 56,
         color: scheme.onPrimaryContainer.withValues(alpha: 0.55),
       ),
     );

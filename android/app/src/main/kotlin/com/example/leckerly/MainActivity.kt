@@ -1,4 +1,4 @@
-package com.example.plateplan
+package com.example.leckerly
 
 import io.flutter.embedding.android.FlutterActivity
 
