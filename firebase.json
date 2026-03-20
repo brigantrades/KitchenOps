@@ -1,1 +1,21 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"forkflow-4e529","appId":"1:1040237027470:android:e4fbc647f4901ce40929df","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"forkflow-4e529","configurations":{"android":"1:1040237027470:android:e4fbc647f4901ce40929df"}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "forkflow-4e529",
+          "appId": "1:1040237027470:android:e4fbc647f4901ce40929df",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "forkflow-4e529",
+          "configurations": {
+            "android": "1:1040237027470:android:e4fbc647f4901ce40929df"
+          }
+        }
+      }
+    }
+  }
+}
