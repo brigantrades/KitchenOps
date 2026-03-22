@@ -84,7 +84,8 @@ class RecipesRepository {
     }
   }
 
-  Future<void> create(
+  /// Inserts a recipe row and returns the new row id.
+  Future<String> create(
     String userId,
     Recipe recipe, {
     bool shareWithHousehold = false,
@@ -102,14 +103,19 @@ class RecipesRepository {
                 ? RecipeVisibility.household
                 : RecipeVisibility.personal))
         .name;
-    await _client.from('recipes').insert({
-      ...payload,
-      'user_id': userId,
-      'household_id':
-          visibility == RecipeVisibility.household.name ? householdId : null,
-      'visibility': visibility,
-      'is_public': visibility == RecipeVisibility.public.name,
-    });
+    final inserted = await _client
+        .from('recipes')
+        .insert({
+          ...payload,
+          'user_id': userId,
+          'household_id':
+              visibility == RecipeVisibility.household.name ? householdId : null,
+          'visibility': visibility,
+          'is_public': visibility == RecipeVisibility.public.name,
+        })
+        .select('id')
+        .single();
+    return inserted['id'].toString();
   }
 
   Future<void> updateRecipe(String recipeId, Recipe recipe) async {
@@ -131,6 +137,10 @@ class RecipesRepository {
     return _client
         .from('recipes')
         .update({'is_to_try': value}).eq('id', recipeId);
+  }
+
+  Future<void> deleteRecipe(String recipeId) {
+    return _client.from('recipes').delete().eq('id', recipeId);
   }
 
   Future<void> copyPersonalRecipeToHousehold({
@@ -169,6 +179,42 @@ class RecipesRepository {
       'household_id': householdId,
       'visibility': RecipeVisibility.household.name,
     });
+  }
+
+  /// Deletes the most recent household recipe row you created whose title matches
+  /// this personal recipe (same pairing as [copyPersonalRecipeToHousehold]).
+  /// Returns true if a row was deleted. No DB link between copies — matching is by title.
+  Future<bool> deleteHouseholdCopyMatchingPersonal({
+    required String userId,
+    required String personalRecipeId,
+  }) async {
+    final personalRow = await _client
+        .from('recipes')
+        .select()
+        .eq('id', personalRecipeId)
+        .eq('user_id', userId)
+        .eq('visibility', RecipeVisibility.personal.name)
+        .maybeSingle();
+    if (personalRow == null) return false;
+    final title = personalRow['title']?.toString().trim() ?? '';
+    if (title.isEmpty) return false;
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) return false;
+
+    final match = await _client
+        .from('recipes')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('household_id', householdId)
+        .eq('visibility', RecipeVisibility.household.name)
+        .eq('title', title)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    if (match == null) return false;
+    final copyId = match['id'].toString();
+    await _client.from('recipes').delete().eq('id', copyId);
+    return true;
   }
 
   Future<List<Recipe>> searchSpoonacular(String query) async {

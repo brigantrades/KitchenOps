@@ -1,10 +1,13 @@
 import 'dart:math';
 
+import 'package:app_settings/app_settings.dart';
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/services/meal_reminder_notification_service.dart';
 import 'package:plateplan/core/ui/action_pill.dart';
 import 'package:plateplan/core/ui/hero_panel.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
@@ -201,6 +204,7 @@ class PlannerScreen extends ConsumerWidget {
                   TextField(
                     controller: customCtrl,
                     autofocus: true,
+                    textCapitalization: TextCapitalization.sentences,
                     decoration:
                         const InputDecoration(labelText: 'Custom meal label'),
                   ),
@@ -402,6 +406,8 @@ class PlannerScreen extends ConsumerWidget {
                                 Expanded(
                                   child: TextField(
                                     controller: entry.value,
+                                    textCapitalization:
+                                        TextCapitalization.sentences,
                                     decoration: InputDecoration(
                                       hintText: 'Item ${index + 1}',
                                       prefixIcon: const Icon(
@@ -690,7 +696,7 @@ class PlannerScreen extends ConsumerWidget {
             };
             for (final slot in slots) {
               dayTotals[slot.dayOfWeek] = (dayTotals[slot.dayOfWeek] ?? 0) + 1;
-              if (slot.recipeId != null) {
+              if (slot.hasPlannedContent) {
                 dayAssigned[slot.dayOfWeek] =
                     (dayAssigned[slot.dayOfWeek] ?? 0) + 1;
               }
@@ -790,7 +796,6 @@ class PlannerScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 12),
                 SectionCard(
-                  title: 'Weekly cadence',
                   child: Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -1322,6 +1327,89 @@ class PlannerScreen extends ConsumerWidget {
   }
 }
 
+enum _MealReminderPermissionDialogAction { granted, openedSettings, cancelled }
+
+Future<_MealReminderPermissionDialogAction>
+    _showMealReminderPermissionDialog(
+  BuildContext context,
+  MealReminderPermissionState state,
+  MealReminderNotificationService reminderSvc,
+) async {
+  final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+  final lines = <String>[
+    'Leckerly needs permission to remind you about this meal.',
+  ];
+  if (!state.notificationsEnabled) {
+    lines.add('Turn on notifications for this app.');
+  }
+  if (isAndroid && !state.exactAlarmsAllowed) {
+    lines.add(
+      'On Android, also allow Leckerly to set alarms and reminders (under '
+      'App info for Leckerly, or Special app access on some phones) so the '
+      'alert arrives on time.',
+    );
+  }
+  if (!isAndroid && !state.notificationsEnabled) {
+    lines.add('You can enable them in Settings → Leckerly → Notifications.');
+  }
+
+  final result = await showDialog<_MealReminderPermissionDialogAction>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: const Text('Turn on reminders'),
+        content: SingleChildScrollView(
+          child: Text(lines.join('\n\n')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(
+              ctx,
+              _MealReminderPermissionDialogAction.cancelled,
+            ),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              await AppSettings.openAppSettings();
+              if (ctx.mounted) {
+                Navigator.pop(
+                  ctx,
+                  _MealReminderPermissionDialogAction.openedSettings,
+                );
+              }
+            },
+            child: const Text('Open Settings'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await reminderSvc.requestReminderPermissions();
+              final s = await reminderSvc.getReminderPermissionState();
+              if (!ctx.mounted) return;
+              if (s.isSufficient) {
+                Navigator.pop(
+                  ctx,
+                  _MealReminderPermissionDialogAction.granted,
+                );
+              } else {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Permissions are still off. Use Open Settings or try again.',
+                    ),
+                  ),
+                );
+              }
+            },
+            child: const Text('Try again'),
+          ),
+        ],
+      );
+    },
+  );
+  return result ?? _MealReminderPermissionDialogAction.cancelled;
+}
+
 class _PlannerSlotReminderRow extends ConsumerStatefulWidget {
   const _PlannerSlotReminderRow({
     required this.slot,
@@ -1435,6 +1523,30 @@ class _PlannerSlotReminderRowState
       );
       return;
     }
+
+    final reminderSvc = ref.read(mealReminderNotificationServiceProvider);
+    await reminderSvc.init();
+    if (reminderSvc.isPermissionCheckAvailable) {
+      await reminderSvc.requestReminderPermissions();
+      while (mounted) {
+        final perm = await reminderSvc.getReminderPermissionState();
+        if (perm.isSufficient) break;
+        if (!mounted) return;
+        final action = await _showMealReminderPermissionDialog(
+          context,
+          perm,
+          reminderSvc,
+        );
+        if (action == _MealReminderPermissionDialogAction.granted) break;
+        if (action == _MealReminderPermissionDialogAction.openedSettings ||
+            action == _MealReminderPermissionDialogAction.cancelled) {
+          return;
+        }
+      }
+    }
+
+    if (!mounted) return;
+
     try {
       await ref.read(plannerRepositoryProvider).updateSlotReminder(
             slotId: widget.slot.id,
@@ -1737,6 +1849,7 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
                   controller: _mealTextCtrl,
                   focusNode: _mealFocus,
                   textInputAction: TextInputAction.done,
+                  textCapitalization: TextCapitalization.sentences,
                   decoration: const InputDecoration(
                     labelText: 'Meal name',
                     hintText: 'e.g., Canned Soup',
@@ -1801,6 +1914,7 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
                     controller: _sauceTextCtrl,
                     focusNode: _sauceFocus,
                     textInputAction: TextInputAction.done,
+                    textCapitalization: TextCapitalization.sentences,
                     decoration: const InputDecoration(
                       labelText: 'Sauce name',
                       hintText: 'e.g., Chili crisp',

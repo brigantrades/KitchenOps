@@ -22,6 +22,22 @@ final mealReminderNotificationServiceProvider =
 Future<void> initMealReminderNotifications() =>
     mealReminderNotificationService.init();
 
+/// Outcome of [MealReminderNotificationService.getReminderPermissionState].
+class MealReminderPermissionState {
+  const MealReminderPermissionState({
+    required this.notificationsEnabled,
+    required this.exactAlarmsAllowed,
+  });
+
+  /// Post notifications / alert permission (platform-specific).
+  final bool notificationsEnabled;
+
+  /// Android exact alarm permission; always true on iOS/macOS.
+  final bool exactAlarmsAllowed;
+
+  bool get isSufficient => notificationsEnabled && exactAlarmsAllowed;
+}
+
 /// Schedules one-shot local notifications from [MealPlanSlot.reminderAt] / [MealPlanSlot.reminderMessage].
 class MealReminderNotificationService {
   MealReminderNotificationService._();
@@ -99,6 +115,147 @@ class MealReminderNotificationService {
       );
     } catch (e, st) {
       debugPrint('MealReminderNotificationService: init failed: $e\n$st');
+    }
+  }
+
+  /// Whether [getReminderPermissionState] is meaningful (skip gating on web / after init failure).
+  bool get isPermissionCheckAvailable => _canSchedule && _initialized;
+
+  /// Current permission state for meal reminders. Call [init] first.
+  Future<MealReminderPermissionState> getReminderPermissionState() async {
+    if (!_canSchedule || !_initialized) {
+      return const MealReminderPermissionState(
+        notificationsEnabled: true,
+        exactAlarmsAllowed: true,
+      );
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return _androidReminderPermissionState();
+      case TargetPlatform.iOS:
+        return _iosReminderPermissionState();
+      case TargetPlatform.macOS:
+        return _macosReminderPermissionState();
+      default:
+        return const MealReminderPermissionState(
+          notificationsEnabled: true,
+          exactAlarmsAllowed: true,
+        );
+    }
+  }
+
+  Future<MealReminderPermissionState> _androidReminderPermissionState() async {
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) {
+      return const MealReminderPermissionState(
+        notificationsEnabled: false,
+        exactAlarmsAllowed: false,
+      );
+    }
+    try {
+      final notifications = await android.areNotificationsEnabled();
+      final exact = await android.canScheduleExactNotifications();
+      // Treat null as allowed when the OS/plugin does not report (pre–notification-runtime).
+      return MealReminderPermissionState(
+        notificationsEnabled: notifications != false,
+        exactAlarmsAllowed: exact != false,
+      );
+    } catch (e, st) {
+      debugPrint(
+          'MealReminderNotificationService: Android permission read failed: $e\n$st');
+      return const MealReminderPermissionState(
+        notificationsEnabled: false,
+        exactAlarmsAllowed: false,
+      );
+    }
+  }
+
+  Future<MealReminderPermissionState> _iosReminderPermissionState() async {
+    final ios = _plugin.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
+    if (ios == null) {
+      return const MealReminderPermissionState(
+        notificationsEnabled: false,
+        exactAlarmsAllowed: true,
+      );
+    }
+    try {
+      final opts = await ios.checkPermissions();
+      if (opts == null) {
+        return const MealReminderPermissionState(
+          notificationsEnabled: false,
+          exactAlarmsAllowed: true,
+        );
+      }
+      final enabled =
+          (opts.isEnabled || opts.isProvisionalEnabled) && opts.isAlertEnabled;
+      return MealReminderPermissionState(
+        notificationsEnabled: enabled,
+        exactAlarmsAllowed: true,
+      );
+    } catch (e, st) {
+      debugPrint(
+          'MealReminderNotificationService: iOS permission read failed: $e\n$st');
+      return const MealReminderPermissionState(
+        notificationsEnabled: false,
+        exactAlarmsAllowed: true,
+      );
+    }
+  }
+
+  Future<MealReminderPermissionState> _macosReminderPermissionState() async {
+    final mac = _plugin.resolvePlatformSpecificImplementation<
+        MacOSFlutterLocalNotificationsPlugin>();
+    if (mac == null) {
+      return const MealReminderPermissionState(
+        notificationsEnabled: false,
+        exactAlarmsAllowed: true,
+      );
+    }
+    try {
+      final opts = await mac.checkPermissions();
+      if (opts == null) {
+        return const MealReminderPermissionState(
+          notificationsEnabled: false,
+          exactAlarmsAllowed: true,
+        );
+      }
+      final enabled =
+          (opts.isEnabled || opts.isProvisionalEnabled) && opts.isAlertEnabled;
+      return MealReminderPermissionState(
+        notificationsEnabled: enabled,
+        exactAlarmsAllowed: true,
+      );
+    } catch (e, st) {
+      debugPrint(
+          'MealReminderNotificationService: macOS permission read failed: $e\n$st');
+      return const MealReminderPermissionState(
+        notificationsEnabled: false,
+        exactAlarmsAllowed: true,
+      );
+    }
+  }
+
+  /// Re-run OS permission prompts where supported.
+  Future<void> requestReminderPermissions() async {
+    if (!_canSchedule || !_initialized) return;
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await android?.requestNotificationsPermission();
+      await android?.requestExactAlarmsPermission();
+
+      final ios = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      await ios?.requestPermissions(alert: true, badge: true, sound: true);
+
+      final mac = _plugin.resolvePlatformSpecificImplementation<
+          MacOSFlutterLocalNotificationsPlugin>();
+      await mac?.requestPermissions(alert: true, badge: true, sound: true);
+    } catch (e, st) {
+      debugPrint(
+          'MealReminderNotificationService: requestReminderPermissions failed: $e\n$st');
     }
   }
 

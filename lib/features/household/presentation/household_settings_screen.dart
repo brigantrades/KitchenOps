@@ -176,6 +176,7 @@ class _HouseholdSettingsScreenState
         content: TextFormField(
           initialValue: currentName,
           autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
           onChanged: (value) => draftName = value,
           onFieldSubmitted: (value) => Navigator.of(context).pop(value.trim()),
           decoration: const InputDecoration(
@@ -398,6 +399,7 @@ class _HouseholdSettingsScreenState
                   children: [
                     TextField(
                       controller: _householdNameCtrl,
+                      textCapitalization: TextCapitalization.sentences,
                       decoration: const InputDecoration(
                         labelText: 'Household name',
                         hintText: 'e.g. The Smith Home',

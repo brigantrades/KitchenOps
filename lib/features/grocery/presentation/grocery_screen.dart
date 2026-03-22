@@ -436,6 +436,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
+                textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   labelText: 'List name',
                 ),
@@ -1199,6 +1200,7 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                         controller: _nameCtrl,
                         focusNode: _searchFocusNode,
                         autofocus: false,
+                        textCapitalization: TextCapitalization.sentences,
                         textInputAction: TextInputAction.search,
                         onChanged: (_) {
                           // Keep button state responsive while suggestion updates are debounced.
@@ -1483,7 +1485,7 @@ class _GroceryItemCard extends StatelessWidget {
                           width: double.infinity,
                           child: Text(
                             item.name,
-                            maxLines: compact ? 1 : 2,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
                             style: TextStyle(
@@ -1660,7 +1662,7 @@ class _RecentGroceryEntryCard extends StatelessWidget {
                       width: double.infinity,
                       child: Text(
                         entry.name,
-                        maxLines: compact ? 1 : 2,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
                         style: TextStyle(
