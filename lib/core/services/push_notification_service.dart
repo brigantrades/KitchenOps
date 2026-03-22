@@ -32,6 +32,16 @@ class PushNotificationService {
       // Firebase is not initialized in this runtime profile.
       return;
     }
+    try {
+      await _initForUserImpl(userId);
+    } catch (e, st) {
+      // FCM / Installations often fails on emulators or without Play Services;
+      // must not affect Supabase-backed app data.
+      debugPrint('PushNotificationService.initForUser skipped: $e\n$st');
+    }
+  }
+
+  Future<void> _initForUserImpl(String userId) async {
     final messaging = _messaging ??= FirebaseMessaging.instance;
     _activeUserId = userId;
     if (!_initialized) {
@@ -79,11 +89,16 @@ class PushNotificationService {
   }
 
   Future<void> _upsertToken(String userId, String token) async {
-    await Supabase.instance.client.from('user_device_tokens').upsert({
-      'user_id': userId,
-      'platform': defaultTargetPlatform.name,
-      'token': token,
-      'last_seen_at': DateTime.now().toIso8601String(),
-    });
+    // Table has unique(token), not unique(id) in payload — must merge on token
+    // or every register inserts a new row and hits 23505 on hot restart.
+    await Supabase.instance.client.from('user_device_tokens').upsert(
+          {
+            'user_id': userId,
+            'platform': defaultTargetPlatform.name,
+            'token': token,
+            'last_seen_at': DateTime.now().toIso8601String(),
+          },
+          onConflict: 'token',
+        );
   }
 }

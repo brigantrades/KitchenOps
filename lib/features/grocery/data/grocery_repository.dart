@@ -38,6 +38,8 @@ class GroceryRepository {
   final SupabaseClient _client = Supabase.instance.client;
   final LocalCache _cache;
   final ProfileRepository _profileRepo;
+
+  static const int _maxGroceryRecentsStored = 32;
   List<String> _usdaCatalog = const [];
   Map<String, List<String>> _usdaPrefixIndex = const {};
   bool _catalogLoadAttempted = false;
@@ -445,17 +447,24 @@ class GroceryRepository {
           (e) => e.name.toLowerCase() == ingredient.name.toLowerCase());
       if (current != null) continue;
 
+      final qty = (ingredient.amount * ratio).toStringAsFixed(1);
       await _client.from('list_items').insert({
         'list_id': targetListId,
         'user_id': userId,
         'name': ingredient.name,
         'category': ingredient.category.dbValue,
-        'quantity': (ingredient.amount * ratio).toStringAsFixed(1),
+        'quantity': qty,
         'unit': ingredient.unit,
         'from_recipe_id': recipe.id,
         'source_type': 'planner_recipe',
         'source_slot_id': sourceSlotId,
       });
+      await touchRecent(
+        name: ingredient.name,
+        category: ingredient.category,
+        quantity: qty,
+        unit: ingredient.unit,
+      );
     }
   }
 
@@ -482,6 +491,45 @@ class GroceryRepository {
       'from_recipe_id': fromRecipeId,
       'source_type': fromRecipeId == null ? 'manual' : 'planner_recipe',
     });
+    await touchRecent(
+      name: name,
+      category: category,
+      quantity: quantity,
+      unit: unit,
+    );
+  }
+
+  List<RecentGroceryEntry> readRecentsFromCache() {
+    return _cache
+        .loadGroceryRecents()
+        .map(RecentGroceryEntry.fromJson)
+        .where((e) => e.name.trim().isNotEmpty)
+        .toList();
+  }
+
+  Future<void> touchRecent({
+    required String name,
+    required GroceryCategory category,
+    String? quantity,
+    String? unit,
+  }) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final norm = normalizeGroceryItemName(trimmed);
+    final existing = readRecentsFromCache();
+    final filtered = existing
+        .where((e) => normalizeGroceryItemName(e.name) != norm)
+        .toList();
+    final entry = RecentGroceryEntry(
+      name: trimmed,
+      category: category,
+      quantity: quantity,
+      unit: unit,
+      lastUsedAt: DateTime.now().toUtc(),
+    );
+    final next =
+        [entry, ...filtered].take(_maxGroceryRecentsStored).toList();
+    await _cache.saveGroceryRecents(next.map((e) => e.toJson()).toList());
   }
 
   Future<void> _clearHouseholdItems(String userId, {String? listId}) async {
@@ -589,12 +637,15 @@ class GroceryRepository {
 
   Future<void> upsertDeviceToken(String userId, String token) async {
     final platform = Platform.operatingSystem;
-    await _client.from('user_device_tokens').upsert({
-      'user_id': userId,
-      'platform': platform,
-      'token': token,
-      'last_seen_at': DateTime.now().toIso8601String(),
-    });
+    await _client.from('user_device_tokens').upsert(
+          {
+            'user_id': userId,
+            'platform': platform,
+            'token': token,
+            'last_seen_at': DateTime.now().toIso8601String(),
+          },
+          onConflict: 'token',
+        );
   }
 }
 
@@ -604,6 +655,28 @@ final groceryRepositoryProvider = Provider<GroceryRepository>((ref) {
     ref.watch(profileRepositoryProvider),
   );
 });
+
+class GroceryRecentsNotifier extends Notifier<List<RecentGroceryEntry>> {
+  @override
+  List<RecentGroceryEntry> build() {
+    return ref.read(groceryRepositoryProvider).readRecentsFromCache();
+  }
+
+  Future<void> recordRemovedItem(GroceryItem item) async {
+    await ref.read(groceryRepositoryProvider).touchRecent(
+          name: item.name,
+          category: item.category,
+          quantity: item.quantity,
+          unit: item.unit,
+        );
+    state = ref.read(groceryRepositoryProvider).readRecentsFromCache();
+  }
+}
+
+final groceryRecentsProvider =
+    NotifierProvider<GroceryRecentsNotifier, List<RecentGroceryEntry>>(
+  GroceryRecentsNotifier.new,
+);
 
 final listsProvider = FutureProvider<List<AppList>>((ref) async {
   final user = ref.watch(currentUserProvider);

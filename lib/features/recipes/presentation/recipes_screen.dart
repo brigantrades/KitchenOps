@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/theme/theme_extensions.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -22,6 +23,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   final _searchCtrl = TextEditingController();
   int _libraryIndex = 0;
   int _segmentIndex = 0;
+  final Set<MealType> _mealTypeFilters = {};
 
   Future<void> _createRecipeManually() async {
     final user = ref.read(currentUserProvider);
@@ -105,6 +107,27 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     super.dispose();
   }
 
+  bool _mealFilterShowsAllRecipes() {
+    if (_mealTypeFilters.isEmpty) return true;
+    if (_mealTypeFilters.length == MealType.values.length) return true;
+    return false;
+  }
+
+  bool _recipePassesMealFilter(Recipe recipe) {
+    if (_mealFilterShowsAllRecipes()) return true;
+    return _mealTypeFilters.contains(recipe.mealType);
+  }
+
+  void _toggleMealTypeFilter(MealType type, bool selected) {
+    setState(() {
+      if (selected) {
+        _mealTypeFilters.add(type);
+      } else {
+        _mealTypeFilters.remove(type);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final recipesAsync = ref.watch(recipesProvider);
@@ -170,6 +193,35 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                           setState(() => _segmentIndex = idx),
                     ),
                   ],
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Meal type',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: MealType.values
+                          .map(
+                            (type) => FilterChip(
+                              label: Text(_mealTypeLabel(type)),
+                              selected: _mealTypeFilters.contains(type),
+                              onSelected: (value) =>
+                                  _toggleMealTypeFilter(type, value),
+                              selectedColor: const Color(0xFFD6EBFF),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -211,8 +263,11 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                       _ => allFavorites,
                     };
                   }
+                  final displayed = visible
+                      .where(_recipePassesMealFilter)
+                      .toList();
                   return _RecipeList(
-                    recipes: visible,
+                    recipes: displayed,
                     hasSharedHousehold: hasSharedHousehold,
                     onEditRecipe: _editRecipe,
                   );
@@ -410,6 +465,21 @@ String _mealTypeLabel(MealType mealType) => switch (mealType) {
       MealType.dessert => 'Dessert',
     };
 
+const double _kAmountEpsilon = 1e-9;
+
+class _PresetAmountChip {
+  const _PresetAmountChip({required this.label, required this.canonicalText});
+  final String label;
+  final String canonicalText;
+}
+
+const _presetAmountChips = [
+  _PresetAmountChip(label: '¼', canonicalText: '1/4'),
+  _PresetAmountChip(label: '⅓', canonicalText: '1/3'),
+  _PresetAmountChip(label: '½', canonicalText: '1/2'),
+  _PresetAmountChip(label: '1', canonicalText: '1'),
+];
+
 class _IngredientInput {
   _IngredientInput({
     required String name,
@@ -476,7 +546,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   final _titleCtrl = TextEditingController();
   final _servingsCtrl = TextEditingController(text: '2');
   final _tagCtrl = TextEditingController();
-  final _ingredientSearchCtrl = TextEditingController();
   final _titleFocusNode = FocusNode();
   final List<String> _cuisineTags = [];
   final List<String> _presetCuisines = const [
@@ -491,38 +560,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   ];
   final List<_IngredientInput> _ingredients = [];
   final List<_DirectionDraft> _directionDrafts = [_DirectionDraft()];
-  final List<String> _ingredientCatalog = const [
-    'Chicken breast',
-    'Ground beef',
-    'Salmon',
-    'Eggs',
-    'Milk',
-    'Greek yogurt',
-    'Cheddar cheese',
-    'Tomato',
-    'Onion',
-    'Garlic',
-    'Bell pepper',
-    'Spinach',
-    'Broccoli',
-    'Carrot',
-    'Mushroom',
-    'Potato',
-    'Sweet potato',
-    'Rice',
-    'Pasta',
-    'Quinoa',
-    'Black beans',
-    'Chickpeas',
-    'Olive oil',
-    'Soy sauce',
-    'Flour',
-    'Butter',
-    'Bread',
-    'Lemon',
-    'Cilantro',
-    'Basil',
-  ];
   MealType _mealType = MealType.entree;
   bool _markFavorite = false;
   bool _markToTry = false;
@@ -532,6 +569,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   int _step = 0;
   String? _validationMessage;
   bool _isSubmitting = false;
+  int? _selectedIngredientIndex;
 
   @override
   void initState() {
@@ -551,7 +589,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _titleCtrl.dispose();
     _servingsCtrl.dispose();
     _tagCtrl.dispose();
-    _ingredientSearchCtrl.dispose();
     _titleFocusNode.dispose();
     for (final ingredient in _ingredients) {
       ingredient.dispose();
@@ -589,6 +626,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       row.amountCtrl.text = ingredient.amount.toString();
       _ingredients.add(row);
     }
+    _selectedIngredientIndex =
+        _ingredients.isEmpty ? null : 0;
     for (final draft in _directionDrafts) {
       draft.dispose();
     }
@@ -710,24 +749,322 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     );
   }
 
-  void _addIngredient(String rawName) {
-    final name = rawName.trim();
-    if (name.isEmpty) return;
-    if (_ingredients.any((i) => i.name.toLowerCase() == name.toLowerCase())) {
-      _ingredientSearchCtrl.clear();
-      return;
-    }
+  void _removeIngredientAt(int idx) {
     setState(() {
-      final profile = _detectUnitProfile(name);
-      final row = _IngredientInput(
-        name: name,
+      final removed = _ingredients.removeAt(idx);
+      removed.dispose();
+      _validationMessage = null;
+      if (_ingredients.isEmpty) {
+        _selectedIngredientIndex = null;
+      } else if (_selectedIngredientIndex != null) {
+        final sel = _selectedIngredientIndex!;
+        if (idx < sel) {
+          _selectedIngredientIndex = sel - 1;
+        } else if (idx == sel) {
+          _selectedIngredientIndex =
+              idx.clamp(0, _ingredients.length - 1);
+        }
+      }
+    });
+  }
+
+  void _addBlankIngredient() {
+    if (!_canAddAnotherIngredient) return;
+    setState(() {
+      final profile = _detectUnitProfile('');
+      _ingredients.add(_IngredientInput(
+        name: '',
         unitOptions: profile.options,
         selectedUnit: profile.defaultUnit,
-      );
-      _ingredients.add(row);
-      _ingredientSearchCtrl.clear();
+      ));
+      _selectedIngredientIndex = _ingredients.length - 1;
       _validationMessage = null;
     });
+  }
+
+  /// First ingredient can always be added; further rows require the last row
+  /// to have a name and a valid amount (same rules as step validation).
+  bool get _canAddAnotherIngredient {
+    if (_ingredients.isEmpty) return true;
+    final last = _ingredients.last;
+    if (last.nameCtrl.text.trim().isEmpty) return false;
+    if (_parseIngredientAmount(last.amountCtrl.text) == null) return false;
+    return true;
+  }
+
+  String _ingredientSummary(_IngredientInput row) {
+    final name = row.nameCtrl.text.trim().isEmpty
+        ? 'New ingredient'
+        : row.nameCtrl.text.trim();
+    final amt = row.amountCtrl.text.trim();
+    final unitStr = row.selectedUnit == 'custom'
+        ? row.customUnitCtrl.text.trim()
+        : row.selectedUnit;
+    if (amt.isEmpty) return name;
+    if (unitStr.isEmpty) return '$name · $amt';
+    return '$name · $amt $unitStr';
+  }
+
+  Widget _buildCondensedIngredientRow(
+    BuildContext context,
+    int idx,
+    _IngredientInput row,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Material(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => setState(() => _selectedIngredientIndex = idx),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.restaurant_rounded,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    _ingredientSummary(row),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.edit_outlined,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                IconButton(
+                  onPressed: () => _removeIngredientAt(idx),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  tooltip: 'Remove',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpandedIngredientRow(
+    BuildContext context,
+    int idx,
+    _IngredientInput row,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.sm,
+        AppSpacing.xs,
+        AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: scheme.primary.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: row.nameCtrl,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  decoration: InputDecoration(
+                    hintText: 'Ingredient name',
+                    hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontStyle: FontStyle.italic,
+                          color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                        ),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              IconButton(
+                onPressed: () => _removeIngredientAt(idx),
+                icon: const Icon(Icons.delete_outline_rounded),
+                tooltip: 'Remove ingredient',
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Amount',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final preset in _presetAmountChips)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: Text(
+                        preset.label,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          height: 1.1,
+                        ),
+                      ),
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+                      selected: _isPresetAmountSelected(
+                        row,
+                        preset.canonicalText,
+                      ),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onSelected: (selected) {
+                        setState(() {
+                          if (selected) {
+                            row.amountCtrl.text = preset.canonicalText;
+                          }
+                        });
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 132,
+                child: TextField(
+                  controller: row.amountCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                  decoration: InputDecoration(
+                    hintText: 'Enter amount',
+                    hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w400,
+                          color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+                        ),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: row.unitOptions.contains(row.selectedUnit)
+                      ? row.selectedUnit
+                      : row.unitOptions.first,
+                  isDense: true,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Unit',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  items: row.unitOptions
+                      .map(
+                        (unit) => DropdownMenuItem(
+                          value: unit,
+                          child: Text(unit),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => row.selectedUnit = value);
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (row.selectedUnit == 'custom') ...[
+            const SizedBox(height: AppSpacing.xs),
+            TextField(
+              controller: row.customUnitCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Custom unit',
+                hintText: 'e.g. clove, pinch, can',
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  double? _parseIngredientAmount(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+    final direct = double.tryParse(s);
+    if (direct != null) return direct;
+    final slash = RegExp(r'^\s*(\d+)\s*/\s*(\d+)\s*$').firstMatch(s);
+    if (slash != null) {
+      final n = int.tryParse(slash.group(1)!);
+      final d = int.tryParse(slash.group(2)!);
+      if (n != null && d != null && d != 0) return n / d;
+    }
+    return null;
+  }
+
+  bool _isPresetAmountSelected(_IngredientInput row, String canonical) {
+    final a = _parseIngredientAmount(row.amountCtrl.text);
+    final b = _parseIngredientAmount(canonical);
+    if (a == null || b == null) return false;
+    return (a - b).abs() < _kAmountEpsilon;
   }
 
   bool _validateCurrentStep() {
@@ -757,7 +1094,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       final hasAmountIssue = _ingredients.any(
         (row) =>
             row.amountCtrl.text.trim().isEmpty ||
-            double.tryParse(row.amountCtrl.text.trim()) == null ||
+            _parseIngredientAmount(row.amountCtrl.text) == null ||
             row.selectedUnit.trim().isEmpty ||
             (row.selectedUnit == 'custom' &&
                 row.customUnitCtrl.text.trim().isEmpty),
@@ -819,80 +1156,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
-  }
-
-  List<String> get _ingredientMatches {
-    final q = _ingredientSearchCtrl.text.trim().toLowerCase();
-    if (q.isEmpty) return const [];
-    return _ingredientCatalog
-        .where((item) => item.toLowerCase().contains(q))
-        .where((item) => !_ingredients
-            .any((i) => i.name.toLowerCase() == item.toLowerCase()))
-        .take(8)
-        .toList();
-  }
-
-  List<String> get _contextIngredientSuggestions {
-    final title = _titleCtrl.text.toLowerCase();
-    final selectedCuisine = _cuisineTags.map((e) => e.toLowerCase()).toList();
-    final suggestions = <String>[];
-
-    if (title.contains('pasta')) {
-      suggestions
-          .addAll(['Pasta', 'Garlic', 'Parmesan', 'Olive oil', 'Tomato']);
-    }
-    if (title.contains('salad')) {
-      suggestions
-          .addAll(['Lettuce', 'Cucumber', 'Tomato', 'Olive oil', 'Lemon']);
-    }
-    if (title.contains('soup')) {
-      suggestions.addAll(['Onion', 'Garlic', 'Carrot', 'Broth', 'Celery']);
-    }
-    if (title.contains('rice')) {
-      suggestions.addAll(['Rice', 'Onion', 'Garlic', 'Bell pepper']);
-    }
-    if (title.contains('chicken')) {
-      suggestions.addAll(['Chicken breast', 'Garlic', 'Olive oil']);
-    }
-
-    if (selectedCuisine.contains('italian')) {
-      suggestions
-          .addAll(['Basil', 'Tomato', 'Parmesan', 'Olive oil', 'Garlic']);
-    }
-    if (selectedCuisine.contains('chinese')) {
-      suggestions
-          .addAll(['Soy sauce', 'Ginger', 'Garlic', 'Scallion', 'Sesame oil']);
-    }
-    if (selectedCuisine.contains('american')) {
-      suggestions.addAll(['Butter', 'Potato', 'Cheddar cheese', 'Onion']);
-    }
-    if (selectedCuisine.contains('mexican')) {
-      suggestions.addAll(['Cilantro', 'Lime', 'Black beans', 'Chili powder']);
-    }
-    if (selectedCuisine.contains('indian')) {
-      suggestions
-          .addAll(['Cumin', 'Turmeric', 'Garam masala', 'Onion', 'Garlic']);
-    }
-    if (selectedCuisine.contains('japanese')) {
-      suggestions.addAll(['Soy sauce', 'Rice', 'Sesame oil', 'Mushroom']);
-    }
-    if (selectedCuisine.contains('thai')) {
-      suggestions.addAll(['Fish sauce', 'Lime', 'Coconut milk', 'Basil']);
-    }
-    if (selectedCuisine.contains('mediterranean')) {
-      suggestions
-          .addAll(['Olive oil', 'Lemon', 'Cucumber', 'Tomato', 'Parsley']);
-    }
-
-    final existing = _ingredients.map((e) => e.name.toLowerCase()).toSet();
-    final unique = <String>[];
-    for (final item in suggestions) {
-      if (!unique.any((e) => e.toLowerCase() == item.toLowerCase()) &&
-          !existing.contains(item.toLowerCase())) {
-        unique.add(item);
-      }
-    }
-    return unique.take(10).toList();
   }
 
   List<String> _suggestionsForStep(int stepIndex) {
@@ -978,7 +1241,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             : row.selectedUnit;
         return Ingredient(
           name: row.name.trim(),
-          amount: double.tryParse(row.amountCtrl.text.trim()) ?? 0,
+          amount: _parseIngredientAmount(row.amountCtrl.text) ?? 0,
           unit: unit,
           category: GroceryCategory.other,
         );
@@ -1009,17 +1272,20 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       _isSubmitting = true;
     });
 
+    final initial = widget.initialRecipe;
     final recipe = Recipe(
-      id: '',
+      id: initial?.id ?? '',
       title: _titleCtrl.text.trim(),
-      description: null,
+      description: initial?.description,
       servings: _parseIntOrNull(_servingsCtrl.text) ?? 2,
-      prepTime: null,
-      cookTime: null,
+      prepTime: initial?.prepTime,
+      cookTime: initial?.cookTime,
       mealType: _mealType,
       cuisineTags: _cuisineTags,
       ingredients: ingredients,
       instructions: directions,
+      imageUrl: initial?.imageUrl,
+      nutrition: initial?.nutrition ?? const Nutrition(),
       isFavorite: _markFavorite,
       isToTry: _markToTry,
       visibility: _makePublic
@@ -1027,7 +1293,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           : _saveToHousehold
               ? RecipeVisibility.household
               : RecipeVisibility.personal,
-      source: 'user_created',
+      source: initial?.source ?? 'user_created',
+      userId: initial?.userId,
+      householdId: initial?.householdId,
+      apiId: initial?.apiId,
     );
     _closeWizard(recipe);
   }
@@ -1313,202 +1582,57 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                           ),
                           _StepCard(
                             title: 'Add ingredients',
+                            subtitle:
+                                'Type each ingredient name, amount, and unit. Add more rows as needed.',
                             child: Column(
                               children: [
-                                if (_contextIngredientSuggestions
-                                    .isNotEmpty) ...[
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(
-                                      'Suggested for this recipe',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelLarge
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Wrap(
-                                      spacing: 8,
-                                      runSpacing: 8,
-                                      children: _contextIngredientSuggestions
-                                          .map(
-                                            (item) => ActionChip(
-                                              label: Text(item),
-                                              avatar: const Icon(
-                                                  Icons.auto_awesome_rounded,
-                                                  size: 16),
-                                              onPressed: () =>
-                                                  _addIngredient(item),
-                                            ),
-                                          )
-                                          .toList(),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                ],
-                                TextField(
-                                  controller: _ingredientSearchCtrl,
-                                  decoration: const InputDecoration(
-                                    hintText:
-                                        'Search ingredient (e.g., chicken, tomato)',
-                                    prefixIcon: Icon(Icons.search),
-                                  ),
-                                  onChanged: (_) => setState(() {}),
-                                  onSubmitted: (value) => _addIngredient(value),
-                                ),
-                                const SizedBox(height: 8),
-                                if (_ingredientSearchCtrl.text
-                                    .trim()
-                                    .isNotEmpty)
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Wrap(
-                                      spacing: 8,
-                                      runSpacing: 8,
-                                      children: [
-                                        ..._ingredientMatches.map(
-                                          (item) => ActionChip(
-                                            label: Text(item),
-                                            onPressed: () =>
-                                                _addIngredient(item),
-                                          ),
-                                        ),
-                                        ActionChip(
-                                          label: Text(
-                                              'Add "${_ingredientSearchCtrl.text.trim()}"'),
-                                          onPressed: () => _addIngredient(
-                                              _ingredientSearchCtrl.text),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                const SizedBox(height: 12),
-                                if (_ingredients.isEmpty)
+                                if (_ingredients.isEmpty) ...[
                                   const Align(
                                     alignment: Alignment.centerLeft,
                                     child: Text(
-                                        'No ingredients yet. Search and add at least one.'),
+                                        'No ingredients yet. Tap Add ingredient to start.'),
                                   ),
-                                ..._ingredients.asMap().entries.map((entry) {
-                                  final idx = entry.key;
-                                  final row = entry.value;
-                                  return Card(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(10),
-                                      child: Column(
-                                        children: [
-                                          Row(
-                                            children: [
-                                              Expanded(
-                                                child: TextField(
-                                                  controller: row.nameCtrl,
-                                                  decoration:
-                                                      const InputDecoration(
-                                                    labelText:
-                                                        'Ingredient name',
-                                                  ),
-                                                  onChanged: (_) =>
-                                                      setState(() {}),
-                                                ),
-                                              ),
-                                              IconButton(
-                                                onPressed: () => setState(() {
-                                                  final removed = _ingredients
-                                                      .removeAt(idx);
-                                                  removed.dispose();
-                                                }),
-                                                icon: const Icon(
-                                                    Icons.delete_outline),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Expanded(
-                                                child: TextField(
-                                                  controller: row.amountCtrl,
-                                                  keyboardType:
-                                                      const TextInputType
-                                                          .numberWithOptions(
-                                                          decimal: true),
-                                                  decoration:
-                                                      const InputDecoration(
-                                                          labelText: 'Amount'),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: DropdownButtonFormField<
-                                                    String>(
-                                                  value: row.unitOptions
-                                                          .contains(
-                                                              row.selectedUnit)
-                                                      ? row.selectedUnit
-                                                      : row.unitOptions.first,
-                                                  isExpanded: true,
-                                                  decoration:
-                                                      const InputDecoration(
-                                                          labelText: 'Unit'),
-                                                  items: row.unitOptions
-                                                      .map((unit) =>
-                                                          DropdownMenuItem(
-                                                              value: unit,
-                                                              child:
-                                                                  Text(unit)))
-                                                      .toList(),
-                                                  onChanged: (value) {
-                                                    if (value == null) return;
-                                                    setState(() => row
-                                                        .selectedUnit = value);
-                                                  },
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          if (row.selectedUnit == 'custom') ...[
-                                            const SizedBox(height: 8),
-                                            TextField(
-                                              controller: row.customUnitCtrl,
-                                              decoration: const InputDecoration(
-                                                labelText: 'Custom unit',
-                                                hintText:
-                                                    'e.g., clove, pinch, can',
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
+                                  const SizedBox(height: AppSpacing.sm),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _canAddAnotherIngredient
+                                          ? _addBlankIngredient
+                                          : null,
+                                      icon: const Icon(
+                                          Icons.add_circle_outline_rounded),
+                                      label: const Text('Add ingredient'),
                                     ),
-                                  );
-                                }),
-                                const SizedBox(height: 6),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: OutlinedButton.icon(
-                                    onPressed: () {
-                                      setState(() {
-                                        final profile =
-                                            _detectUnitProfile('');
-                                        _ingredients.add(_IngredientInput(
-                                          name: '',
-                                          unitOptions: profile.options,
-                                          selectedUnit: profile.defaultUnit,
-                                        ));
-                                        _validationMessage = null;
-                                      });
-                                    },
-                                    icon: const Icon(
-                                        Icons.add_circle_outline_rounded),
-                                    label: const Text('Add ingredient'),
                                   ),
-                                ),
+                                ],
+                                if (_ingredients.isNotEmpty) ...[
+                                  for (var i = 0; i < _ingredients.length; i++)
+                                    if (_selectedIngredientIndex == i)
+                                      _buildExpandedIngredientRow(
+                                        context,
+                                        i,
+                                        _ingredients[i],
+                                      )
+                                    else
+                                      _buildCondensedIngredientRow(
+                                        context,
+                                        i,
+                                        _ingredients[i],
+                                      ),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _canAddAnotherIngredient
+                                          ? _addBlankIngredient
+                                          : null,
+                                      icon: const Icon(
+                                          Icons.add_circle_outline_rounded,
+                                          size: 20),
+                                      label: const Text('Add ingredient'),
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -1806,9 +1930,11 @@ class _StepCard extends StatelessWidget {
   const _StepCard({
     required this.title,
     required this.child,
+    this.subtitle,
   });
 
   final String title;
+  final String? subtitle;
   final Widget child;
 
   @override
@@ -1816,6 +1942,7 @@ class _StepCard extends StatelessWidget {
     return SingleChildScrollView(
       child: SectionCard(
         title: title,
+        subtitle: subtitle,
         child: child,
       ),
     );

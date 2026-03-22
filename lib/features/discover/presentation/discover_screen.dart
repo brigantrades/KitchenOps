@@ -260,11 +260,6 @@ class _DiscoverRecipeDetailPageState
                     height: 1.15,
                   ),
             ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: FoodMedia(imageUrl: recipe.imageUrl, height: 220),
-            ),
             const SizedBox(height: 12),
             _buildDetailSectionChips(),
             const SizedBox(height: 12),

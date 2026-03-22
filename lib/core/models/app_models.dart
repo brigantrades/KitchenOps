@@ -135,6 +135,7 @@ class Recipe {
     this.userId,
     this.householdId,
     this.visibility = RecipeVisibility.personal,
+    this.apiId,
   });
 
   final String id;
@@ -155,6 +156,8 @@ class Recipe {
   final String? userId;
   final String? householdId;
   final RecipeVisibility visibility;
+  /// Spoonacular / discover id; unique in DB — must be preserved on edit.
+  final String? apiId;
 
   Recipe copyWith({
     bool? isFavorite,
@@ -162,6 +165,7 @@ class Recipe {
     int? servings,
     String? householdId,
     RecipeVisibility? visibility,
+    String? apiId,
   }) =>
       Recipe(
         id: id,
@@ -182,6 +186,7 @@ class Recipe {
         userId: userId,
         householdId: householdId ?? this.householdId,
         visibility: visibility ?? this.visibility,
+        apiId: apiId ?? this.apiId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -203,6 +208,7 @@ class Recipe {
         'user_id': userId,
         'household_id': householdId,
         'visibility': visibility.name,
+        'api_id': apiId,
       };
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -238,6 +244,7 @@ class Recipe {
               (v) => v.name == json['visibility'],
             ) ??
             RecipeVisibility.personal,
+        apiId: json['api_id']?.toString(),
       );
 }
 
@@ -354,6 +361,49 @@ class GroceryItem {
         sourceSlotId: json['source_slot_id']?.toString(),
         addedByUserId: json['user_id']?.toString(),
       );
+}
+
+/// Normalized name for deduping grocery items (trim, lower, collapse spaces).
+String normalizeGroceryItemName(String value) {
+  return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+}
+
+class RecentGroceryEntry {
+  const RecentGroceryEntry({
+    required this.name,
+    required this.category,
+    this.quantity,
+    this.unit,
+    required this.lastUsedAt,
+  });
+
+  final String name;
+  final GroceryCategory category;
+  final String? quantity;
+  final String? unit;
+  final DateTime lastUsedAt;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'category': category.dbValue,
+        if (quantity != null) 'quantity': quantity,
+        if (unit != null) 'unit': unit,
+        'last_used_at': lastUsedAt.toIso8601String(),
+      };
+
+  factory RecentGroceryEntry.fromJson(Map<String, dynamic> json) {
+    return RecentGroceryEntry(
+      name: json['name']?.toString() ?? '',
+      category: GroceryCategory.values.firstWhereOrNull(
+            (c) => c.dbValue == json['category'],
+          ) ??
+          GroceryCategory.other,
+      quantity: json['quantity']?.toString(),
+      unit: json['unit']?.toString(),
+      lastUsedAt: DateTime.tryParse(json['last_used_at']?.toString() ?? '') ??
+          DateTime.now().toUtc(),
+    );
+  }
 }
 
 class AppList {

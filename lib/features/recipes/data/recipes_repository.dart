@@ -39,11 +39,10 @@ class RecipesRepository {
           .eq('user_id', userId)
           .eq('visibility', 'personal')
           .order('created_at', ascending: false);
-      final recipes = (rows as List)
+      return (rows as List)
           .whereType<Map<String, dynamic>>()
           .map(Recipe.fromJson)
           .toList();
-      return _sortByCreatedFallback(recipes);
     } catch (_) {
       return [];
     }
@@ -59,11 +58,10 @@ class RecipesRepository {
           .eq('household_id', householdId)
           .eq('visibility', 'household')
           .order('created_at', ascending: false);
-      final recipes = (rows as List)
+      return (rows as List)
           .whereType<Map<String, dynamic>>()
           .map(Recipe.fromJson)
           .toList();
-      return _sortByCreatedFallback(recipes);
     } catch (_) {
       return [];
     }
@@ -84,10 +82,6 @@ class RecipesRepository {
       final cached = _cache.loadRecipes();
       return cached.map(Recipe.fromJson).toList();
     }
-  }
-
-  List<Recipe> _sortByCreatedFallback(List<Recipe> recipes) {
-    return recipes;
   }
 
   Future<void> create(
@@ -119,10 +113,11 @@ class RecipesRepository {
   }
 
   Future<void> updateRecipe(String recipeId, Recipe recipe) async {
-    final payload = recipe.toJson()
-      ..remove('id')
-      ..remove('user_id');
+    final payload = recipe.toJson()..remove('id')..remove('user_id');
     payload['is_public'] = recipe.visibility == RecipeVisibility.public;
+    // Omit null fields so we do not overwrite DB-only columns (api_id, household_id,
+    // image_url, …) with NULL — that caused unique constraint errors on save.
+    payload.removeWhere((_, value) => value == null);
     await _client.from('recipes').update(payload).eq('id', recipeId);
   }
 

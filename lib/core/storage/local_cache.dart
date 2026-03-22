@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 class LocalCache {
   static const _recipesBox = 'recipes_cache';
   static const _groceryBox = 'grocery_cache';
+  static const _groceryRecentsKey = 'grocery_recents';
   static const _discoverBox = 'discover_cache';
   static const _homePinnedListIdKey = 'home_pinned_list_id';
   static const _householdCtaHiddenUntilKey = 'home_household_cta_hidden_until';
@@ -39,6 +40,20 @@ class LocalCache {
     final raw = box.get('items');
     if (raw == null || raw.isEmpty) return [];
     return (jsonDecode(raw) as List).whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<void> saveGroceryRecents(List<Map<String, dynamic>> entries) async {
+    final box = Hive.box<String>(_groceryBox);
+    await box.put(_groceryRecentsKey, jsonEncode(entries));
+  }
+
+  List<Map<String, dynamic>> loadGroceryRecents() {
+    final box = Hive.box<String>(_groceryBox);
+    final raw = box.get(_groceryRecentsKey);
+    if (raw == null || raw.isEmpty) return [];
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return [];
+    return decoded.whereType<Map<String, dynamic>>().toList();
   }
 
   Future<void> saveGeneratedRecipe(

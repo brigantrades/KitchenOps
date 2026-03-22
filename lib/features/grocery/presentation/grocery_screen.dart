@@ -35,9 +35,86 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     unawaited(ref.read(groceryRepositoryProvider).ensureCatalogLoaded());
   }
 
-  Future<void> _removeItem(String itemId) async {
-    await ref.read(groceryRepositoryProvider).removeItem(itemId);
+  Future<void> _removeItem(GroceryItem item) async {
+    await ref.read(groceryRecentsProvider.notifier).recordRemovedItem(item);
+    await ref.read(groceryRepositoryProvider).removeItem(item.id);
     ref.invalidate(groceryItemsProvider);
+  }
+
+  Future<void> _addFromRecent(
+    RecentGroceryEntry entry,
+    List<GroceryItem> currentItems,
+  ) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      return;
+    }
+    if (currentItems.any(
+      (item) =>
+          normalizeGroceryItemName(item.name) ==
+          normalizeGroceryItemName(entry.name),
+    )) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Item already in basket. Long-press it in the list to update quantity.',
+          ),
+        ),
+      );
+      return;
+    }
+    final repo = ref.read(groceryRepositoryProvider);
+    try {
+      await repo.addItem(
+        userId: user.id,
+        listId: ref.read(selectedListIdProvider),
+        name: entry.name,
+        quantity: entry.quantity?.trim().isNotEmpty == true
+            ? entry.quantity
+            : '1',
+        unit: entry.unit,
+        category: entry.category,
+      );
+    } on StateError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      return;
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final message = error.message.toLowerCase();
+      final friendly = message.contains('row-level security') ||
+              message.contains('violates row-level')
+          ? 'Your account is not an active household member yet. Open Profile and accept the household invite.'
+          : 'Could not add item right now. Please try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendly)),
+      );
+      return;
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not add item right now. Please try again.'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    ref.invalidate(groceryItemsProvider);
+    ref.invalidate(groceryRecentsProvider);
   }
 
   Future<void> _openAddItemSheet(List<GroceryItem> currentItems) async {
@@ -68,7 +145,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     }
     final matchedExisting = currentItems.firstWhereOrNull(
       (item) =>
-          _normalizedItemName(item.name) == _normalizedItemName(draftItem.name),
+          normalizeGroceryItemName(item.name) ==
+          normalizeGroceryItemName(draftItem.name),
     );
     if (matchedExisting != null) {
       setState(() {
@@ -148,6 +226,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       _addSheetOpen = false;
     });
     ref.invalidate(groceryItemsProvider);
+    ref.invalidate(groceryRecentsProvider);
   }
 
   Future<void> _clearAll() async {
@@ -697,6 +776,21 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           final items = itemsAsync.valueOrNull;
           final itemsAreaLoading =
               itemsAsync.isLoading && !itemsAsync.hasValue;
+          final recentsAll = ref.watch(groceryRecentsProvider);
+          final filteredRecents = () {
+            if (itemsAreaLoading || items == null) {
+              return <RecentGroceryEntry>[];
+            }
+            final cart = items;
+            return recentsAll
+                .where(
+                  (r) => !cart
+                      .map((i) => normalizeGroceryItemName(i.name))
+                      .contains(normalizeGroceryItemName(r.name)),
+                )
+                .take(24)
+                .toList();
+          }();
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
@@ -936,6 +1030,44 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     },
                   ),
                 ),
+              if (filteredRecents.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Text(
+                    'Recent items',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+                SectionCard(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const crossAxisCount = 3;
+                      return GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: filteredRecents.length,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          mainAxisSpacing: _groceryCardGridSpacing,
+                          crossAxisSpacing: _groceryCardGridSpacing,
+                          childAspectRatio: _groceryCardAspectRatio,
+                        ),
+                        itemBuilder: (context, index) {
+                          final entry = filteredRecents[index];
+                          return _RecentGroceryEntryCard(
+                            entry: entry,
+                            onTap: () => _addFromRecent(entry, items ?? const []),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
             ],
           );
         },
@@ -1022,13 +1154,13 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
       limit: 12,
     );
     final existingNames = widget.currentItems
-        .map((item) => _normalizedItemName(item.name))
+        .map((item) => normalizeGroceryItemName(item.name))
         .where((name) => name.isNotEmpty)
         .toSet();
     final typedQuery = _nameCtrl.text.trim();
-    final normalizedTypedQuery = _normalizedItemName(typedQuery);
+    final normalizedTypedQuery = normalizeGroceryItemName(typedQuery);
     final hasExactSuggestion = suggestions.any(
-      (entry) => _normalizedItemName(entry) == normalizedTypedQuery,
+      (entry) => normalizeGroceryItemName(entry) == normalizedTypedQuery,
     );
     final hasExactExisting = existingNames.contains(normalizedTypedQuery);
     final suggestionOptions = <({String label, bool isCreate})>[
@@ -1113,7 +1245,7 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                                       widget.repo.categorize(suggestion);
                                   final isAlreadyInBasket =
                                       existingNames.contains(
-                                    _normalizedItemName(suggestion),
+                                    normalizeGroceryItemName(suggestion),
                                   );
                                   final suggestionAsset = foodIconAssetForName(
                                     suggestion,
@@ -1130,8 +1262,10 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                                         final existing = widget.currentItems
                                             .firstWhereOrNull(
                                           (item) =>
-                                              _normalizedItemName(item.name) ==
-                                              _normalizedItemName(suggestion),
+                                              normalizeGroceryItemName(
+                                                      item.name) ==
+                                              normalizeGroceryItemName(
+                                                  suggestion),
                                         );
                                         if (existing != null) {
                                           ScaffoldMessenger.of(context)
@@ -1277,7 +1411,7 @@ class _GroceryItemCard extends StatelessWidget {
 
   final GroceryItem item;
   final bool showNewBadge;
-  final Future<void> Function(String itemId) onRemove;
+  final Future<void> Function(GroceryItem item) onRemove;
   final Future<void> Function(GroceryItem item) onUpdateQuantity;
 
   @override
@@ -1294,7 +1428,7 @@ class _GroceryItemCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => onRemove(item.id),
+        onTap: () => onRemove(item),
         onLongPress: () => onUpdateQuantity(item),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -1452,6 +1586,146 @@ class _GroceryItemCard extends StatelessWidget {
   }
 }
 
+class _RecentGroceryEntryCard extends StatelessWidget {
+  const _RecentGroceryEntryCard({
+    required this.entry,
+    required this.onTap,
+  });
+
+  final RecentGroceryEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final quantityValue = _safeQuantity(entry.quantity, fallback: 1);
+    final hasMultipleQuantity = quantityValue > 1;
+    final quantityLabel = entry.unit == null || entry.unit!.trim().isEmpty
+        ? _displayQuantity(quantityValue)
+        : '${_displayQuantity(quantityValue)} ${entry.unit!.trim()}';
+    final scheme = Theme.of(context).colorScheme;
+    final foodAsset =
+        foodIconAssetForName(entry.name, category: entry.category);
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final availableHeight = constraints.maxHeight - 20;
+            final ultraCompact = availableHeight < 126;
+            final compact = availableHeight < 150;
+            const iconSize = 38.0;
+            return Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: ultraCompact ? 5 : (compact ? 7 : 10),
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Center(
+                      child: foodAsset != null
+                          ? Image.asset(
+                              foodAsset,
+                              width: iconSize,
+                              height: iconSize,
+                              filterQuality: FilterQuality.high,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Icon(
+                                  _iconForName(
+                                    entry.name,
+                                    fallback: entry.category.icon,
+                                  ),
+                                  color: entry.category.tint,
+                                  size: iconSize,
+                                );
+                              },
+                            )
+                          : Icon(
+                              _iconForName(
+                                entry.name,
+                                fallback: entry.category.icon,
+                              ),
+                              color: entry.category.tint,
+                              size: iconSize,
+                            ),
+                    ),
+                    SizedBox(height: ultraCompact ? 4 : (compact ? 6 : 8)),
+                    SizedBox(
+                      width: double.infinity,
+                      child: Text(
+                        entry.name,
+                        maxLines: compact ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: scheme.onSurface.withValues(alpha: 0.85),
+                          fontWeight: FontWeight.w600,
+                          fontSize: ultraCompact ? 12 : 12,
+                        ),
+                      ),
+                    ),
+                    if (ultraCompact && hasMultipleQuantity) ...[
+                      const SizedBox(height: 2),
+                      SizedBox(
+                        width: double.infinity,
+                        child: Text(
+                          '(${_displayQuantity(quantityValue)})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: scheme.onSurface.withValues(alpha: 0.65),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (hasMultipleQuantity && !ultraCompact) ...[
+                      SizedBox(height: compact ? 2 : 4),
+                      Align(
+                        alignment: Alignment.center,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: compact ? 7 : 8,
+                            vertical: compact ? 2 : 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: scheme.secondaryContainer
+                                .withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            quantityLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontSize: compact ? 10 : 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 IconData _iconForName(String name, {required IconData fallback}) {
   final lower = name.toLowerCase();
   if (lower.contains('milk')) return Icons.local_drink_rounded;
@@ -1465,10 +1739,6 @@ IconData _iconForName(String name, {required IconData fallback}) {
   if (lower.contains('apple')) return Icons.apple_rounded;
   if (lower.contains('egg')) return Icons.egg_alt_rounded;
   return fallback;
-}
-
-String _normalizedItemName(String value) {
-  return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
 
 double _safeQuantity(String? raw, {required double fallback}) {

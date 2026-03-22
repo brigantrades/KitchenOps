@@ -74,7 +74,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/cooking/:recipeId',
         builder: (context, state) => CookingModeScreen(
           recipeId: state.pathParameters['recipeId']!,
-          heroTag: state.uri.queryParameters['heroTag'],
         ),
       ),
     ],

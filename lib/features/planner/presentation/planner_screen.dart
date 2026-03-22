@@ -1239,6 +1239,8 @@ class PlannerScreen extends ConsumerWidget {
                                                     }
                                                     ref.invalidate(
                                                         groceryItemsProvider);
+                                                    ref.invalidate(
+                                                        groceryRecentsProvider);
                                                   } on PostgrestException catch (error) {
                                                     if (!context.mounted) {
                                                       return;

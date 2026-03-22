@@ -2,14 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:collection/collection.dart';
-import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
 class CookingModeScreen extends ConsumerStatefulWidget {
-  const CookingModeScreen({super.key, required this.recipeId, this.heroTag});
+  const CookingModeScreen({super.key, required this.recipeId});
 
   final String recipeId;
-  final String? heroTag;
 
   @override
   ConsumerState<CookingModeScreen> createState() => _CookingModeScreenState();
@@ -39,22 +37,10 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
               ? const ['Follow your recipe details.']
               : recipe.instructions;
           final step = steps[_stepIndex.clamp(0, steps.length - 1)];
-          final image = SizedBox(
-            height: 260,
-            width: double.infinity,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(32),
-              child: FoodMedia(imageUrl: recipe.imageUrl, height: 260),
-            ),
-          );
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              widget.heroTag == null
-                  ? image
-                  : Hero(tag: widget.heroTag!, child: image),
-              const SizedBox(height: 16),
               Text(recipe.title,
                   style: Theme.of(context).textTheme.headlineMedium),
               const SizedBox(height: 10),

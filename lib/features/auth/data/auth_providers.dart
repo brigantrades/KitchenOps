@@ -10,13 +10,15 @@ final authStateProvider = StreamProvider<AuthState>((ref) {
   return ref.watch(authRepositoryProvider).authChanges();
 });
 
+/// Prefer the synchronous session user first so Riverpod never treats the user
+/// as logged out while [authStateProvider] is still loading or between stream
+/// emissions (otherwise recipes/grocery/planner all resolve to empty data).
 final currentUserProvider = Provider<User?>((ref) {
   if (!Env.hasSupabase) return null;
-  final authState = ref.watch(authStateProvider).valueOrNull;
-  if (authState?.session?.user != null) return authState!.session!.user;
   try {
-    return Supabase.instance.client.auth.currentUser;
-  } catch (_) {
-    return null;
-  }
+    final sync = Supabase.instance.client.auth.currentUser;
+    if (sync != null) return sync;
+  } catch (_) {}
+  final authState = ref.watch(authStateProvider).valueOrNull;
+  return authState?.session?.user;
 });
