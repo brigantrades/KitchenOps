@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/app.dart';
 import 'package:plateplan/core/config/env.dart';
+import 'package:plateplan/core/services/meal_reminder_notification_service.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/firebase_options.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -14,6 +15,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await LocalCache.init();
+
+  await initMealReminderNotifications();
 
   if (Env.firebaseEnabled) {
     try {

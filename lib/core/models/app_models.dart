@@ -156,6 +156,7 @@ class Recipe {
   final String? userId;
   final String? householdId;
   final RecipeVisibility visibility;
+
   /// Spoonacular / discover id; unique in DB — must be preserved on edit.
   final String? apiId;
 
@@ -260,6 +261,8 @@ class MealPlanSlot {
     this.sauceText,
     this.servingsUsed = 1,
     this.slotOrder = 0,
+    this.reminderAt,
+    this.reminderMessage,
   });
 
   final String id;
@@ -272,6 +275,8 @@ class MealPlanSlot {
   final String? sauceText;
   final int servingsUsed;
   final int slotOrder;
+  final DateTime? reminderAt;
+  final String? reminderMessage;
 
   bool get hasPlannedContent {
     final hasMealText = (mealText ?? '').trim().isNotEmpty;
@@ -293,6 +298,8 @@ class MealPlanSlot {
         'sauce_text': sauceText,
         'servings_used': servingsUsed,
         'slot_order': slotOrder,
+        'reminder_at': reminderAt?.toUtc().toIso8601String(),
+        'reminder_message': reminderMessage,
       };
 
   factory MealPlanSlot.fromJson(Map<String, dynamic> json) => MealPlanSlot(
@@ -306,6 +313,10 @@ class MealPlanSlot {
         sauceText: json['sauce_text']?.toString(),
         servingsUsed: (json['servings_used'] as num?)?.toInt() ?? 1,
         slotOrder: (json['slot_order'] as num?)?.toInt() ?? 0,
+        reminderAt: json['reminder_at'] != null
+            ? DateTime.parse(json['reminder_at'].toString()).toUtc()
+            : null,
+        reminderMessage: json['reminder_message']?.toString(),
       );
 }
 
@@ -330,6 +341,7 @@ class GroceryItem {
   final String? fromRecipeId;
   final String? listId;
   final String? sourceSlotId;
+
   /// Profile id of the member who added this row (list_items.user_id).
   final String? addedByUserId;
 
@@ -558,8 +570,7 @@ class Profile {
             const [],
         householdServings: (json['household_servings'] as num?)?.toInt(),
         householdId: json['household_id']?.toString(),
-        groceryListOrder:
-            GroceryListOrder.fromJson(json['grocery_list_order']),
+        groceryListOrder: GroceryListOrder.fromJson(json['grocery_list_order']),
       );
 
   Profile copyWith({

@@ -200,6 +200,18 @@ class PlannerRepository {
     }).eq('id', slotId);
   }
 
+  Future<void> updateSlotReminder({
+    required String slotId,
+    DateTime? reminderAt,
+    String? message,
+  }) {
+    final trimmed = message?.trim();
+    return _client.from('meal_plan_slots').update({
+      'reminder_at': reminderAt?.toUtc().toIso8601String(),
+      'reminder_message': trimmed == null || trimmed.isEmpty ? null : trimmed,
+    }).eq('id', slotId);
+  }
+
   Future<void> addSlot({
     required String userId,
     required DateTime weekStart,
@@ -317,6 +329,20 @@ final weekStartProvider = StateProvider<DateTime>((ref) {
   final now = DateTime.now();
   return now.subtract(Duration(days: now.weekday - 1));
 });
+
+/// Selected day index 0–6 matching [MealPlanSlot.dayOfWeek] (Monday = 0).
+final selectedPlannerDayProvider = StateProvider<int>((ref) {
+  final current = DateTime.now().weekday - 1;
+  if (current < 0) return 0;
+  if (current > 6) return 6;
+  return current;
+});
+
+/// Monday-start week for [date] (time cleared).
+DateTime weekStartMondayForDate(DateTime date) {
+  final d = DateTime(date.year, date.month, date.day);
+  return d.subtract(Duration(days: date.weekday - DateTime.monday));
+}
 
 final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
   final user = ref.watch(currentUserProvider);

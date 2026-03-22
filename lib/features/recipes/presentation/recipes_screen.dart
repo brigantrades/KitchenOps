@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -21,6 +23,9 @@ class RecipesScreen extends ConsumerStatefulWidget {
 
 class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   final _searchCtrl = TextEditingController();
+  final GlobalKey _filterChromeKey = GlobalKey();
+  double? _measuredFilterChromeHeight;
+  ({bool secondPills, int libraryTab})? _filterLayoutKey;
   int _libraryIndex = 0;
   int _segmentIndex = 0;
   final Set<MealType> _mealTypeFilters = {};
@@ -128,6 +133,138 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     });
   }
 
+  /// Conservative fallback before the first layout measurement.
+  double _estimateFilterChromeHeight(bool hasSecondPillRow) {
+    const searchRow = 48.0;
+    const gap = 4.0;
+    const pills = 46.0;
+    const mealBlock = 70.0;
+    var h = searchRow + gap + pills;
+    if (hasSecondPillRow) {
+      h += gap + pills;
+    }
+    h += gap + mealBlock;
+    return h;
+  }
+
+  void _measureFilterChromeAfterLayout() {
+    if (!mounted) return;
+    final box =
+        _filterChromeKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final h = box.size.height;
+    if (_measuredFilterChromeHeight == null ||
+        (h - _measuredFilterChromeHeight!).abs() > 0.5) {
+      setState(() => _measuredFilterChromeHeight = h);
+    }
+  }
+
+  Widget _buildRecipesFilterHeader({
+    required BuildContext context,
+    required bool hasSharedHousehold,
+    required int effectiveLibraryIndex,
+    required List<String> libraryLabels,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: SearchBar(
+                controller: _searchCtrl,
+                hintText: hasSharedHousehold
+                    ? (effectiveLibraryIndex == 0
+                        ? 'Search household recipes'
+                        : 'Search my recipes')
+                    : 'Search my recipes',
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 2),
+            IconButton.filledTonal(
+              tooltip: 'Create new recipe',
+              onPressed: _createRecipeManually,
+              visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: const EdgeInsets.all(6),
+              ),
+              icon: const Icon(Icons.add_rounded, size: 22),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        SegmentedPills(
+          labels: libraryLabels,
+          selectedIndex: effectiveLibraryIndex,
+          onSelect: (idx) => setState(() {
+            _libraryIndex = idx;
+            _segmentIndex = 0;
+          }),
+        ),
+        if (!(hasSharedHousehold && effectiveLibraryIndex == 0)) ...[
+          const SizedBox(height: 4),
+          SegmentedPills(
+            labels: const ['Favorites', 'To Try'],
+            selectedIndex: _segmentIndex,
+            onSelect: (idx) => setState(() => _segmentIndex = idx),
+          ),
+        ],
+        const SizedBox(height: 4),
+        Text(
+          'Meal type',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        const SizedBox(height: 2),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 5,
+              runSpacing: 4,
+              children: [
+                for (final type in [
+                  MealType.entree,
+                  MealType.side,
+                  MealType.sauce,
+                  MealType.snack,
+                ])
+                  FilterChip(
+                    label: Text(_mealTypeLabel(type)),
+                    selected: _mealTypeFilters.contains(type),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onSelected: (value) => _toggleMealTypeFilter(type, value),
+                    selectedColor: const Color(0xFFD6EBFF),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Wrap(
+              spacing: 5,
+              children: [
+                FilterChip(
+                  label: Text(_mealTypeLabel(MealType.dessert)),
+                  selected: _mealTypeFilters.contains(MealType.dessert),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onSelected: (value) =>
+                      _toggleMealTypeFilter(MealType.dessert, value),
+                  selectedColor: const Color(0xFFD6EBFF),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final recipesAsync = ref.watch(recipesProvider);
@@ -140,319 +277,306 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     final libraryLabels = hasSharedHousehold
         ? const ['Household Recipes', 'My Recipes']
         : const ['My Recipes'];
+    final hasSecondPillRow =
+        !(hasSharedHousehold && effectiveLibraryIndex == 0);
+
+    final gradient = LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [colors.surfaceBase, colors.surfaceAlt, colors.surfaceBase],
+    );
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Recipes'),
-      ),
       body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [colors.surfaceBase, colors.surfaceAlt, colors.surfaceBase],
-          ),
-        ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-              child: Column(
-                children: [
-                  SectionCard(
-                    title: 'Recipe Library',
-                    subtitle: hasSharedHousehold
-                        ? 'Search and manage household and personal recipes.'
-                        : 'Search and manage your personal recipes.',
-                    child: SearchBar(
-                      controller: _searchCtrl,
-                      hintText: hasSharedHousehold
-                          ? (effectiveLibraryIndex == 0
-                              ? 'Search household recipes'
-                              : 'Search my recipes')
-                          : 'Search my recipes',
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SegmentedPills(
-                    labels: libraryLabels,
-                    selectedIndex: effectiveLibraryIndex,
-                    onSelect: (idx) => setState(() {
-                      _libraryIndex = idx;
-                      _segmentIndex = 0;
-                    }),
-                  ),
-                  if (!(hasSharedHousehold &&
-                      effectiveLibraryIndex == 0)) ...[
-                    const SizedBox(height: 10),
-                    SegmentedPills(
-                      labels: const ['Favorites', 'To Try'],
-                      selectedIndex: _segmentIndex,
-                      onSelect: (idx) =>
-                          setState(() => _segmentIndex = idx),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Meal type',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: MealType.values
-                          .map(
-                            (type) => FilterChip(
-                              label: Text(_mealTypeLabel(type)),
-                              selected: _mealTypeFilters.contains(type),
-                              onSelected: (value) =>
-                                  _toggleMealTypeFilter(type, value),
-                              selectedColor: const Color(0xFFD6EBFF),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: recipesAsync.when(
-                data: (recipes) {
-                  bool matches(Recipe recipe) {
-                    if (query.isEmpty) return true;
-                    final title = recipe.title.toLowerCase();
-                    final cuisines = recipe.cuisineTags.join(' ').toLowerCase();
-                    final meal = _mealTypeLabel(recipe.mealType).toLowerCase();
-                    return title.contains(query) ||
-                        cuisines.contains(query) ||
-                        meal.contains(query);
-                  }
+        decoration: BoxDecoration(gradient: gradient),
+        child: recipesAsync.when(
+          data: (recipes) {
+            bool matches(Recipe recipe) {
+              if (query.isEmpty) return true;
+              final title = recipe.title.toLowerCase();
+              final cuisines = recipe.cuisineTags.join(' ').toLowerCase();
+              final meal = _mealTypeLabel(recipe.mealType).toLowerCase();
+              return title.contains(query) ||
+                  cuisines.contains(query) ||
+                  meal.contains(query);
+            }
 
-                  final filtered = recipes.where(matches).toList();
-                  final isHouseholdLibrary =
-                      hasSharedHousehold && effectiveLibraryIndex == 0;
-                  final List<Recipe> visible;
-                  if (isHouseholdLibrary) {
-                    visible = filtered
-                        .where((r) =>
-                            r.visibility == RecipeVisibility.household &&
-                            r.isFavorite)
-                        .toList();
-                  } else {
-                    final personal = filtered
-                        .where((r) =>
-                            r.visibility != RecipeVisibility.household)
-                        .toList();
-                    final allFavorites = filtered
-                        .where((r) => r.isFavorite)
-                        .toList();
-                    final toTry =
-                        personal.where((r) => r.isToTry).toList();
-                    visible = switch (_segmentIndex) {
-                      1 => toTry,
-                      _ => allFavorites,
-                    };
-                  }
-                  final displayed = visible
-                      .where(_recipePassesMealFilter)
-                      .toList();
-                  return _RecipeList(
-                    recipes: displayed,
-                    hasSharedHousehold: hasSharedHousehold,
-                    onEditRecipe: _editRecipe,
-                  );
-                },
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, stack) => Center(child: Text('Error: $error')),
-              ),
-            ),
-          ],
+            final filtered = recipes.where(matches).toList();
+            final isHouseholdLibrary =
+                hasSharedHousehold && effectiveLibraryIndex == 0;
+            final List<Recipe> visible;
+            if (isHouseholdLibrary) {
+              visible = filtered
+                  .where((r) =>
+                      r.visibility == RecipeVisibility.household &&
+                      r.isFavorite)
+                  .toList();
+            } else {
+              final personal = filtered
+                  .where((r) => r.visibility != RecipeVisibility.household)
+                  .toList();
+              final allFavorites =
+                  filtered.where((r) => r.isFavorite).toList();
+              final toTry = personal.where((r) => r.isToTry).toList();
+              visible = switch (_segmentIndex) {
+                1 => toTry,
+                _ => allFavorites,
+              };
+            }
+            final displayed =
+                visible.where(_recipePassesMealFilter).toList();
+
+            final layoutKey = (
+              secondPills: hasSecondPillRow,
+              libraryTab: effectiveLibraryIndex,
+            );
+            if (_filterLayoutKey != layoutKey) {
+              _filterLayoutKey = layoutKey;
+              _measuredFilterChromeHeight = null;
+            }
+
+            final headerTopPad =
+                MediaQuery.paddingOf(context).top + kToolbarHeight + 2;
+            final chromeHeight = _measuredFilterChromeHeight ??
+                _estimateFilterChromeHeight(hasSecondPillRow);
+            final minExpanded =
+                MediaQuery.paddingOf(context).top + kToolbarHeight;
+            final expandedHeight = math.max(
+              minExpanded,
+              headerTopPad + chromeHeight - 20,
+            );
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _measureFilterChromeAfterLayout();
+            });
+
+            return CustomScrollView(
+              slivers: [
+                SliverAppBar(
+                  pinned: true,
+                  stretch: false,
+                  elevation: 0,
+                  scrolledUnderElevation: 0.5,
+                  shadowColor: Colors.black26,
+                  surfaceTintColor: Colors.transparent,
+                  backgroundColor: colors.surfaceBase,
+                  expandedHeight: expandedHeight,
+                  title: const Text('Recipes'),
+                  flexibleSpace: FlexibleSpaceBar(
+                    collapseMode: CollapseMode.parallax,
+                    stretchModes: const [],
+                    background: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        10,
+                        headerTopPad,
+                        10,
+                        0,
+                      ),
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: KeyedSubtree(
+                          key: _filterChromeKey,
+                          child: _buildRecipesFilterHeader(
+                            context: context,
+                            hasSharedHousehold: hasSharedHousehold,
+                            effectiveLibraryIndex: effectiveLibraryIndex,
+                            libraryLabels: libraryLabels,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (displayed.isEmpty)
+                  SliverPadding(
+                    padding: EdgeInsets.zero,
+                    sliver: SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Text(
+                          'No recipes yet. Add one in Discover or Planner.',
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          return _RecipeRow(
+                            recipe: displayed[index],
+                            hasSharedHousehold: hasSharedHousehold,
+                            onEditRecipe: _editRecipe,
+                          );
+                        },
+                        childCount: displayed.length,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, stack) => Center(child: Text('Error: $error')),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createRecipeManually,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Create New'),
       ),
     );
   }
 }
 
-class _RecipeList extends ConsumerWidget {
-  const _RecipeList({
-    required this.recipes,
+class _RecipeRow extends ConsumerWidget {
+  const _RecipeRow({
+    required this.recipe,
     required this.hasSharedHousehold,
     required this.onEditRecipe,
   });
 
-  final List<Recipe> recipes;
+  final Recipe recipe;
   final bool hasSharedHousehold;
   final Future<void> Function(Recipe recipe) onEditRecipe;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (recipes.isEmpty) {
-      return const Center(
-          child: Text('No recipes yet. Add one in Discover or Planner.'));
-    }
     final scheme = Theme.of(context).colorScheme;
     final user = ref.watch(currentUserProvider);
-
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
-      itemCount: recipes.length,
-      itemBuilder: (context, index) {
-        final recipe = recipes[index];
-        final canCopyToHousehold = user != null &&
-            hasSharedHousehold &&
-            recipe.visibility == RecipeVisibility.personal;
-        final tags = <String>[
-          _mealTypeLabel(recipe.mealType),
-          '${recipe.ingredients.length} ingredients',
-          '${recipe.instructions.length} steps',
-        ];
-        return Dismissible(
-          key: ValueKey(recipe.id),
-          background: Container(color: scheme.primary.withValues(alpha: 0.14)),
-          secondaryBackground:
-              Container(color: scheme.secondary.withValues(alpha: 0.2)),
-          confirmDismiss: (dir) async {
-            final repo = ref.read(recipesRepositoryProvider);
-            if (dir == DismissDirection.startToEnd) {
-              await repo.toggleFavorite(recipe.id, !recipe.isFavorite);
-            } else {
-              await repo.toggleToTry(recipe.id, !recipe.isToTry);
-            }
-            ref.invalidate(recipesProvider);
-            return false;
-          },
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: RecipeListCard(
-              title: recipe.title,
-              meta:
-                  '${_mealTypeLabel(recipe.mealType)} • Serves ${recipe.servings}',
-              tags: recipe.cuisineTags.isEmpty
-                  ? tags
-                  : [recipe.cuisineTags.first, ...tags],
-              onTap: () => context.push('/cooking/${recipe.id}'),
-              trailing: canCopyToHousehold
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton.filledTonal(
-                          onPressed: () async {
-                            await ref
-                                .read(recipesRepositoryProvider)
-                                .toggleFavorite(
-                                  recipe.id,
-                                  !recipe.isFavorite,
-                                );
-                            ref.invalidate(recipesProvider);
-                          },
-                          icon: Icon(
-                            recipe.isFavorite
-                                ? Icons.favorite_rounded
-                                : Icons.favorite_border_rounded,
-                            color: recipe.isFavorite
-                                ? scheme.primary
-                                : scheme.onSurfaceVariant,
+    final canCopyToHousehold = user != null &&
+        hasSharedHousehold &&
+        recipe.visibility == RecipeVisibility.personal;
+    final tags = <String>[
+      _mealTypeLabel(recipe.mealType),
+      '${recipe.ingredients.length} ingredients',
+      '${recipe.instructions.length} steps',
+    ];
+    return Dismissible(
+      key: ValueKey(recipe.id),
+      background: Container(color: scheme.primary.withValues(alpha: 0.14)),
+      secondaryBackground:
+          Container(color: scheme.secondary.withValues(alpha: 0.2)),
+      confirmDismiss: (dir) async {
+        final repo = ref.read(recipesRepositoryProvider);
+        if (dir == DismissDirection.startToEnd) {
+          await repo.toggleFavorite(recipe.id, !recipe.isFavorite);
+        } else {
+          await repo.toggleToTry(recipe.id, !recipe.isToTry);
+        }
+        ref.invalidate(recipesProvider);
+        return false;
+      },
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: RecipeListCard(
+          title: recipe.title,
+          meta:
+              '${_mealTypeLabel(recipe.mealType)} • Serves ${recipe.servings}',
+          tags: recipe.cuisineTags.isEmpty
+              ? tags
+              : [recipe.cuisineTags.first, ...tags],
+          onTap: () => context.push('/cooking/${recipe.id}'),
+          trailing: canCopyToHousehold
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton.filledTonal(
+                      onPressed: () async {
+                        await ref.read(recipesRepositoryProvider).toggleFavorite(
+                              recipe.id,
+                              !recipe.isFavorite,
+                            );
+                        ref.invalidate(recipesProvider);
+                      },
+                      icon: Icon(
+                        recipe.isFavorite
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        color: recipe.isFavorite
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Recipe actions',
+                      onSelected: (value) async {
+                        if (value == 'edit_recipe') {
+                          await onEditRecipe(recipe);
+                          return;
+                        }
+                        if (value != 'copy_to_household') {
+                          return;
+                        }
+                        try {
+                          await ref
+                              .read(recipesRepositoryProvider)
+                              .copyPersonalRecipeToHousehold(
+                                userId: user.id,
+                                recipeId: recipe.id,
+                              );
+                          ref.invalidate(recipesProvider);
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Shared "${recipe.title}" to Household Recipes.',
+                              ),
+                            ),
+                          );
+                        } on PostgrestException catch (error) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Could not copy recipe: ${error.message}',
+                              ),
+                            ),
+                          );
+                        } catch (error) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Could not copy recipe: $error',
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem<String>(
+                          value: 'edit_recipe',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_outlined),
+                              SizedBox(width: 8),
+                              Text('Edit recipe'),
+                            ],
                           ),
                         ),
-                        PopupMenuButton<String>(
-                          tooltip: 'Recipe actions',
-                          onSelected: (value) async {
-                            if (value == 'edit_recipe') {
-                              await onEditRecipe(recipe);
-                              return;
-                            }
-                            if (value != 'copy_to_household') {
-                              return;
-                            }
-                            try {
-                              await ref
-                                  .read(recipesRepositoryProvider)
-                                  .copyPersonalRecipeToHousehold(
-                                    userId: user.id,
-                                    recipeId: recipe.id,
-                                  );
-                              ref.invalidate(recipesProvider);
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Shared "${recipe.title}" to Household Recipes.',
-                                  ),
-                                ),
-                              );
-                            } on PostgrestException catch (error) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Could not copy recipe: ${error.message}',
-                                  ),
-                                ),
-                              );
-                            } catch (error) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Could not copy recipe: $error',
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                          itemBuilder: (context) => const [
-                            PopupMenuItem<String>(
-                              value: 'edit_recipe',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.edit_outlined),
-                                  SizedBox(width: 8),
-                                  Text('Edit recipe'),
-                                ],
-                              ),
-                            ),
-                            PopupMenuItem<String>(
-                              value: 'copy_to_household',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.content_copy_rounded),
-                                  SizedBox(width: 8),
-                                  Text('Share to Household'),
-                                ],
-                              ),
-                            ),
-                          ],
-                          child: const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 4),
-                            child: Icon(Icons.more_vert_rounded),
+                        PopupMenuItem<String>(
+                          value: 'copy_to_household',
+                          child: Row(
+                            children: [
+                              Icon(Icons.content_copy_rounded),
+                              SizedBox(width: 8),
+                              Text('Share to Household'),
+                            ],
                           ),
                         ),
                       ],
-                    )
-                  : IconButton.filledTonal(
-                      onPressed: () => onEditRecipe(recipe),
-                      icon: Icon(Icons.edit_outlined,
-                          color: scheme.onSurfaceVariant),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4),
+                        child: Icon(Icons.more_vert_rounded),
+                      ),
                     ),
-            ),
-          ),
-        );
-      },
+                  ],
+                )
+              : IconButton.filledTonal(
+                  onPressed: () => onEditRecipe(recipe),
+                  icon: Icon(Icons.edit_outlined,
+                      color: scheme.onSurfaceVariant),
+                ),
+        ),
+      ),
     );
   }
 }
