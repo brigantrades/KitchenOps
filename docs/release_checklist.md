@@ -14,9 +14,11 @@ Firebase Crashlytics, Analytics, and App Distribution read **`versionName`** and
 
   `dart run tool/bump_version.dart patch`
 
-  Or use the wrapper script (bumps patch + builds release bundle in one step):
+  Or use the wrapper script (bumps patch + builds release **APK** in one step — matches App Distribution uploads):
 
-  `./tool/deploy_firebase_build.sh --dart-define=FIREBASE_ENABLED=true`
+  `./tool/deploy_firebase_build.sh --dart-define-from-file=env/dev.json`
+
+  If you run `flutter build apk` yourself, you **must** run `dart run tool/bump_version.dart patch` **before** the build. Otherwise the APK still embeds the old `pubspec.yaml` version and Firebase will keep showing the same label (e.g. **0.1.2 (5)**).
 
   Use `minor` or `major` when you mean a larger release.
 

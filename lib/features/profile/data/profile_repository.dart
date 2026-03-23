@@ -11,12 +11,26 @@ class ProfileRepository {
   }
 
   Future<void> upsertProfile(Profile profile) async {
+    final authUserId = _client.auth.currentUser?.id;
+    if (authUserId == null) {
+      throw StateError('Sign in required.');
+    }
     final payload = profile.toJson();
+    // RLS on profiles is scoped to auth.uid() = id; always write as current user.
+    payload['id'] = authUserId;
     if (profile.householdId == null) {
       payload.remove('household_id');
     }
     payload.remove('grocery_list_order');
-    await _client.from('profiles').upsert(payload);
+    final updatePayload = Map<String, dynamic>.from(payload)..remove('id');
+    final updated = await _client
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', authUserId)
+        .select('id')
+        .maybeSingle();
+    if (updated != null) return;
+    await _client.from('profiles').insert(payload);
   }
 
   Future<void> updateGroceryListOrder(

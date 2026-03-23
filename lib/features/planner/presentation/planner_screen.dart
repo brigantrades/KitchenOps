@@ -1661,6 +1661,17 @@ class PlannerScreen extends ConsumerWidget {
                                 slot.mealText?.trim().isNotEmpty == true
                                     ? 'Typed'
                                     : (recipe != null ? 'Recipe' : null);
+                            final slotNutrition =
+                                recipe?.nutrition ?? const Nutrition();
+                            final hasSlotNutrition = recipe != null &&
+                                (slotNutrition.calories > 0 ||
+                                    slotNutrition.protein > 0 ||
+                                    slotNutrition.fat > 0 ||
+                                    slotNutrition.carbs > 0 ||
+                                    slotNutrition.fiber > 0 ||
+                                    slotNutrition.sugar > 0);
+                            final slotNutritionLabel =
+                                '${slotNutrition.calories} kcal • ${slotNutrition.protein.toStringAsFixed(0)}g protein';
                             final sauceRecipe = slot.sauceRecipeId == null
                                 ? null
                                 : recipes.firstWhereOrNull(
@@ -1948,6 +1959,30 @@ class PlannerScreen extends ConsumerWidget {
                                                           .textTheme
                                                           .titleMedium,
                                                     ),
+                                                    if (mealSource == 'Recipe')
+                                                      Text(
+                                                        hasSlotNutrition
+                                                            ? slotNutritionLabel
+                                                            : 'Nutrition unavailable for this recipe.',
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall
+                                                            ?.copyWith(
+                                                              color: scheme
+                                                                  .onSurfaceVariant,
+                                                            ),
+                                                      ),
+                                                    if (mealSource == 'Typed')
+                                                      Text(
+                                                        'Nutrition unavailable for typed meal.',
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall
+                                                            ?.copyWith(
+                                                              color: scheme
+                                                                  .onSurfaceVariant,
+                                                            ),
+                                                      ),
                                                     if (slot.hasPlannedContent)
                                                       Text(
                                                         assignmentLabel,
@@ -2782,6 +2817,154 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
     );
   }
 
+  bool _hasNutritionData(Nutrition nutrition) {
+    return nutrition.calories > 0 ||
+        nutrition.protein > 0 ||
+        nutrition.fat > 0 ||
+        nutrition.carbs > 0 ||
+        nutrition.fiber > 0 ||
+        nutrition.sugar > 0;
+  }
+
+  Widget _buildMealNutritionInfoSection(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final typedMealSelected =
+        _mealMode == 1 && _mealTextCtrl.text.trim().isNotEmpty;
+    final nutrition = _mealRecipe?.nutrition ?? const Nutrition();
+    final hasNutrition = _mealRecipe != null && _hasNutritionData(nutrition);
+    final servings = (_mealRecipe?.servings ?? 1).clamp(1, 999999);
+    Nutrition perServingNutrition(Nutrition n) {
+      final s = servings.toDouble();
+      return Nutrition(
+        calories: (n.calories / s).round(),
+        protein: n.protein / s,
+        fat: n.fat / s,
+        carbs: n.carbs / s,
+        fiber: n.fiber / s,
+        sugar: n.sugar / s,
+      );
+    }
+
+    final per = perServingNutrition(nutrition);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (typedMealSelected)
+            Text(
+              'Nutritional info is only available for recipe-linked meals with ingredients.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            )
+          else if (_mealRecipe == null)
+            Text(
+              'Select a recipe to view nutrition for this slot.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            )
+          else if (hasNutrition)
+            Theme(
+              data: Theme.of(context).copyWith(
+                dividerColor: Colors.transparent,
+              ),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                title: Text(
+                  'Nutritional value (per serving)',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                subtitle: Text(
+                  '${per.calories} kcal • ${per.protein.toStringAsFixed(1)} g protein',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+                children: [
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 6),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: scheme.surface.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Table(
+                      columnWidths: const {
+                        0: FlexColumnWidth(1.4),
+                        1: FlexColumnWidth(1),
+                      },
+                      children: [
+                        _nutritionTableRow(
+                            context, 'Calories', '${per.calories} kcal'),
+                        _nutritionTableRow(context, 'Protein',
+                            '${per.protein.toStringAsFixed(1)} g'),
+                        _nutritionTableRow(
+                            context, 'Fat', '${per.fat.toStringAsFixed(1)} g'),
+                        _nutritionTableRow(context, 'Carbs',
+                            '${per.carbs.toStringAsFixed(1)} g'),
+                        _nutritionTableRow(context, 'Fiber',
+                            '${per.fiber.toStringAsFixed(1)} g'),
+                        _nutritionTableRow(context, 'Sugar',
+                            '${per.sugar.toStringAsFixed(1)} g'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Text(
+              'No nutrition totals found for this recipe yet.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  TableRow _nutritionTableRow(BuildContext context, String label, String value) {
+    final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    return TableRow(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            label,
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -2848,6 +3031,8 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
                     hintText: 'e.g., Canned Soup',
                   ),
                 ),
+              const SizedBox(height: 10),
+              _buildMealNutritionInfoSection(context),
               const SizedBox(height: 12),
               const Divider(),
               Align(
