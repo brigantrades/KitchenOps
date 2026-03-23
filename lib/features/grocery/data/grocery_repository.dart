@@ -7,6 +7,7 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/profile/data/profile_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -31,6 +32,28 @@ List<AppList> applyGroceryListOrder(
     return da.compareTo(db);
   });
   return filtered;
+}
+
+/// Resolves which grocery list to show when [selectedListId] is null or stale.
+/// Matches the default used on the Lists screen (Shared tab first when
+/// [hasSharedHousehold] is true, else private lists).
+String? effectiveGroceryListId({
+  required List<AppList> lists,
+  required String? selectedListId,
+  required bool hasSharedHousehold,
+  required GroceryListOrder profileOrder,
+}) {
+  if (lists.isEmpty) return null;
+  if (selectedListId != null &&
+      selectedListId.isNotEmpty &&
+      lists.any((l) => l.id == selectedListId)) {
+    return selectedListId;
+  }
+  final scopeFilter = !hasSharedHousehold
+      ? ListScope.private
+      : ListScope.household;
+  final ordered = applyGroceryListOrder(lists, scopeFilter, profileOrder);
+  return ordered.firstOrNull?.id;
 }
 
 class GroceryRepository {
@@ -1099,8 +1122,22 @@ final groceryItemsProvider = Provider<AsyncValue<List<GroceryItem>>>((ref) {
   final user = ref.watch(currentUserProvider);
   if (user == null) return const AsyncData([]);
   final selectedListId = ref.watch(selectedListIdProvider);
-  if (selectedListId != null && selectedListId.isNotEmpty) {
-    return ref.watch(groceryListItemsFamily(selectedListId));
+  final lists = ref.watch(listsProvider).valueOrNull ?? const <AppList>[];
+  final hasSharedHousehold =
+      ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
+  final profileOrder =
+      ref.watch(profileProvider).valueOrNull?.groceryListOrder ??
+          GroceryListOrder.empty;
+
+  final effectiveId = effectiveGroceryListId(
+    lists: lists,
+    selectedListId: selectedListId,
+    hasSharedHousehold: hasSharedHousehold,
+    profileOrder: profileOrder,
+  );
+
+  if (effectiveId != null && effectiveId.isNotEmpty) {
+    return ref.watch(groceryListItemsFamily(effectiveId));
   }
   return ref.watch(groceryItemsDefaultListStreamProvider);
 });
@@ -1108,11 +1145,27 @@ final groceryItemsProvider = Provider<AsyncValue<List<GroceryItem>>>((ref) {
 /// Recreates the Realtime channel and refetches items for the active list
 /// (or default list when none is selected).
 void invalidateActiveGroceryStreams(WidgetRef ref) {
+  ref.invalidate(groceryItemsDefaultListStreamProvider);
   final selectedListId = ref.read(selectedListIdProvider);
-  if (selectedListId != null && selectedListId.isNotEmpty) {
+  final lists = ref.read(listsProvider).valueOrNull ?? const <AppList>[];
+  final hasSharedHousehold =
+      ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+  final profileOrder =
+      ref.read(profileProvider).valueOrNull?.groceryListOrder ??
+          GroceryListOrder.empty;
+  final effectiveId = effectiveGroceryListId(
+    lists: lists,
+    selectedListId: selectedListId,
+    hasSharedHousehold: hasSharedHousehold,
+    profileOrder: profileOrder,
+  );
+  if (effectiveId != null && effectiveId.isNotEmpty) {
+    ref.invalidate(groceryListItemsFamily(effectiveId));
+  }
+  if (selectedListId != null &&
+      selectedListId.isNotEmpty &&
+      selectedListId != effectiveId) {
     ref.invalidate(groceryListItemsFamily(selectedListId));
-  } else {
-    ref.invalidate(groceryItemsDefaultListStreamProvider);
   }
   ref.invalidate(groceryItemsProvider);
 }

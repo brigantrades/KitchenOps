@@ -1144,6 +1144,72 @@ class _DirectionDraft {
   }
 }
 
+/// Scrolls the expanded ingredient card into view when the name field is focused
+/// so the full card stays above the keyboard.
+class _IngredientCardScrollIntoView extends StatefulWidget {
+  const _IngredientCardScrollIntoView({
+    required this.nameFocusNode,
+    required this.cardKey,
+    required this.child,
+  });
+
+  final FocusNode nameFocusNode;
+  final GlobalKey cardKey;
+  final Widget child;
+
+  @override
+  State<_IngredientCardScrollIntoView> createState() =>
+      _IngredientCardScrollIntoViewState();
+}
+
+class _IngredientCardScrollIntoViewState
+    extends State<_IngredientCardScrollIntoView> {
+  void _onNameFocus() {
+    if (!widget.nameFocusNode.hasFocus) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = widget.cardKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.08,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.nameFocusNode.addListener(_onNameFocus);
+  }
+
+  @override
+  void dispose() {
+    widget.nameFocusNode.removeListener(_onNameFocus);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _IngredientCardScrollIntoView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nameFocusNode != widget.nameFocusNode) {
+      oldWidget.nameFocusNode.removeListener(_onNameFocus);
+      widget.nameFocusNode.addListener(_onNameFocus);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return KeyedSubtree(
+      key: widget.cardKey,
+      child: widget.child,
+    );
+  }
+}
+
 class _RecipeBuilderSheet extends ConsumerStatefulWidget {
   const _RecipeBuilderSheet({this.initialRecipe});
 
@@ -1165,6 +1231,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
   final ScrollController _ingredientScrollController = ScrollController();
   final List<String> _liftedIngredientReorderIds = [];
   final GlobalKey _ingredientListTopKey = GlobalKey();
+  final GlobalKey _ingredientExpandedCardKey = GlobalKey();
   String? _lastAddedIngredientReorderId;
   bool _cancelIngredientLiftRestore = false;
   double _prevKeyboardInset = 0;
@@ -1710,295 +1777,305 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
         _kQualitativePresets.contains(row.qualitativePreset)
             ? row.qualitativePreset
             : 'custom';
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.sm,
-        AppSpacing.sm,
-        AppSpacing.xs,
-        AppSpacing.sm,
-      ),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: scheme.primary,
-          width: 1.2,
+    final keyboardBottom = MediaQuery.viewInsetsOf(context).bottom;
+    return _IngredientCardScrollIntoView(
+      nameFocusNode: row.nameFocusNode,
+      cardKey: _ingredientExpandedCardKey,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.sm,
+          AppSpacing.sm,
+          AppSpacing.xs,
+          AppSpacing.sm,
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: row.nameCtrl,
-                      focusNode: row.nameFocusNode,
-                      textCapitalization: TextCapitalization.sentences,
-                      onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                      style: Theme.of(context).textTheme.bodyLarge,
-                      decoration: _ingredientInputDecoration(
-                        context,
-                        hintText: 'Ingredient name',
-                        hintStyle:
-                            Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  fontStyle: FontStyle.italic,
-                                  color: scheme.onSurfaceVariant
-                                      .withValues(alpha: 0.5),
-                                ),
-                        borderOpacity: 0.2,
-                        prefixIcon:
-                            row.namePickedFromSuggestions && row.name.isNotEmpty
-                                ? Padding(
-                                    padding: const EdgeInsets.only(left: 8),
-                                    child: Align(
-                                      alignment: Alignment.centerLeft,
-                                      widthFactor: 1,
-                                      child: _ingredientPickedFoodIcon(
-                                        context,
-                                        row,
-                                      ),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: scheme.primary,
+            width: 1.2,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: row.nameCtrl,
+                        focusNode: row.nameFocusNode,
+                        textCapitalization: TextCapitalization.sentences,
+                        scrollPadding: EdgeInsets.fromLTRB(
+                          20,
+                          20,
+                          20,
+                          keyboardBottom + 80,
+                        ),
+                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                        style: Theme.of(context).textTheme.bodyLarge,
+                        decoration: _ingredientInputDecoration(
+                          context,
+                          hintText: 'Ingredient name',
+                          hintStyle:
+                              Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                    fontStyle: FontStyle.italic,
+                                    color: scheme.onSurfaceVariant
+                                        .withValues(alpha: 0.5),
+                                  ),
+                          borderOpacity: 0.2,
+                          prefixIcon: row.namePickedFromSuggestions &&
+                                  row.name.isNotEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    widthFactor: 1,
+                                    child: _ingredientPickedFoodIcon(
+                                      context,
+                                      row,
                                     ),
-                                  )
-                                : null,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        onChanged: (_) => setState(() {
+                          row.namePickedFromSuggestions = false;
+                        }),
                       ),
-                      onChanged: (_) => setState(() {
-                        row.namePickedFromSuggestions = false;
-                      }),
+                      if (!row.qualitative)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: GroceryItemSuggestionsGrid(
+                            repo: ref.read(groceryRepositoryProvider),
+                            typedValue: row.nameCtrl.text,
+                            recentItems: const [],
+                            onPick: (suggestion) {
+                              setState(() {
+                                row.nameCtrl.text = suggestion;
+                                row.namePickedFromSuggestions = true;
+                              });
+                              row.nameFocusNode.unfocus();
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _removeIngredientAt(idx),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  tooltip: 'Remove ingredient',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SegmentedButton<bool>(
+              emptySelectionAllowed: false,
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment<bool>(
+                  value: false,
+                  label: Text('Measure'),
+                  icon: Icon(Icons.scale_outlined, size: 18),
+                ),
+                ButtonSegment<bool>(
+                  value: true,
+                  label: Text('To taste'),
+                  icon: Icon(Icons.spa_outlined, size: 18),
+                ),
+              ],
+              selected: {row.qualitative},
+              onSelectionChanged: (next) {
+                setState(() {
+                  row.qualitative = next.first;
+                });
+              },
+            ),
+            if (row.qualitative) ...[
+              const SizedBox(height: AppSpacing.sm),
+              DropdownButtonFormField<String>(
+                initialValue: qualitativeDropdownValue,
+                isExpanded: true,
+                decoration: _ingredientInputDecoration(
+                  context,
+                  labelText: 'Amount',
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  borderOpacity: 0.2,
+                ),
+                items: [
+                  ..._kQualitativePresets.map(
+                    (p) => DropdownMenuItem<String>(
+                      value: p,
+                      child: Text(p),
                     ),
-                    if (!row.qualitative)
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: 'custom',
+                    child: Text('Custom…'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => row.qualitativePreset = value);
+                },
+              ),
+              if (row.qualitativePreset == 'custom') ...[
+                const SizedBox(height: AppSpacing.xs),
+                TextField(
+                  controller: row.qualitativeCustomCtrl,
+                  textCapitalization: TextCapitalization.sentences,
+                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                  decoration: _ingredientInputDecoration(
+                    context,
+                    hintText: 'e.g. 1½ tsp',
+                    borderOpacity: 0.2,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ],
+            ] else ...[
+              const SizedBox(height: AppSpacing.xs),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Amount',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final preset in _presetAmountChips)
                       Padding(
-                        padding: const EdgeInsets.only(top: 10),
-                        child: GroceryItemSuggestionsGrid(
-                          repo: ref.read(groceryRepositoryProvider),
-                          typedValue: row.nameCtrl.text,
-                          recentItems: const [],
-                          onPick: (suggestion) {
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                          label: Text(
+                            preset.label,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              height: 1.1,
+                            ),
+                          ),
+                          labelPadding:
+                              const EdgeInsets.symmetric(horizontal: 10),
+                          selected: _isPresetAmountSelected(
+                            row,
+                            preset.canonicalText,
+                          ),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          onSelected: (selected) {
                             setState(() {
-                              row.nameCtrl.text = suggestion;
-                              row.namePickedFromSuggestions = true;
+                              if (selected) {
+                                row.amountCtrl.text = preset.canonicalText;
+                              }
                             });
-                            row.nameFocusNode.unfocus();
                           },
                         ),
                       ),
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: () => _removeIngredientAt(idx),
-                icon: const Icon(Icons.delete_outline_rounded),
-                tooltip: 'Remove ingredient',
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          SegmentedButton<bool>(
-            emptySelectionAllowed: false,
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment<bool>(
-                value: false,
-                label: Text('Measure'),
-                icon: Icon(Icons.scale_outlined, size: 18),
-              ),
-              ButtonSegment<bool>(
-                value: true,
-                label: Text('To taste'),
-                icon: Icon(Icons.spa_outlined, size: 18),
-              ),
-            ],
-            selected: {row.qualitative},
-            onSelectionChanged: (next) {
-              setState(() {
-                row.qualitative = next.first;
-              });
-            },
-          ),
-          if (row.qualitative) ...[
-            const SizedBox(height: AppSpacing.sm),
-            DropdownButtonFormField<String>(
-              initialValue: qualitativeDropdownValue,
-              isExpanded: true,
-              decoration: _ingredientInputDecoration(
-                context,
-                labelText: 'Amount',
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                borderOpacity: 0.2,
-              ),
-              items: [
-                ..._kQualitativePresets.map(
-                  (p) => DropdownMenuItem<String>(
-                    value: p,
-                    child: Text(p),
-                  ),
-                ),
-                const DropdownMenuItem<String>(
-                  value: 'custom',
-                  child: Text('Custom…'),
-                ),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() => row.qualitativePreset = value);
-              },
-            ),
-            if (row.qualitativePreset == 'custom') ...[
-              const SizedBox(height: AppSpacing.xs),
-              TextField(
-                controller: row.qualitativeCustomCtrl,
-                textCapitalization: TextCapitalization.sentences,
-                onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                decoration: _ingredientInputDecoration(
-                  context,
-                  hintText: 'e.g. 1½ tsp',
-                  borderOpacity: 0.2,
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-            ],
-          ] else ...[
-            const SizedBox(height: AppSpacing.xs),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Amount',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurfaceVariant,
-                    ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
+              const SizedBox(height: AppSpacing.sm),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final preset in _presetAmountChips)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                        label: Text(
-                          preset.label,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            height: 1.1,
-                          ),
-                        ),
-                        labelPadding:
-                            const EdgeInsets.symmetric(horizontal: 10),
-                        selected: _isPresetAmountSelected(
-                          row,
-                          preset.canonicalText,
-                        ),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        onSelected: (selected) {
-                          setState(() {
-                            if (selected) {
-                              row.amountCtrl.text = preset.canonicalText;
-                            }
-                          });
-                        },
+                  SizedBox(
+                    width: 132,
+                    child: TextField(
+                      controller: row.amountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
+                      onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                      decoration: _ingredientInputDecoration(
+                        context,
+                        hintText: 'Enter amount',
+                        hintStyle:
+                            Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                  fontStyle: FontStyle.italic,
+                                  fontWeight: FontWeight.w400,
+                                  color: scheme.onSurfaceVariant
+                                      .withValues(alpha: 0.5),
+                                ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        borderOpacity: 0.2,
+                      ),
+                      onChanged: (_) => setState(() {}),
                     ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: row.unitOptions.contains(row.selectedUnit)
+                          ? row.selectedUnit
+                          : row.unitOptions.first,
+                      isDense: true,
+                      isExpanded: true,
+                      decoration: _ingredientInputDecoration(
+                        context,
+                        labelText: 'Unit',
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        borderOpacity: 0.2,
+                      ),
+                      items: row.unitOptions
+                          .map(
+                            (unit) => DropdownMenuItem(
+                              value: unit,
+                              child: Text(unit),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => row.selectedUnit = value);
+                      },
+                    ),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 132,
-                  child: TextField(
-                    controller: row.amountCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                    decoration: _ingredientInputDecoration(
-                      context,
-                      hintText: 'Enter amount',
-                      hintStyle: Theme.of(context)
-                          .textTheme
-                          .bodyLarge
-                          ?.copyWith(
-                            fontStyle: FontStyle.italic,
-                            fontWeight: FontWeight.w400,
-                            color:
-                                scheme.onSurfaceVariant.withValues(alpha: 0.5),
-                          ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
-                      borderOpacity: 0.2,
-                    ),
-                    onChanged: (_) => setState(() {}),
+              if (row.selectedUnit == 'custom') ...[
+                const SizedBox(height: AppSpacing.xs),
+                TextField(
+                  controller: row.customUnitCtrl,
+                  textCapitalization: TextCapitalization.sentences,
+                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                  decoration: _ingredientInputDecoration(
+                    context,
+                    labelText: 'Custom unit',
+                    hintText: 'e.g. clove, pinch, can',
+                    borderOpacity: 0.2,
                   ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: row.unitOptions.contains(row.selectedUnit)
-                        ? row.selectedUnit
-                        : row.unitOptions.first,
-                    isDense: true,
-                    isExpanded: true,
-                    decoration: _ingredientInputDecoration(
-                      context,
-                      labelText: 'Unit',
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      borderOpacity: 0.2,
-                    ),
-                    items: row.unitOptions
-                        .map(
-                          (unit) => DropdownMenuItem(
-                            value: unit,
-                            child: Text(unit),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => row.selectedUnit = value);
-                    },
-                  ),
+                  onChanged: (_) => setState(() {}),
                 ),
               ],
-            ),
-            if (row.selectedUnit == 'custom') ...[
-              const SizedBox(height: AppSpacing.xs),
-              TextField(
-                controller: row.customUnitCtrl,
-                textCapitalization: TextCapitalization.sentences,
-                onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                decoration: _ingredientInputDecoration(
-                  context,
-                  labelText: 'Custom unit',
-                  hintText: 'e.g. clove, pinch, can',
-                  borderOpacity: 0.2,
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
             ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -3103,6 +3180,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
       4 => 'Step 5: Nutrition',
       _ => 'Step 6: Final touches',
     };
+    final compactIngredientsHeader = bottomInset > 0 && _step == 2;
 
     return WillPopScope(
       onWillPop: () async => false,
@@ -3137,7 +3215,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                   children: [
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.all(
+                        compactIngredientsHeader ? 10 : 16,
+                      ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
                         gradient: const LinearGradient(
@@ -3159,35 +3239,37 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                                 : 'Edit Recipe',
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
-                          const SizedBox(height: 6),
+                          SizedBox(height: compactIngredientsHeader ? 4 : 6),
                           Text(stepTitle),
-                          const SizedBox(height: 10),
+                          SizedBox(height: compactIngredientsHeader ? 6 : 10),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: LinearProgressIndicator(
-                              minHeight: 8,
+                              minHeight: compactIngredientsHeader ? 6 : 8,
                               value: (_step + 1) / 6,
                             ),
                           ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: List.generate(
-                              6,
-                              (index) => Expanded(
-                                child: Container(
-                                  margin: EdgeInsets.only(
-                                      right: index == 5 ? 0 : 6),
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: index <= _step
-                                        ? Colors.white
-                                        : Colors.white.withOpacity(0.45),
-                                    borderRadius: BorderRadius.circular(6),
+                          if (!compactIngredientsHeader) ...[
+                            const SizedBox(height: 10),
+                            Row(
+                              children: List.generate(
+                                6,
+                                (index) => Expanded(
+                                  child: Container(
+                                    margin: EdgeInsets.only(
+                                        right: index == 5 ? 0 : 6),
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      color: index <= _step
+                                          ? Colors.white
+                                          : Colors.white.withOpacity(0.45),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
