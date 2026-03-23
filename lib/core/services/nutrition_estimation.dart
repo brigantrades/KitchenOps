@@ -86,10 +86,11 @@ Future<({
     final trimmed =
         _expandNutritionShorthand(raw.trim()).replaceAll(RegExp(r'\s+'), ' ');
     if (trimmed.isEmpty) continue;
-    // Before generic [amount unit name] (g/kg/…) so `1 piece eggs` maps to grams.
-    final eggPiece = _tryParsePieceEggAsGramLine(trimmed);
-    if (eggPiece != null) {
-      gramLines.add(eggPiece);
+    // Before generic [amount unit name] (g/kg/tbsp/ml/…) so `2 piece bell peppers`
+    // and `1 piece eggs` map to grams.
+    final pieceLine = _tryParsePieceAsGramLine(trimmed);
+    if (pieceLine != null) {
+      gramLines.add(pieceLine);
       continue;
     }
     final weight = _tryParseWeightLine(trimmed);
@@ -361,6 +362,54 @@ class _Line {
 
 const double _gramsPerLargeEgg = 50;
 
+/// Rough grams per whole item when the user enters `N piece …` (not weight).
+double _gramsPerPieceProduce(String nameLower) {
+  if (nameLower.contains('bell pepper') ||
+      nameLower.contains('capsicum') ||
+      nameLower.contains('sweet pepper')) {
+    return 119;
+  }
+  if (nameLower.contains('eggplant') || nameLower.contains('aubergine')) {
+    return 458;
+  }
+  if (nameLower.contains('zucchini')) {
+    return 196;
+  }
+  return 100;
+}
+
+/// `2 piece bell peppers`, `1 piece egg` — map [piece] to an approximate mass for FDC.
+_Line? _tryParsePieceAsGramLine(String line) {
+  final match = RegExp(
+    r'^\s*(\d+(?:\.\d+)?)\s+(piece|pieces|pc|pcs|whole)\s+(.+?)\s*$',
+    caseSensitive: false,
+  ).firstMatch(line);
+  if (match == null) return null;
+  final amount = double.tryParse(match.group(1)!);
+  final name = match.group(3)!.trim();
+  if (amount == null || amount <= 0 || name.isEmpty) return null;
+  final lower = name.toLowerCase();
+  if (lower.contains('eggplant')) {
+    return _Line(
+      originalLine: line,
+      ingredientName: name,
+      grams: amount * _gramsPerPieceProduce(lower),
+    );
+  }
+  if (RegExp(r'\begg\b|\beggs\b').hasMatch(lower)) {
+    return _Line(
+      originalLine: line,
+      ingredientName: name,
+      grams: amount * _gramsPerLargeEgg,
+    );
+  }
+  return _Line(
+    originalLine: line,
+    ingredientName: name,
+    grams: amount * _gramsPerPieceProduce(lower),
+  );
+}
+
 _Line? _tryParseWeightLine(String line) {
   final match = RegExp(r'^\s*(\d+(?:\.\d+)?)\s+([a-zA-Z]+)\s+(.+?)\s*$').firstMatch(line);
   if (match == null) return null;
@@ -372,24 +421,6 @@ _Line? _tryParseWeightLine(String line) {
   final grams = _toGrams(amount, unit);
   if (grams == null || grams <= 0) return null;
   return _Line(originalLine: line, ingredientName: name, grams: grams);
-}
-
-/// `1 piece egg` — [piece] is not a mass unit; map eggs to ~50 g each for FDC.
-_Line? _tryParsePieceEggAsGramLine(String line) {
-  final match = RegExp(
-    r'^\s*(\d+(?:\.\d+)?)\s+(piece|pieces|pc|pcs|whole)\s+(.+?)\s*$',
-    caseSensitive: false,
-  ).firstMatch(line);
-  if (match == null) return null;
-  final amount = double.tryParse(match.group(1)!);
-  final name = match.group(3)!.trim();
-  if (amount == null || amount <= 0 || name.isEmpty) return null;
-  if (!name.toLowerCase().contains('egg')) return null;
-  return _Line(
-    originalLine: line,
-    ingredientName: name,
-    grams: amount * _gramsPerLargeEgg,
-  );
 }
 
 /// `1 egg` / `2 eggs` / `1.5 egg` -> assumes large egg weight.
@@ -427,6 +458,7 @@ _Line? _tryParseQualitativeEggLine(String line) {
 }
 
 double? _toGrams(double amount, String unit) {
+  // Volume → approximate mass: ml treated as g (water-like); US tsp/tbsp/cup.
   switch (unit) {
     case 'g':
     case 'gram':
@@ -444,6 +476,30 @@ double? _toGrams(double amount, String unit) {
     case 'milligram':
     case 'milligrams':
       return amount / 1000;
+    case 'ml':
+    case 'milliliter':
+    case 'milliliters':
+    case 'millilitre':
+    case 'millilitres':
+    case 'cc':
+      return amount;
+    case 'l':
+    case 'liter':
+    case 'liters':
+    case 'litre':
+    case 'litres':
+      return amount * 1000;
+    case 'tsp':
+    case 'teaspoon':
+    case 'teaspoons':
+      return amount * 4.92892;
+    case 'tbsp':
+    case 'tablespoon':
+    case 'tablespoons':
+      return amount * 14.7868;
+    case 'cup':
+    case 'cups':
+      return amount * 236.588;
     default:
       return null;
   }

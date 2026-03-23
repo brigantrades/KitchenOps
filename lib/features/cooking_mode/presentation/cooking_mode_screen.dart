@@ -24,6 +24,8 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   final Set<int> _checkedIngredients = {};
   bool _nutritionShowPerServing = false;
   bool _nutritionBusy = false;
+  Nutrition? _nutritionOverride;
+  List<IngredientNutritionBreakdownLine> _nutritionBreakdownOverride = const [];
 
   bool _hasNutritionData(Nutrition n) {
     return n.calories > 0 ||
@@ -35,7 +37,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   }
 
   Nutrition _displayNutrition(Recipe recipe) {
-    final n = recipe.nutrition;
+    final n = _nutritionOverride ?? recipe.nutrition;
     final s = recipe.servings.clamp(1, 999999);
     if (!_nutritionShowPerServing) return n;
     return Nutrition(
@@ -46,6 +48,30 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
       fiber: n.fiber / s,
       sugar: n.sugar / s,
     );
+  }
+
+  List<IngredientNutritionBreakdownLine> _displayBreakdown(Recipe recipe) {
+    if (_nutritionBreakdownOverride.isNotEmpty) {
+      return _nutritionBreakdownOverride;
+    }
+    return recipe.ingredients.map((ingredient) {
+      final label = ingredient.qualitative
+          ? '${ingredient.name}: ${ingredient.unit}'
+          : '${ingredient.quantityLabel} ${ingredient.name}'.trim();
+      final lineNutrition = ingredient.lineNutrition;
+      if (lineNutrition != null && _hasNutritionData(lineNutrition)) {
+        return IngredientNutritionBreakdownLine(
+          label: label,
+          nutrition: lineNutrition,
+          sourceTag: 'saved_line',
+        );
+      }
+      return IngredientNutritionBreakdownLine(
+        label: label,
+        nutrition: const Nutrition(),
+        sourceTag: 'missing',
+      );
+    }).toList();
   }
 
   Future<void> _estimateNutrition(Recipe recipe) async {
@@ -85,6 +111,12 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
       );
       await ref.read(recipesRepositoryProvider).updateRecipe(recipe.id, updated);
       ref.invalidate(recipesProvider);
+      if (mounted) {
+        setState(() {
+          _nutritionOverride = result.nutrition;
+          _nutritionBreakdownOverride = result.breakdown;
+        });
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Nutrition updated.')),
@@ -133,17 +165,18 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     final servings = recipe.servings.clamp(1, 999999);
     final showPerServing = _nutritionShowPerServing;
     final n = _displayNutrition(recipe);
-    final hasTotals = _hasNutritionData(recipe.nutrition);
+    final hasTotals = _hasNutritionData(n);
+    final breakdown = _displayBreakdown(recipe);
 
     String subtitle;
     if (!hasTotals) {
       subtitle = 'Not calculated — use Estimate below';
     } else if (showPerServing) {
       subtitle =
-          '${(recipe.nutrition.calories / servings).round()} cal per serving (approx.)';
+          '${(n.calories / servings).round()} cal per serving (approx.)';
     } else {
       subtitle =
-          '${recipe.nutrition.calories} cal total (approx.)';
+          '${n.calories} cal total (approx.)';
     }
 
     return Card(
@@ -193,6 +226,74 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                   ),
                 ],
                 const SizedBox(height: 8),
+                if (breakdown.isNotEmpty) ...[
+                  Theme(
+                    data: Theme.of(context).copyWith(
+                      dividerColor: Colors.transparent,
+                    ),
+                    child: ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      initiallyExpanded: false,
+                      title: Text(
+                        'Ingredient breakdown (for testing purposes)',
+                        style: textTheme.labelLarge,
+                      ),
+                      children: [
+                        ...breakdown.map((row) {
+                          final missing = row.sourceTag == 'missing';
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          row.label,
+                                          style: textTheme.bodyMedium?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                      Text(
+                                        '${row.nutrition.calories} cal',
+                                        style: textTheme.labelLarge?.copyWith(
+                                          color: missing
+                                              ? scheme.error
+                                              : scheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    missing
+                                        ? 'Missing nutrition for this ingredient.'
+                                        : '${row.nutrition.protein.toStringAsFixed(1)}g protein · ${row.nutrition.fat.toStringAsFixed(1)}g fat · ${row.nutrition.carbs.toStringAsFixed(1)}g carbs · ${row.nutrition.fiber.toStringAsFixed(1)}g fiber · ${row.nutrition.sugar.toStringAsFixed(1)}g sugar',
+                                    style: textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
                 if (!hasTotals && (Env.hasFdc || Env.hasGemini))
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),

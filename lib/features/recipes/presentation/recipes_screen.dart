@@ -13,6 +13,7 @@ import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/strings/recipe_title_case.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
@@ -33,11 +34,21 @@ class RecipesScreen extends ConsumerStatefulWidget {
   ConsumerState<RecipesScreen> createState() => _RecipesScreenState();
 }
 
+enum _RecipeSortOption { dateAdded, name }
+
+String _recipeSortOptionLabel(_RecipeSortOption o) {
+  return switch (o) {
+    _RecipeSortOption.dateAdded => 'Date added',
+    _RecipeSortOption.name => 'Name',
+  };
+}
+
 class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   final _searchCtrl = TextEditingController();
   int _libraryIndex = 0;
   int _segmentIndex = 0;
   final Set<MealType> _mealTypeFilters = {};
+  _RecipeSortOption _sortOption = _RecipeSortOption.dateAdded;
 
   Future<void> _createRecipeManually() async {
     final user = ref.read(currentUserProvider);
@@ -248,8 +259,8 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
               ],
             ),
             const SizedBox(height: 2),
-            Wrap(
-              spacing: 5,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 FilterChip(
                   label: Text(_mealTypeLabel(MealType.dessert)),
@@ -259,6 +270,129 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                   onSelected: (value) =>
                       _toggleMealTypeFilter(MealType.dessert, value),
                   selectedColor: const Color(0xFFD6EBFF),
+                ),
+                const Spacer(),
+                Tooltip(
+                  message: 'Sort recipes by date added or name',
+                  child: Builder(
+                    builder: (context) {
+                      final colors = Theme.of(context)
+                              .extension<AppThemeColors>() ??
+                          AppThemeColors.light;
+                      final scheme = Theme.of(context).colorScheme;
+                      final text = Theme.of(context).textTheme;
+                      return PopupMenuButton<_RecipeSortOption>(
+                          padding: EdgeInsets.zero,
+                          offset: const Offset(0, 10),
+                          initialValue: _sortOption,
+                          color: colors.panel,
+                          surfaceTintColor: Colors.transparent,
+                          elevation: 6,
+                          shadowColor: Colors.black.withValues(alpha: 0.12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: AppRadius.sm,
+                            side: BorderSide(color: colors.pillBorder),
+                          ),
+                          onSelected: (value) =>
+                              setState(() => _sortOption = value),
+                          itemBuilder: (context) => [
+                            PopupMenuItem<_RecipeSortOption>(
+                              value: _RecipeSortOption.dateAdded,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(_recipeSortOptionLabel(
+                                        _RecipeSortOption.dateAdded)),
+                                  ),
+                                  if (_sortOption ==
+                                      _RecipeSortOption.dateAdded)
+                                    Icon(
+                                      Icons.check_rounded,
+                                      size: 20,
+                                      color: scheme.primary,
+                                    ),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem<_RecipeSortOption>(
+                              value: _RecipeSortOption.name,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(_recipeSortOptionLabel(
+                                        _RecipeSortOption.name)),
+                                  ),
+                                  if (_sortOption == _RecipeSortOption.name)
+                                    Icon(
+                                      Icons.check_rounded,
+                                      size: 20,
+                                      color: scheme.primary,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: colors.panel,
+                              borderRadius: AppRadius.sm,
+                              border: Border.all(color: colors.pillBorder),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.05),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm,
+                              vertical: AppSpacing.xs,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.sort_rounded,
+                                  size: 18,
+                                  color: scheme.secondary,
+                                ),
+                                const SizedBox(width: AppSpacing.xs),
+                                Text(
+                                  'Sort',
+                                  style: text.labelSmall?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.xs),
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 118,
+                                  ),
+                                  child: Text(
+                                    _recipeSortOptionLabel(_sortOption),
+                                    style: text.labelLarge?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: scheme.onSurface,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  size: 20,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                    },
+                  ),
                 ),
               ],
             ),
@@ -341,6 +475,18 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
               };
             }
             final displayed = visible.where(_recipePassesMealFilter).toList();
+            displayed.sort((a, b) {
+              switch (_sortOption) {
+                case _RecipeSortOption.name:
+                  return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+                case _RecipeSortOption.dateAdded:
+                  final aTime =
+                      a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                  final bTime =
+                      b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                  return bTime.compareTo(aTime);
+              }
+            });
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1181,7 +1327,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         selectedUnit: isCustom ? 'custom' : normalizedUnit,
         customUnit: isCustom ? ingredient.unit : null,
       );
-      row.amountCtrl.text = ingredient.amount.toString();
+      row.amountCtrl.text = formatIngredientAmount(ingredient.amount);
       _ingredients.add(row);
     }
     _selectedIngredientIndex = _ingredients.isEmpty ? null : 0;

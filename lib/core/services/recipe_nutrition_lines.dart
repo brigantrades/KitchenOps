@@ -1,4 +1,5 @@
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 
 /// True for chicken eggs, false for e.g. eggplant.
 bool nameImpliesEggForNutrition(String name) {
@@ -29,8 +30,7 @@ List<String> ingredientLinesFromIngredients(List<Ingredient> ingredients) {
     } else {
       final unit = ing.unit.trim();
       if (unit.isEmpty) continue;
-      final amt = ing.amount;
-      final amtStr = amt % 1 == 0 ? '${amt.toInt()}' : amt.toStringAsFixed(1);
+      final amtStr = formatIngredientAmount(ing.amount);
       out.add('$amtStr $unit $name');
     }
   }

@@ -197,7 +197,15 @@ class RecipesRepository {
     // Omit null fields so we do not overwrite DB-only columns (api_id, household_id,
     // image_url, …) with NULL — that caused unique constraint errors on save.
     payload.removeWhere((_, value) => value == null);
-    await _client.from('recipes').update(payload).eq('id', recipeId);
+    final updated = await _client
+        .from('recipes')
+        .update(payload)
+        .eq('id', recipeId)
+        .select('id')
+        .maybeSingle();
+    if (updated == null) {
+      throw StateError('Recipe update was not permitted.');
+    }
   }
 
   Future<void> toggleFavorite(String recipeId, bool value) {
@@ -237,6 +245,18 @@ class RecipesRepository {
       throw StateError('Could not find personal recipe to copy.');
     }
 
+    final existingCopy = await _client
+        .from('recipes')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('household_id', householdId)
+        .eq('visibility', RecipeVisibility.household.name)
+        .eq('copied_from_personal_recipe_id', recipeId)
+        .maybeSingle();
+    if (existingCopy != null) {
+      return;
+    }
+
     final payload = Map<String, dynamic>.from(source)
       ..remove('id')
       ..remove('created_at')
@@ -244,13 +264,15 @@ class RecipesRepository {
       ..remove('household_id')
       ..remove('visibility')
       // recipes.api_id is globally unique; household copies should not reuse it.
-      ..remove('api_id');
+      ..remove('api_id')
+      ..remove('copied_from_personal_recipe_id');
 
     await _client.from('recipes').insert({
       ...payload,
       'user_id': userId,
       'household_id': householdId,
       'visibility': RecipeVisibility.household.name,
+      'copied_from_personal_recipe_id': recipeId,
     });
   }
 
@@ -269,10 +291,24 @@ class RecipesRepository {
         .eq('visibility', RecipeVisibility.personal.name)
         .maybeSingle();
     if (personalRow == null) return false;
-    final title = personalRow['title']?.toString().trim() ?? '';
-    if (title.isEmpty) return false;
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) return false;
+
+    final byLink = await _client
+        .from('recipes')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('household_id', householdId)
+        .eq('visibility', RecipeVisibility.household.name)
+        .eq('copied_from_personal_recipe_id', personalRecipeId)
+        .maybeSingle();
+    if (byLink != null) {
+      await _client.from('recipes').delete().eq('id', byLink['id']);
+      return true;
+    }
+
+    final title = personalRow['title']?.toString().trim() ?? '';
+    if (title.isEmpty) return false;
 
     final match = await _client
         .from('recipes')

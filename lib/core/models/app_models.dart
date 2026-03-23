@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 
 enum MealType { entree, side, sauce, snack, dessert }
 
@@ -117,9 +118,8 @@ class Ingredient {
   /// Amount + unit for measured rows, or the qualitative phrase when [qualitative].
   String get quantityLabel {
     if (qualitative) return unit.trim();
-    final a = amount;
-    if (a % 1 == 0) return '${a.toInt()} ${unit.trim()}'.trim();
-    return '${a.toStringAsFixed(1)} ${unit.trim()}'.trim();
+    final amountLabel = formatIngredientAmount(amount);
+    return '$amountLabel ${unit.trim()}'.trim();
   }
 
   Map<String, dynamic> toJson() => {
@@ -222,6 +222,8 @@ class Recipe {
     this.visibility = RecipeVisibility.personal,
     this.apiId,
     this.nutritionSource,
+    this.copiedFromPersonalRecipeId,
+    this.createdAt,
   });
 
   final String id;
@@ -249,6 +251,10 @@ class Recipe {
   /// e.g. `fdc`, `fdc_partial`, `spoonacular`, `user` — mirrors `nutrition_source` in DB.
   final String? nutritionSource;
 
+  /// Personal recipe id this household row was copied from (share-to-household), if any.
+  final String? copiedFromPersonalRecipeId;
+  final DateTime? createdAt;
+
   Recipe copyWith({
     bool? isFavorite,
     bool? isToTry,
@@ -258,6 +264,8 @@ class Recipe {
     String? apiId,
     Nutrition? nutrition,
     String? nutritionSource,
+    String? copiedFromPersonalRecipeId,
+    DateTime? createdAt,
   }) =>
       Recipe(
         id: id,
@@ -280,6 +288,9 @@ class Recipe {
         visibility: visibility ?? this.visibility,
         apiId: apiId ?? this.apiId,
         nutritionSource: nutritionSource ?? this.nutritionSource,
+        copiedFromPersonalRecipeId:
+            copiedFromPersonalRecipeId ?? this.copiedFromPersonalRecipeId,
+        createdAt: createdAt ?? this.createdAt,
       );
 
   Map<String, dynamic> toJson() => {
@@ -304,6 +315,9 @@ class Recipe {
         'api_id': apiId,
         if (nutritionSource != null && nutritionSource!.isNotEmpty)
           'nutrition_source': nutritionSource,
+        if (copiedFromPersonalRecipeId != null &&
+            copiedFromPersonalRecipeId!.isNotEmpty)
+          'copied_from_personal_recipe_id': copiedFromPersonalRecipeId,
       };
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -341,6 +355,9 @@ class Recipe {
             RecipeVisibility.personal,
         apiId: json['api_id']?.toString(),
         nutritionSource: json['nutrition_source']?.toString(),
+        copiedFromPersonalRecipeId:
+            json['copied_from_personal_recipe_id']?.toString(),
+        createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       );
 }
 

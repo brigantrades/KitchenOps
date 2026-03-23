@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/ui/app_surface.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -444,9 +445,7 @@ class _DiscoverRecipeDetailPageState
       final ingredient = entry.value;
       final amount = ingredient.qualitative
           ? '—'
-          : ingredient.amount.toStringAsFixed(
-              ingredient.amount % 1 == 0 ? 0 : 1,
-            );
+          : formatIngredientAmount(ingredient.amount);
       final evenRow = index.isEven;
       final unit = ingredient.qualitative
           ? ingredient.unit

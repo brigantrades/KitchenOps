@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
@@ -809,7 +810,7 @@ class GroceryRepository {
         continue;
       }
 
-      final qty = (ingredient.amount * ratio).toStringAsFixed(1);
+      final qty = formatIngredientAmount(ingredient.amount * ratio);
       await _client.from('list_items').insert({
         'list_id': targetListId,
         'user_id': userId,
