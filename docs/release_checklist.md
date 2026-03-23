@@ -14,6 +14,10 @@ Firebase Crashlytics, Analytics, and App Distribution read **`versionName`** and
 
   `dart run tool/bump_version.dart patch`
 
+  Or use the wrapper script (bumps patch + builds release bundle in one step):
+
+  `./tool/deploy_firebase_build.sh --dart-define=FIREBASE_ENABLED=true`
+
   Use `minor` or `major` when you mean a larger release.
 
 Commit the updated `pubspec.yaml`, then build and upload to Firebase.
