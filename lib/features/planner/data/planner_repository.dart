@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
@@ -225,8 +227,10 @@ class PlannerRepository {
         .toSet();
     final buckets = weekStartMondaysForWindow(anchorDate, pref);
     final byId = <String, MealPlanSlot>{};
-    for (final mon in buckets) {
-      final slots = await listSlots(userId, mon);
+    final slotLists = await Future.wait(
+      buckets.map((mon) => listSlots(userId, mon)),
+    );
+    for (final slots in slotLists) {
       for (final s in slots) {
         if (allowed.contains(plannerDateOnly(calendarDateForSlot(s)))) {
           byId[s.id] = s;
@@ -681,15 +685,13 @@ final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
   }
   final repo = ref.watch(plannerRepositoryProvider);
   final mondays = weekStartMondaysForWindow(anchor, pref);
-  final current = await repo.listPlannerWindowSlots(user.id, anchor, pref);
-  if (current.isEmpty) {
-    for (final m in mondays) {
-      await repo.ensureDefaultSlots(user.id, m);
-    }
-  } else {
-    for (final m in mondays) {
-      await repo.ensureDefaultSlots(user.id, m);
-    }
-  }
+  // Do not block the first stream emission on default-slot creation (many round-trips).
+  // [streamPlannerWindowSlots] yields list data immediately; defaults fill in via this
+  // background work + realtime updates.
+  unawaited(
+    Future.wait(
+      mondays.map((m) => repo.ensureDefaultSlots(user.id, m)),
+    ),
+  );
   yield* repo.streamPlannerWindowSlots(user.id, anchor, pref);
 });

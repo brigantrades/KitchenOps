@@ -24,6 +24,49 @@ import 'package:plateplan/features/planner/presentation/planner_recipe_picker_sh
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Selects today's chip when [weekStart] window contains today; otherwise 0.
+void _syncSelectedPlannerDayToTodayOrFirst(WidgetRef ref) {
+  final weekStart = ref.read(weekStartProvider);
+  final pref = ref.read(effectivePlannerWindowProvider);
+  final dates = calendarDatesForPlannerWindow(weekStart, pref);
+  final today = plannerDateOnly(DateTime.now());
+  final idx = dates.indexWhere((d) => plannerDateOnly(d) == today);
+  if (idx >= 0) {
+    ref.read(selectedPlannerDayProvider.notifier).state =
+        idx.clamp(0, pref.dayCount - 1);
+  } else {
+    ref.read(selectedPlannerDayProvider.notifier).state = 0;
+  }
+}
+
+/// Syncs selected day when [weekStartProvider] changes; initial sync on first frame.
+class _PlannerDaySyncListener extends ConsumerStatefulWidget {
+  const _PlannerDaySyncListener();
+
+  @override
+  ConsumerState<_PlannerDaySyncListener> createState() =>
+      _PlannerDaySyncListenerState();
+}
+
+class _PlannerDaySyncListenerState extends ConsumerState<_PlannerDaySyncListener> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncSelectedPlannerDayToTodayOrFirst(ref);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<DateTime>(weekStartProvider, (prev, next) {
+      _syncSelectedPlannerDayToTodayOrFirst(ref);
+    });
+    return const SizedBox.shrink();
+  }
+}
+
 Future<void> showPlannerWindowSettingsSheet(
   BuildContext context,
   WidgetRef ref,
@@ -815,8 +858,17 @@ class _PlannerGroceryAddSheetState
                                   children: [
                                     Checkbox(
                                       value: draft.selected,
-                                      onChanged: (value) => setState(() =>
-                                          draft.selected = value ?? false),
+                                      onChanged: (value) {
+                                        setState(() {
+                                          final checked = value ?? false;
+                                          draft.selected = checked;
+                                          if (!checked) {
+                                            draft.quantity = 0;
+                                          } else if (draft.quantity < 1) {
+                                            draft.quantity = 1;
+                                          }
+                                        });
+                                      },
                                     ),
                                     Expanded(
                                       child: Text(
@@ -838,13 +890,18 @@ class _PlannerGroceryAddSheetState
                                           IconButton(
                                             visualDensity:
                                                 VisualDensity.compact,
-                                            onPressed: () {
-                                              setState(() {
-                                                if (draft.quantity > 1) {
-                                                  draft.quantity -= 1;
-                                                }
-                                              });
-                                            },
+                                            onPressed: draft.quantity == 0
+                                                ? null
+                                                : () {
+                                                    setState(() {
+                                                      if (draft.quantity > 1) {
+                                                        draft.quantity -= 1;
+                                                      } else {
+                                                        draft.quantity = 0;
+                                                        draft.selected = false;
+                                                      }
+                                                    });
+                                                  },
                                             icon: const Icon(
                                                 Icons.remove_circle_outline),
                                           ),
@@ -862,6 +919,9 @@ class _PlannerGroceryAddSheetState
                                                 VisualDensity.compact,
                                             onPressed: () {
                                               setState(() {
+                                                if (draft.quantity == 0) {
+                                                  draft.selected = true;
+                                                }
                                                 draft.quantity += 1;
                                               });
                                             },
@@ -1117,8 +1177,9 @@ class _PlannerGroceryAddSheetState
                         onPressed: targetListId.isEmpty
                             ? null
                             : () async {
-                                final picks =
-                                    _drafts.where((d) => d.selected).toList();
+                                final picks = _drafts
+                                    .where((d) => d.selected && d.quantity > 0)
+                                    .toList();
                                 final custom = <PlannerGroceryDraftLine>[];
                                 for (final c in _customLines) {
                                   final n = c.name.text.trim();
@@ -1389,6 +1450,7 @@ class PlannerScreen extends ConsumerWidget {
         final now = DateTime.now();
         ref.read(weekStartProvider.notifier).state =
             anchorDateForWindowContaining(now, next);
+        _syncSelectedPlannerDayToTodayOrFirst(ref);
       }
     });
     final weekStart = ref.watch(weekStartProvider);
@@ -1408,18 +1470,44 @@ class PlannerScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Weekly Planner'),
       ),
-      body: slotsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _PlannerDaySyncListener(),
+          Expanded(
+            child: slotsAsync.when(
+        skipLoadingOnReload: true,
+        loading: () => _PlannerLoadingShell(
+          weekLabel: _weekLabel(weekStart, dayCount),
+          weekStart: weekStart,
+          pref: pref,
+          dayCount: dayCount,
+          stepDays: stepDays,
+          effectiveDay: effectiveDay,
+        ),
         error: (error, _) => Center(child: Text('Error: $error')),
-        data: (slots) => recipesAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
+        data: (slots) {
+          final reloadingWithoutOverlap = slotsAsync.isReloading &&
+              !slots.any((s) => slotBelongsToPlannerWindow(s, weekStart, pref));
+          final effectiveSlots =
+              reloadingWithoutOverlap ? <MealPlanSlot>[] : slots;
+          return recipesAsync.when(
+          skipLoadingOnReload: true,
+          loading: () => _PlannerLoadingShell(
+            weekLabel: _weekLabel(weekStart, dayCount),
+            weekStart: weekStart,
+            pref: pref,
+            dayCount: dayCount,
+            stepDays: stepDays,
+            effectiveDay: effectiveDay,
+          ),
           error: (e, _) => Center(child: Text('Error loading recipes: $e')),
           data: (recipes) {
             final memberNameById = <String, String>{
               for (final member in activeMembers)
                 member.userId: member.displayName,
             };
-            final nutrition = slots.fold<Nutrition>(
+            final nutrition = effectiveSlots.fold<Nutrition>(
               const Nutrition(),
               (sum, slot) =>
                   sum +
@@ -1433,7 +1521,7 @@ class PlannerScreen extends ConsumerWidget {
               effectiveDay,
               pref,
             );
-            final daySlots = slots
+            final daySlots = effectiveSlots
                 .where((s) =>
                     plannerUiDayIndexForSlot(s, weekStart, pref) ==
                     effectiveDay)
@@ -1445,7 +1533,7 @@ class PlannerScreen extends ConsumerWidget {
             final dayAssigned = <int, int>{
               for (var day = 0; day < dayCount; day++) day: 0,
             };
-            for (final slot in slots) {
+            for (final slot in effectiveSlots) {
               final ui = plannerUiDayIndexForSlot(slot, weekStart, pref);
               if (ui == null) continue;
               dayTotals[ui] = (dayTotals[ui] ?? 0) + 1;
@@ -1510,6 +1598,8 @@ class PlannerScreen extends ConsumerWidget {
             return ListView(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
               children: [
+                if (reloadingWithoutOverlap)
+                  const LinearProgressIndicator(minHeight: 2),
                 HeroPanel(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1539,7 +1629,6 @@ class PlannerScreen extends ConsumerWidget {
                               ref.read(weekStartProvider.notifier).state =
                                   weekStart.subtract(
                                       Duration(days: stepDays));
-                              ref.invalidate(plannerSlotsProvider);
                             },
                             icon: const Icon(Icons.chevron_left_rounded),
                           ),
@@ -1548,7 +1637,6 @@ class PlannerScreen extends ConsumerWidget {
                             onPressed: () {
                               ref.read(weekStartProvider.notifier).state =
                                   weekStart.add(Duration(days: stepDays));
-                              ref.invalidate(plannerSlotsProvider);
                             },
                             icon: const Icon(Icons.chevron_right_rounded),
                           ),
@@ -2189,8 +2277,116 @@ class PlannerScreen extends ConsumerWidget {
               ],
             );
           },
-        ),
+        );
+        },
       ),
+    ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Planner body while slots/recipes are loading: keeps week navigation and day
+/// chips visible so changing weeks never shows a full-screen blocking spinner.
+class _PlannerLoadingShell extends ConsumerWidget {
+  const _PlannerLoadingShell({
+    required this.weekLabel,
+    required this.weekStart,
+    required this.pref,
+    required this.dayCount,
+    required this.stepDays,
+    required this.effectiveDay,
+  });
+
+  final String weekLabel;
+  final DateTime weekStart;
+  final PlannerWindowPreference pref;
+  final int dayCount;
+  final int stepDays;
+  final int effectiveDay;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+      children: [
+        const LinearProgressIndicator(minHeight: 2),
+        HeroPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.calendar_month_rounded),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Week of $weekLabel',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Planner window',
+                    onPressed: () => showPlannerWindowSettingsSheet(context, ref),
+                    icon: const Icon(Icons.tune_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Previous week',
+                    onPressed: () {
+                      ref.read(weekStartProvider.notifier).state =
+                          weekStart.subtract(Duration(days: stepDays));
+                    },
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Next week',
+                    onPressed: () {
+                      ref.read(weekStartProvider.notifier).state =
+                          weekStart.add(Duration(days: stepDays));
+                    },
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Pick a day, drag to reorder meals, and tap a meal to assign a recipe.',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SectionCard(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: List.generate(dayCount, (dayIndex) {
+              final day = calendarDateForPlannerUiDay(
+                weekStart,
+                dayIndex,
+                pref,
+              );
+              return ActionPill(
+                label: '${DateFormat('EEE d').format(day)}  0/0',
+                selected: effectiveDay == dayIndex,
+                onTap: () =>
+                    ref.read(selectedPlannerDayProvider.notifier).state =
+                        dayIndex,
+              );
+            }),
+          ),
+        ),
+        const SizedBox(height: 48),
+        Center(
+          child: CircularProgressIndicator(
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ],
     );
   }
 }

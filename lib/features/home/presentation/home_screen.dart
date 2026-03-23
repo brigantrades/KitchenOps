@@ -13,6 +13,7 @@ import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
+import 'package:plateplan/core/planner_week_mapping.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -24,10 +25,6 @@ class HomeScreen extends ConsumerWidget {
     final recipes = ref.watch(recipesProvider);
     final pendingInvites = ref.watch(pendingHouseholdInvitesProvider);
     final pendingInviteCount = pendingInvites.valueOrNull?.length ?? 0;
-    final plannedCount = planner.valueOrNull == null
-        ? 0
-        : _filledTodaySlots(planner.valueOrNull!).length;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Leckerly'),
@@ -47,7 +44,7 @@ class HomeScreen extends ConsumerWidget {
       body: AppSurface(
         child: Column(
           children: [
-            _HomeHeader(plannedCount: plannedCount),
+            _HomeHeader(plannerSlots: planner),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -206,9 +203,9 @@ class HomeScreen extends ConsumerWidget {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.plannedCount});
+  const _HomeHeader({required this.plannerSlots});
 
-  final int plannedCount;
+  final AsyncValue<List<MealPlanSlot>> plannerSlots;
 
   @override
   Widget build(BuildContext context) {
@@ -224,11 +221,18 @@ class _HomeHeader extends StatelessWidget {
       DateTime.sunday => 'Sunday',
       _ => 'Today',
     };
-    final statusLine = plannedCount == 0
-        ? 'No meals planned yet. Start one for tonight.'
-        : plannedCount == 1
-            ? '1 meal planned for today.'
-            : '$plannedCount meals planned for today.';
+    final statusLine = plannerSlots.when(
+      data: (slots) {
+        final count = _filledTodaySlots(slots).length;
+        if (count == 0) {
+          return 'No meals planned yet. Start one for tonight.';
+        }
+        if (count == 1) return '1 meal planned for today.';
+        return '$count meals planned for today.';
+      },
+      loading: () => 'Checking today’s plan…',
+      error: (_, __) => 'Could not load today’s meals.',
+    );
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -322,16 +326,10 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-DateTime _dateOnlyLocal(DateTime d) => DateTime(d.year, d.month, d.day);
-
-/// True when [slot] is on today's calendar date (local week + weekday).
+/// True when [slot] falls on today's calendar date (matches planner mapping).
 bool _isSlotOnToday(MealPlanSlot slot) {
-  final now = DateTime.now();
-  final todayWeekMonday =
-      _dateOnlyLocal(now).subtract(Duration(days: now.weekday - 1));
-  final slotWeekMonday = _dateOnlyLocal(slot.weekStart);
-  return slotWeekMonday == todayWeekMonday &&
-      slot.dayOfWeek == now.weekday - 1;
+  final today = plannerDateOnly(DateTime.now());
+  return plannerDateOnly(calendarDateForSlot(slot)) == today;
 }
 
 Iterable<MealPlanSlot> _todaySlots(Iterable<MealPlanSlot> slots) =>
