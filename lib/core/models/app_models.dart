@@ -19,6 +19,43 @@ enum HouseholdRole { owner, member }
 
 enum HouseholdMemberStatus { active, invited }
 
+/// Planner strip: [startDay] is 0=Monday … 6=Sunday (matches `MealPlanSlot.dayOfWeek`).
+/// [dayCount] is how many consecutive calendar days to show; navigation moves by [dayCount].
+class PlannerWindowPreference {
+  const PlannerWindowPreference({
+    required this.startDay,
+    required this.dayCount,
+  });
+
+  /// Monday=0 … Sunday=6
+  final int startDay;
+
+  /// Number of consecutive days (1–14).
+  final int dayCount;
+
+  static const PlannerWindowPreference appDefault =
+      PlannerWindowPreference(startDay: 0, dayCount: 7);
+
+  int get navigationStepDays => dayCount;
+
+  bool get isValid =>
+      startDay >= 0 &&
+      startDay <= 6 &&
+      dayCount >= 1 &&
+      dayCount <= 14;
+
+  /// Shared by all household members; [appDefault] when not in a household.
+  static PlannerWindowPreference resolve({required Household? household}) {
+    if (household != null) {
+      return PlannerWindowPreference(
+        startDay: household.plannerStartDay,
+        dayCount: household.plannerDayCount,
+      );
+    }
+    return appDefault;
+  }
+}
+
 extension GroceryCategoryX on GroceryCategory {
   String get label => switch (this) {
         GroceryCategory.produce => 'Produce',
@@ -45,6 +82,12 @@ class Ingredient {
     required this.amount,
     required this.unit,
     required this.category,
+    this.qualitative = false,
+    this.fdcId,
+    this.fdcDescription,
+    this.lineNutrition,
+    this.fdcNutritionEstimated = false,
+    this.fdcTypicalAverage = false,
   });
 
   final String name;
@@ -52,11 +95,45 @@ class Ingredient {
   final String unit;
   final GroceryCategory category;
 
+  /// When true, [unit] holds the full amount phrase (e.g. "to taste", "1 tsp")
+  /// and [amount] is typically 0; scaling for grocery uses [unit] as-is.
+  final bool qualitative;
+
+  /// USDA FoodData Central food id when the user linked this line to a food.
+  final int? fdcId;
+
+  /// Label shown for the linked FDC food (snapshot for display).
+  final String? fdcDescription;
+
+  /// Nutrition contributed by this line for the recipe as written (scaled amount).
+  final Nutrition? lineNutrition;
+
+  /// True when grams were inferred via volume/density fallback rather than FDC portions.
+  final bool fdcNutritionEstimated;
+
+  /// True when [lineNutrition] is the mean of several USDA matches (no single [fdcId]).
+  final bool fdcTypicalAverage;
+
+  /// Amount + unit for measured rows, or the qualitative phrase when [qualitative].
+  String get quantityLabel {
+    if (qualitative) return unit.trim();
+    final a = amount;
+    if (a % 1 == 0) return '${a.toInt()} ${unit.trim()}'.trim();
+    return '${a.toStringAsFixed(1)} ${unit.trim()}'.trim();
+  }
+
   Map<String, dynamic> toJson() => {
         'name': name,
         'amount': amount,
         'unit': unit,
         'category': category.dbValue,
+        if (qualitative) 'qualitative': true,
+        if (fdcId != null) 'fdc_id': fdcId,
+        if (fdcDescription != null && fdcDescription!.isNotEmpty)
+          'fdc_description': fdcDescription,
+        if (lineNutrition != null) 'nutrition': lineNutrition!.toJson(),
+        if (fdcNutritionEstimated) 'fdc_nutrition_estimated': true,
+        if (fdcTypicalAverage) 'fdc_typical_average': true,
       };
 
   factory Ingredient.fromJson(Map<String, dynamic> json) => Ingredient(
@@ -67,6 +144,14 @@ class Ingredient {
               (c) => c.dbValue == json['category'],
             ) ??
             GroceryCategory.other,
+        qualitative: json['qualitative'] as bool? ?? false,
+        fdcId: (json['fdc_id'] as num?)?.toInt(),
+        fdcDescription: json['fdc_description']?.toString(),
+        lineNutrition: json['nutrition'] is Map<String, dynamic>
+            ? Nutrition.fromJson(json['nutrition'] as Map<String, dynamic>)
+            : null,
+        fdcNutritionEstimated: json['fdc_nutrition_estimated'] == true,
+        fdcTypicalAverage: json['fdc_typical_average'] == true,
       );
 }
 
@@ -136,6 +221,7 @@ class Recipe {
     this.householdId,
     this.visibility = RecipeVisibility.personal,
     this.apiId,
+    this.nutritionSource,
   });
 
   final String id;
@@ -160,6 +246,9 @@ class Recipe {
   /// Spoonacular / discover id; unique in DB — must be preserved on edit.
   final String? apiId;
 
+  /// e.g. `fdc`, `fdc_partial`, `spoonacular`, `user` — mirrors `nutrition_source` in DB.
+  final String? nutritionSource;
+
   Recipe copyWith({
     bool? isFavorite,
     bool? isToTry,
@@ -167,6 +256,8 @@ class Recipe {
     String? householdId,
     RecipeVisibility? visibility,
     String? apiId,
+    Nutrition? nutrition,
+    String? nutritionSource,
   }) =>
       Recipe(
         id: id,
@@ -180,7 +271,7 @@ class Recipe {
         ingredients: ingredients,
         instructions: instructions,
         imageUrl: imageUrl,
-        nutrition: nutrition,
+        nutrition: nutrition ?? this.nutrition,
         isFavorite: isFavorite ?? this.isFavorite,
         isToTry: isToTry ?? this.isToTry,
         source: source,
@@ -188,6 +279,7 @@ class Recipe {
         householdId: householdId ?? this.householdId,
         visibility: visibility ?? this.visibility,
         apiId: apiId ?? this.apiId,
+        nutritionSource: nutritionSource ?? this.nutritionSource,
       );
 
   Map<String, dynamic> toJson() => {
@@ -210,6 +302,8 @@ class Recipe {
         'household_id': householdId,
         'visibility': visibility.name,
         'api_id': apiId,
+        if (nutritionSource != null && nutritionSource!.isNotEmpty)
+          'nutrition_source': nutritionSource,
       };
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -246,7 +340,83 @@ class Recipe {
             ) ??
             RecipeVisibility.personal,
         apiId: json['api_id']?.toString(),
+        nutritionSource: json['nutrition_source']?.toString(),
       );
+}
+
+/// Custom ingredient lines for a planner slot (text-only meals); persisted for the grocery sheet.
+class PlannerGroceryDraftLine {
+  const PlannerGroceryDraftLine({
+    required this.name,
+    this.quantity = 1,
+  });
+
+  final String name;
+  final int quantity;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'quantity': quantity,
+      };
+
+  factory PlannerGroceryDraftLine.fromJson(Map<String, dynamic> json) =>
+      PlannerGroceryDraftLine(
+        name: json['name']?.toString() ?? '',
+        quantity: (json['quantity'] as num?)?.toInt() ?? 1,
+      );
+
+  static List<PlannerGroceryDraftLine> listFromJson(dynamic raw) {
+    if (raw == null) return const [];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) =>
+            PlannerGroceryDraftLine.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => e.name.trim().isNotEmpty)
+        .toList();
+  }
+
+  static List<Map<String, dynamic>> toJsonList(
+          List<PlannerGroceryDraftLine> lines) =>
+      lines.map((e) => e.toJson()).toList();
+}
+
+class PlannerSlotSideItem {
+  const PlannerSlotSideItem({
+    this.recipeId,
+    this.text,
+  });
+
+  final String? recipeId;
+  final String? text;
+
+  bool get isEmpty =>
+      (recipeId == null || recipeId!.trim().isEmpty) &&
+      (text == null || text!.trim().isEmpty);
+
+  Map<String, dynamic> toJson() => {
+        'recipe_id': recipeId,
+        'text': text?.trim().isEmpty == true ? null : text?.trim(),
+      };
+
+  factory PlannerSlotSideItem.fromJson(Map<String, dynamic> json) =>
+      PlannerSlotSideItem(
+        recipeId: json['recipe_id']?.toString(),
+        text: json['text']?.toString(),
+      );
+
+  static List<PlannerSlotSideItem> listFromJson(dynamic raw) {
+    if (raw == null || raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => PlannerSlotSideItem.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => !e.isEmpty)
+        .toList();
+  }
+
+  static List<Map<String, dynamic>> toJsonList(
+          List<PlannerSlotSideItem> items) =>
+      items.where((e) => !e.isEmpty).map((e) => e.toJson()).toList();
 }
 
 class MealPlanSlot {
@@ -257,12 +427,17 @@ class MealPlanSlot {
     required this.mealLabel,
     this.recipeId,
     this.mealText,
+    this.sideRecipeId,
+    this.sideText,
+    this.sideItems = const [],
     this.sauceRecipeId,
     this.sauceText,
     this.servingsUsed = 1,
     this.slotOrder = 0,
     this.reminderAt,
     this.reminderMessage,
+    this.groceryDraftLines = const [],
+    this.assignedUserIds = const [],
   });
 
   final String id;
@@ -271,18 +446,27 @@ class MealPlanSlot {
   final String mealLabel;
   final String? recipeId;
   final String? mealText;
+  final String? sideRecipeId;
+  final String? sideText;
+  final List<PlannerSlotSideItem> sideItems;
   final String? sauceRecipeId;
   final String? sauceText;
   final int servingsUsed;
   final int slotOrder;
   final DateTime? reminderAt;
   final String? reminderMessage;
+  final List<PlannerGroceryDraftLine> groceryDraftLines;
+  final List<String> assignedUserIds;
 
   bool get hasPlannedContent {
     final hasMealText = (mealText ?? '').trim().isNotEmpty;
+    final hasSideText = (sideText ?? '').trim().isNotEmpty;
     final hasSauceText = (sauceText ?? '').trim().isNotEmpty;
     return recipeId != null ||
         hasMealText ||
+        sideRecipeId != null ||
+        hasSideText ||
+        sideItems.isNotEmpty ||
         sauceRecipeId != null ||
         hasSauceText;
   }
@@ -294,12 +478,18 @@ class MealPlanSlot {
         'meal_type': mealLabel,
         'recipe_id': recipeId,
         'meal_text': mealText,
+        'side_recipe_id': sideRecipeId,
+        'side_text': sideText,
+        'side_items': PlannerSlotSideItem.toJsonList(sideItems),
         'sauce_recipe_id': sauceRecipeId,
         'sauce_text': sauceText,
         'servings_used': servingsUsed,
         'slot_order': slotOrder,
         'reminder_at': reminderAt?.toUtc().toIso8601String(),
         'reminder_message': reminderMessage,
+        'grocery_draft_lines':
+            PlannerGroceryDraftLine.toJsonList(groceryDraftLines),
+        'assigned_user_ids': assignedUserIds,
       };
 
   factory MealPlanSlot.fromJson(Map<String, dynamic> json) => MealPlanSlot(
@@ -309,6 +499,21 @@ class MealPlanSlot {
         mealLabel: json['meal_type']?.toString() ?? 'meal',
         recipeId: json['recipe_id']?.toString(),
         mealText: json['meal_text']?.toString(),
+        sideRecipeId: json['side_recipe_id']?.toString(),
+        sideText: json['side_text']?.toString(),
+        sideItems: () {
+          final parsed = PlannerSlotSideItem.listFromJson(json['side_items']);
+          if (parsed.isNotEmpty) return parsed;
+          final legacyRecipeId = json['side_recipe_id']?.toString();
+          final legacyText = json['side_text']?.toString();
+          final legacy = PlannerSlotSideItem(
+            recipeId: legacyRecipeId,
+            text: legacyText,
+          );
+          return legacy.isEmpty
+              ? const <PlannerSlotSideItem>[]
+              : <PlannerSlotSideItem>[legacy];
+        }(),
         sauceRecipeId: json['sauce_recipe_id']?.toString(),
         sauceText: json['sauce_text']?.toString(),
         servingsUsed: (json['servings_used'] as num?)?.toInt() ?? 1,
@@ -317,6 +522,51 @@ class MealPlanSlot {
             ? DateTime.parse(json['reminder_at'].toString()).toUtc()
             : null,
         reminderMessage: json['reminder_message']?.toString(),
+        groceryDraftLines:
+            PlannerGroceryDraftLine.listFromJson(json['grocery_draft_lines']),
+        assignedUserIds: (json['assigned_user_ids'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
+      );
+
+  MealPlanSlot copyWith({
+    String? id,
+    DateTime? weekStart,
+    int? dayOfWeek,
+    String? mealLabel,
+    String? recipeId,
+    String? mealText,
+    String? sideRecipeId,
+    String? sideText,
+    List<PlannerSlotSideItem>? sideItems,
+    String? sauceRecipeId,
+    String? sauceText,
+    int? servingsUsed,
+    int? slotOrder,
+    DateTime? reminderAt,
+    String? reminderMessage,
+    List<PlannerGroceryDraftLine>? groceryDraftLines,
+    List<String>? assignedUserIds,
+  }) =>
+      MealPlanSlot(
+        id: id ?? this.id,
+        weekStart: weekStart ?? this.weekStart,
+        dayOfWeek: dayOfWeek ?? this.dayOfWeek,
+        mealLabel: mealLabel ?? this.mealLabel,
+        recipeId: recipeId ?? this.recipeId,
+        mealText: mealText ?? this.mealText,
+        sideRecipeId: sideRecipeId ?? this.sideRecipeId,
+        sideText: sideText ?? this.sideText,
+        sideItems: sideItems ?? this.sideItems,
+        sauceRecipeId: sauceRecipeId ?? this.sauceRecipeId,
+        sauceText: sauceText ?? this.sauceText,
+        servingsUsed: servingsUsed ?? this.servingsUsed,
+        slotOrder: slotOrder ?? this.slotOrder,
+        reminderAt: reminderAt ?? this.reminderAt,
+        reminderMessage: reminderMessage ?? this.reminderMessage,
+        groceryDraftLines: groceryDraftLines ?? this.groceryDraftLines,
+        assignedUserIds: assignedUserIds ?? this.assignedUserIds,
       );
 }
 
@@ -605,17 +855,43 @@ class Household {
     required this.id,
     required this.name,
     required this.createdBy,
+    this.plannerStartDay = 0,
+    this.plannerDayCount = 7,
   });
 
   final String id;
   final String name;
   final String createdBy;
 
+  /// Default planner start day (0=Mon..6=Sun) for members who follow household.
+  final int plannerStartDay;
+
+  /// Default planner day count for members who follow household.
+  final int plannerDayCount;
+
   factory Household.fromJson(Map<String, dynamic> json) => Household(
         id: json['id'].toString(),
         name: json['name']?.toString() ?? 'My Household',
         createdBy: json['created_by']?.toString() ?? '',
+        plannerStartDay: (json['planner_start_day'] as num?)?.toInt() ?? 0,
+        plannerDayCount: (json['planner_day_count'] as num?)?.toInt() ?? 7,
       );
+
+  Household copyWith({
+    String? id,
+    String? name,
+    String? createdBy,
+    int? plannerStartDay,
+    int? plannerDayCount,
+  }) {
+    return Household(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdBy: createdBy ?? this.createdBy,
+      plannerStartDay: plannerStartDay ?? this.plannerStartDay,
+      plannerDayCount: plannerDayCount ?? this.plannerDayCount,
+    );
+  }
 }
 
 class HouseholdMember {
@@ -635,8 +911,24 @@ class HouseholdMember {
   final String? name;
   final String? invitedEmail;
 
+  /// Household member label from profile name only.
+  String get displayName {
+    final n = name?.trim() ?? '';
+    if (n.isNotEmpty) return n;
+    return 'Unknown user';
+  }
+
   factory HouseholdMember.fromJson(Map<String, dynamic> json) {
-    final profile = json['profiles'] as Map<String, dynamic>?;
+    final rawProfile = json['profiles'];
+    Map<String, dynamic>? profile;
+    if (rawProfile is Map<String, dynamic>) {
+      profile = rawProfile;
+    } else if (rawProfile is List && rawProfile.isNotEmpty) {
+      final first = rawProfile.first;
+      if (first is Map) {
+        profile = Map<String, dynamic>.from(first);
+      }
+    }
     return HouseholdMember(
       householdId: json['household_id'].toString(),
       userId: json['user_id'].toString(),

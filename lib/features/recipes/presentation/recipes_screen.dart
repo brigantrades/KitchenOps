@@ -1,18 +1,30 @@
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/theme/theme_extensions.dart';
+import 'package:plateplan/core/ui/food_icon_resolver.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
+import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/services/nutrition_estimation.dart';
+import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
 import 'package:plateplan/core/strings/recipe_title_case.dart';
+import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:plateplan/features/grocery/presentation/grocery_item_suggestions_grid.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+/// When true, Step 5 shows per-ingredient USDA/Gemini breakdown (dev / diagnostics).
+const bool _kShowNutritionIngredientBreakdown = false;
 
 class RecipesScreen extends ConsumerStatefulWidget {
   const RecipesScreen({super.key});
@@ -72,6 +84,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
           householdId: null,
           visibility: RecipeVisibility.personal,
           apiId: recipe.apiId,
+          nutritionSource: recipe.nutritionSource,
         );
         final personalId = await repo.create(
           user.id,
@@ -177,32 +190,14 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: SearchBar(
-                controller: _searchCtrl,
-                hintText: hasSharedHousehold
-                    ? (effectiveLibraryIndex == 0
-                        ? 'Search household recipes'
-                        : 'Search my recipes')
-                    : 'Search my recipes',
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
-            const SizedBox(width: 2),
-            IconButton.filledTonal(
-              tooltip: 'Create new recipe',
-              onPressed: _createRecipeManually,
-              visualDensity: VisualDensity.compact,
-              style: IconButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                padding: const EdgeInsets.all(6),
-              ),
-              icon: const Icon(Icons.add_rounded, size: 22),
-            ),
-          ],
+        SearchBar(
+          controller: _searchCtrl,
+          hintText: hasSharedHousehold
+              ? (effectiveLibraryIndex == 0
+                  ? 'Search household recipes'
+                  : 'Search my recipes')
+              : 'Search my recipes',
+          onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 4),
         SegmentedPills(
@@ -301,6 +296,12 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
         surfaceTintColor: Colors.transparent,
         backgroundColor: colors.surfaceBase,
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _createRecipeManually,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('Add Recipe'),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: DecoratedBox(
         decoration: BoxDecoration(gradient: gradient),
         child: recipesAsync.when(
@@ -320,10 +321,10 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                 hasSharedHousehold && effectiveLibraryIndex == 0;
             final List<Recipe> visible;
             if (isHouseholdLibrary) {
+              // All shared household rows — not only favorites. New "Save to Household"
+              // copies often have is_favorite false until the user favorites them.
               visible = filtered
-                  .where((r) =>
-                      r.visibility == RecipeVisibility.household &&
-                      r.isFavorite)
+                  .where((r) => r.visibility == RecipeVisibility.household)
                   .toList();
             } else {
               final personal = filtered
@@ -363,14 +364,19 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                                     1 =>
                                       'No favorites yet. Open a personal recipe and turn on My Favorites.',
                                     2 =>
-                                      'Nothing in To Try. Mark a personal recipe from Manage collections.',
+                                      'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
                                     _ =>
                                       'No recipes yet. Add one in Discover or Planner.',
                                   },
                           ),
                         )
                       : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+                          padding: const EdgeInsets.fromLTRB(
+                            10,
+                            0,
+                            10,
+                            88,
+                          ),
                           itemCount: displayed.length,
                           itemBuilder: (context, index) {
                             return _RecipeRow(
@@ -671,7 +677,7 @@ class _RecipeCollectionsSheetState extends ConsumerState<_RecipeCollectionsSheet
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                 child: Text(
-                  'Manage collections',
+                  'Lists & Sharing',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -920,7 +926,7 @@ class _RecipeRow extends ConsumerWidget {
                 children: [
                   Icon(Icons.library_books_outlined),
                   SizedBox(width: 8),
-                  Text('Manage collections'),
+                  Text('Lists & Sharing'),
                 ],
               ),
             ),
@@ -958,31 +964,77 @@ const _presetAmountChips = [
   _PresetAmountChip(label: '1', canonicalText: '1'),
 ];
 
+const _kQualitativePresets = [
+  'to taste',
+  'as needed',
+  'pinch',
+  '1 tsp',
+  '1 tbsp',
+  '½ tsp',
+];
+
 class _IngredientInput {
   _IngredientInput({
     required String name,
     required this.unitOptions,
     required this.selectedUnit,
     String? customUnit,
-  }) {
+    String? reorderId,
+    bool qualitative = false,
+    String qualitativePhrase = '',
+  }) : reorderId = reorderId ?? 'ing_${_nextReorderId++}' {
     nameCtrl.text = name;
     if (customUnit != null) {
       customUnitCtrl.text = customUnit;
     }
+    this.qualitative = qualitative;
+    if (qualitative) {
+      final t = qualitativePhrase.trim();
+      if (t.isEmpty) {
+        qualitativePreset = 'to taste';
+      } else if (_kQualitativePresets.contains(t)) {
+        qualitativePreset = t;
+      } else {
+        qualitativePreset = 'custom';
+        qualitativeCustomCtrl.text = t;
+      }
+    }
   }
 
+  static int _nextReorderId = 0;
+
+  final String reorderId;
   final TextEditingController nameCtrl = TextEditingController();
   final TextEditingController amountCtrl = TextEditingController();
   final TextEditingController customUnitCtrl = TextEditingController();
+  final TextEditingController qualitativeCustomCtrl = TextEditingController();
   final List<String> unitOptions;
   String selectedUnit;
 
+  bool qualitative = false;
+  String qualitativePreset = 'to taste';
+
+  final FocusNode nameFocusNode = FocusNode();
+
+  /// True after the user chose a name from the grocery suggestion grid.
+  bool namePickedFromSuggestions = false;
+
   String get name => nameCtrl.text.trim();
 
+  String resolvedQualitativePhrase() {
+    if (!qualitative) return '';
+    if (qualitativePreset == 'custom') {
+      return qualitativeCustomCtrl.text.trim();
+    }
+    return qualitativePreset;
+  }
+
   void dispose() {
+    nameFocusNode.dispose();
     nameCtrl.dispose();
     amountCtrl.dispose();
     customUnitCtrl.dispose();
+    qualitativeCustomCtrl.dispose();
   }
 }
 
@@ -994,17 +1046,14 @@ class _UnitProfile {
 }
 
 class _DirectionDraft {
-  _DirectionDraft({String? text, String? timeMinutes}) {
+  _DirectionDraft({String? text}) {
     if (text != null) textCtrl.text = text;
-    if (timeMinutes != null) timeCtrl.text = timeMinutes;
   }
 
   final TextEditingController textCtrl = TextEditingController();
-  final TextEditingController timeCtrl = TextEditingController();
 
   void dispose() {
     textCtrl.dispose();
-    timeCtrl.dispose();
   }
 }
 
@@ -1048,11 +1097,23 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   String? _validationMessage;
   bool _isSubmitting = false;
   int? _selectedIngredientIndex;
+  int? _selectedDirectionIndex = 0;
+
+  static const int _kNutritionStepIndex = 4;
+
+  Nutrition _estimatedNutrition = const Nutrition();
+  String? _nutritionEstimateSource;
+  bool _nutritionLoading = false;
+  String? _nutritionError;
+  String? _loadedNutritionFingerprint;
+  List<IngredientNutritionBreakdownLine> _nutritionBreakdown = const [];
+  bool _nutritionShowPerServing = false;
 
   @override
   void initState() {
     super.initState();
     _hydrateFromInitialRecipe();
+    unawaited(ref.read(groceryRepositoryProvider).ensureCatalogLoaded());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(recipeCreationGuardProvider.notifier).open();
@@ -1089,12 +1150,31 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _markFavorite = initial.isFavorite;
     _markToTry = initial.isToTry;
     _makePublic = initial.visibility == RecipeVisibility.public;
+    // Must match initial visibility or saves use defaults (e.g. _saveToHousehold
+    // false → personal) while user_id stays the owner, which violates RLS for
+    // non-owners updating household recipes.
+    _saveToHousehold = initial.visibility == RecipeVisibility.household;
     _ingredients.clear();
     for (final ingredient in initial.ingredients) {
+      if (ingredient.qualitative) {
+        final profile = _detectUnitProfile(ingredient.name);
+        _ingredients.add(
+          _IngredientInput(
+            name: ingredient.name,
+            unitOptions: profile.options,
+            selectedUnit: profile.defaultUnit,
+            qualitative: true,
+            qualitativePhrase: ingredient.unit,
+          ),
+        );
+        continue;
+      }
       final profile = _detectUnitProfile(ingredient.name);
       final normalizedUnit = ingredient.unit.trim().toLowerCase();
       final isCustom = !profile.options.contains(normalizedUnit);
-      final units = [...profile.options, 'custom'];
+      // profile.options already ends with 'custom'; do not append again or the
+      // unit dropdown gets duplicate values and DropdownButtonFormField asserts.
+      final units = [...profile.options];
       final row = _IngredientInput(
         name: ingredient.name,
         unitOptions: units,
@@ -1105,6 +1185,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       _ingredients.add(row);
     }
     _selectedIngredientIndex = _ingredients.isEmpty ? null : 0;
+    _estimatedNutrition = initial.nutrition;
+    _nutritionEstimateSource = initial.nutritionSource;
+    _nutritionBreakdown = const [];
     for (final draft in _directionDrafts) {
       draft.dispose();
     }
@@ -1115,6 +1198,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             ? [_DirectionDraft()]
             : initial.instructions.map((step) => _DirectionDraft(text: step)),
       );
+    _selectedDirectionIndex = _directionDrafts.isEmpty ? null : 0;
   }
 
   void _closeWizard([Recipe? recipe]) {
@@ -1258,12 +1342,31 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     });
   }
 
+  void _onReorderIngredients(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final selId = _selectedIngredientIndex != null
+          ? _ingredients[_selectedIngredientIndex!].reorderId
+          : null;
+      final item = _ingredients.removeAt(oldIndex);
+      _ingredients.insert(newIndex, item);
+      if (selId != null) {
+        _selectedIngredientIndex =
+            _ingredients.indexWhere((e) => e.reorderId == selId);
+      }
+      _validationMessage = null;
+    });
+  }
+
   /// First ingredient can always be added; further rows require the last row
   /// to have a name and a valid amount (same rules as step validation).
   bool get _canAddAnotherIngredient {
     if (_ingredients.isEmpty) return true;
     final last = _ingredients.last;
     if (last.nameCtrl.text.trim().isEmpty) return false;
+    if (last.qualitative) {
+      return last.resolvedQualitativePhrase().isNotEmpty;
+    }
     if (_parseIngredientAmount(last.amountCtrl.text) == null) return false;
     return true;
   }
@@ -1272,6 +1375,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     final name = row.nameCtrl.text.trim().isEmpty
         ? 'New ingredient'
         : row.nameCtrl.text.trim();
+    if (row.qualitative) {
+      final q = row.resolvedQualitativePhrase();
+      return q.isEmpty ? name : '$name · $q';
+    }
     final amt = row.amountCtrl.text.trim();
     final unitStr = row.selectedUnit == 'custom'
         ? row.customUnitCtrl.text.trim()
@@ -1300,11 +1407,13 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Row(
               children: [
-                Icon(
-                  Icons.restaurant_rounded,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
+                row.namePickedFromSuggestions && row.name.isNotEmpty
+                    ? _ingredientPickedFoodIcon(context, row, size: 20)
+                    : Icon(
+                        Icons.restaurant_rounded,
+                        size: 18,
+                        color: scheme.onSurfaceVariant,
+                      ),
                 const SizedBox(width: AppSpacing.xs),
                 Expanded(
                   child: Text(
@@ -1346,6 +1455,503 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _IngredientInput row,
   ) {
     final scheme = Theme.of(context).colorScheme;
+    final qualitativeDropdownValue =
+        _kQualitativePresets.contains(row.qualitativePreset)
+            ? row.qualitativePreset
+            : 'custom';
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.sm,
+        AppSpacing.xs,
+        AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: scheme.primary,
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: row.nameCtrl,
+                      focusNode: row.nameFocusNode,
+                      textCapitalization: TextCapitalization.sentences,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                      decoration: _ingredientInputDecoration(
+                        context,
+                        hintText: 'Ingredient name',
+                        hintStyle:
+                            Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                  fontStyle: FontStyle.italic,
+                                  color: scheme.onSurfaceVariant
+                                      .withValues(alpha: 0.5),
+                                ),
+                        borderOpacity: 0.2,
+                        prefixIcon: row.namePickedFromSuggestions &&
+                                row.name.isNotEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  widthFactor: 1,
+                                  child: _ingredientPickedFoodIcon(
+                                    context,
+                                    row,
+                                  ),
+                                ),
+                              )
+                            : null,
+                      ),
+                      onChanged: (_) => setState(() {
+                        row.namePickedFromSuggestions = false;
+                      }),
+                    ),
+                    if (!row.qualitative)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: GroceryItemSuggestionsGrid(
+                          repo: ref.read(groceryRepositoryProvider),
+                          typedValue: row.nameCtrl.text,
+                          recentItems: const [],
+                          onPick: (suggestion) {
+                            setState(() {
+                              row.nameCtrl.text = suggestion;
+                              row.namePickedFromSuggestions = true;
+                            });
+                            row.nameFocusNode.unfocus();
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => _removeIngredientAt(idx),
+                icon: const Icon(Icons.delete_outline_rounded),
+                tooltip: 'Remove ingredient',
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          SegmentedButton<bool>(
+            emptySelectionAllowed: false,
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment<bool>(
+                value: false,
+                label: Text('Measure'),
+                icon: Icon(Icons.scale_outlined, size: 18),
+              ),
+              ButtonSegment<bool>(
+                value: true,
+                label: Text('To taste'),
+                icon: Icon(Icons.spa_outlined, size: 18),
+              ),
+            ],
+            selected: {row.qualitative},
+            onSelectionChanged: (next) {
+              setState(() {
+                row.qualitative = next.first;
+              });
+            },
+          ),
+          if (row.qualitative) ...[
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String>(
+              initialValue: qualitativeDropdownValue,
+              isExpanded: true,
+              decoration: _ingredientInputDecoration(
+                context,
+                labelText: 'Amount',
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                borderOpacity: 0.2,
+              ),
+              items: [
+                ..._kQualitativePresets.map(
+                  (p) => DropdownMenuItem<String>(
+                    value: p,
+                    child: Text(p),
+                  ),
+                ),
+                const DropdownMenuItem<String>(
+                  value: 'custom',
+                  child: Text('Custom…'),
+                ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => row.qualitativePreset = value);
+              },
+            ),
+            if (row.qualitativePreset == 'custom') ...[
+              const SizedBox(height: AppSpacing.xs),
+              TextField(
+                controller: row.qualitativeCustomCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: _ingredientInputDecoration(
+                  context,
+                  hintText: 'e.g. 1½ tsp',
+                  borderOpacity: 0.2,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
+          ] else ...[
+            const SizedBox(height: AppSpacing.xs),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Amount',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final preset in _presetAmountChips)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(
+                          preset.label,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            height: 1.1,
+                          ),
+                        ),
+                        labelPadding:
+                            const EdgeInsets.symmetric(horizontal: 10),
+                        selected: _isPresetAmountSelected(
+                          row,
+                          preset.canonicalText,
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              row.amountCtrl.text = preset.canonicalText;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 132,
+                  child: TextField(
+                    controller: row.amountCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                    decoration: _ingredientInputDecoration(
+                      context,
+                      hintText: 'Enter amount',
+                      hintStyle:
+                          Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                fontStyle: FontStyle.italic,
+                                fontWeight: FontWeight.w400,
+                                color: scheme.onSurfaceVariant
+                                    .withValues(alpha: 0.5),
+                              ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      borderOpacity: 0.2,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: row.unitOptions.contains(row.selectedUnit)
+                        ? row.selectedUnit
+                        : row.unitOptions.first,
+                    isDense: true,
+                    isExpanded: true,
+                    decoration: _ingredientInputDecoration(
+                      context,
+                      labelText: 'Unit',
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      borderOpacity: 0.2,
+                    ),
+                    items: row.unitOptions
+                        .map(
+                          (unit) => DropdownMenuItem(
+                            value: unit,
+                            child: Text(unit),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => row.selectedUnit = value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            if (row.selectedUnit == 'custom') ...[
+              const SizedBox(height: AppSpacing.xs),
+              TextField(
+                controller: row.customUnitCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: _ingredientInputDecoration(
+                  context,
+                  labelText: 'Custom unit',
+                  hintText: 'e.g. clove, pinch, can',
+                  borderOpacity: 0.2,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _removeDirectionAt(int idx) {
+    if (_directionDrafts.length <= 1) return;
+    setState(() {
+      final removed = _directionDrafts.removeAt(idx);
+      removed.dispose();
+      _validationMessage = null;
+      if (_selectedDirectionIndex != null) {
+        final sel = _selectedDirectionIndex!;
+        if (idx < sel) {
+          _selectedDirectionIndex = sel - 1;
+        } else if (idx == sel) {
+          _selectedDirectionIndex = idx.clamp(0, _directionDrafts.length - 1);
+        }
+      }
+    });
+  }
+
+  void _addDirectionStep() {
+    if (!_canAddAnotherDirection) return;
+    setState(() {
+      _directionDrafts.add(_DirectionDraft());
+      _selectedDirectionIndex = _directionDrafts.length - 1;
+      _validationMessage = null;
+    });
+  }
+
+  bool get _canAddAnotherDirection {
+    if (_directionDrafts.isEmpty) return true;
+    final last = _directionDrafts.last;
+    return last.textCtrl.text.trim().isNotEmpty;
+  }
+
+  String _directionSummary(_DirectionDraft draft) {
+    final t = draft.textCtrl.text.trim();
+    if (t.isEmpty) return 'New step';
+    return t;
+  }
+
+  static const double _kDirectionFieldBorderRadius = 14;
+  static const double _kIngredientFieldBorderRadius = 14;
+
+  InputDecoration _ingredientInputDecoration(
+    BuildContext context, {
+    String? labelText,
+    String? hintText,
+    TextStyle? hintStyle,
+    EdgeInsetsGeometry contentPadding =
+        const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    double borderOpacity = 1.0,
+    Widget? prefixIcon,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final borderColor = scheme.primary.withValues(alpha: borderOpacity);
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(_kIngredientFieldBorderRadius),
+      borderSide: BorderSide(color: borderColor, width: 1.2),
+    );
+    return InputDecoration(
+      filled: true,
+      fillColor: Colors.white,
+      labelText: labelText,
+      hintText: hintText,
+      hintStyle: hintStyle,
+      isDense: true,
+      contentPadding: contentPadding,
+      prefixIcon: prefixIcon,
+      prefixIconConstraints: prefixIcon == null
+          ? null
+          : const BoxConstraints(minWidth: 40, minHeight: 32),
+      border: border,
+      enabledBorder: border,
+      focusedBorder: border,
+      disabledBorder: border,
+    );
+  }
+
+  IconData _groceryCategoryIcon(GroceryCategory category) {
+    return switch (category) {
+      GroceryCategory.produce => Icons.eco_rounded,
+      GroceryCategory.meatFish => Icons.set_meal_rounded,
+      GroceryCategory.dairyEggs => Icons.egg_alt_rounded,
+      GroceryCategory.pantryGrains => Icons.rice_bowl_rounded,
+      GroceryCategory.bakery => Icons.bakery_dining_rounded,
+      GroceryCategory.other => Icons.shopping_bag_rounded,
+    };
+  }
+
+  Widget _ingredientPickedFoodIcon(
+    BuildContext context,
+    _IngredientInput row, {
+    double size = 24,
+  }) {
+    final repo = ref.read(groceryRepositoryProvider);
+    final name = row.nameCtrl.text.trim();
+    if (name.isEmpty) {
+      return SizedBox(width: size, height: size);
+    }
+    final category = repo.categorize(name);
+    final asset = foodIconAssetForName(name, category: category);
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    if (asset != null) {
+      return Image.asset(
+        asset,
+        width: size,
+        height: size,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) => Icon(
+          _groceryCategoryIcon(category),
+          size: size,
+          color: color,
+        ),
+      );
+    }
+    return Icon(
+      _groceryCategoryIcon(category),
+      size: size,
+      color: color,
+    );
+  }
+
+  InputDecoration _directionInstructionDecoration(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final primary = scheme.primary;
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(_kDirectionFieldBorderRadius),
+      borderSide: BorderSide(color: primary, width: 1.2),
+    );
+    return InputDecoration(
+      filled: true,
+      fillColor: Colors.white,
+      labelText: 'Instruction',
+      hintText: 'Describe what to do for this step',
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      border: border,
+      enabledBorder: border,
+      focusedBorder: border,
+      disabledBorder: border,
+    );
+  }
+
+  Widget _buildCondensedDirectionRow(
+    BuildContext context,
+    int idx,
+    _DirectionDraft draft,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Material(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => setState(() => _selectedDirectionIndex = idx),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.format_list_numbered_rounded,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    'Step ${idx + 1}: ${_directionSummary(draft)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.edit_outlined,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                IconButton(
+                  onPressed: () => _removeDirectionAt(idx),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  tooltip: 'Remove',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpandedDirectionRow(
+    BuildContext context,
+    int idx,
+    _DirectionDraft draft,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
       padding: const EdgeInsets.fromLTRB(
@@ -1367,158 +1973,37 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: TextField(
-                  controller: row.nameCtrl,
-                  textCapitalization: TextCapitalization.sentences,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                  decoration: InputDecoration(
-                    hintText: 'Ingredient name',
-                    hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontStyle: FontStyle.italic,
-                          color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
-                        ),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
-                  onChanged: (_) => setState(() {}),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  'Step ${idx + 1}',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
               ),
-              IconButton(
-                onPressed: () => _removeIngredientAt(idx),
-                icon: const Icon(Icons.delete_outline_rounded),
-                tooltip: 'Remove ingredient',
-                visualDensity: VisualDensity.compact,
-              ),
+              const Spacer(),
+              if (_directionDrafts.length > 1)
+                IconButton(
+                  onPressed: () => _removeDirectionAt(idx),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  tooltip: 'Remove step',
+                  visualDensity: VisualDensity.compact,
+                ),
             ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Amount',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurfaceVariant,
-                  ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (final preset in _presetAmountChips)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                      label: Text(
-                        preset.label,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          height: 1.1,
-                        ),
-                      ),
-                      labelPadding: const EdgeInsets.symmetric(horizontal: 10),
-                      selected: _isPresetAmountSelected(
-                        row,
-                        preset.canonicalText,
-                      ),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onSelected: (selected) {
-                        setState(() {
-                          if (selected) {
-                            row.amountCtrl.text = preset.canonicalText;
-                          }
-                        });
-                      },
-                    ),
-                  ),
-              ],
-            ),
           ),
           const SizedBox(height: AppSpacing.sm),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 132,
-                child: TextField(
-                  controller: row.amountCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                  decoration: InputDecoration(
-                    hintText: 'Enter amount',
-                    hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontStyle: FontStyle.italic,
-                          fontWeight: FontWeight.w400,
-                          color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
-                        ),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 10,
-                    ),
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: row.unitOptions.contains(row.selectedUnit)
-                      ? row.selectedUnit
-                      : row.unitOptions.first,
-                  isDense: true,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Unit',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
-                  items: row.unitOptions
-                      .map(
-                        (unit) => DropdownMenuItem(
-                          value: unit,
-                          child: Text(unit),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() => row.selectedUnit = value);
-                  },
-                ),
-              ),
-            ],
+          TextField(
+            controller: draft.textCtrl,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: _directionInstructionDecoration(context),
+            onChanged: (_) => setState(() {}),
           ),
-          if (row.selectedUnit == 'custom') ...[
-            const SizedBox(height: AppSpacing.xs),
-            TextField(
-              controller: row.customUnitCtrl,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Custom unit',
-                hintText: 'e.g. clove, pinch, can',
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-          ],
         ],
       ),
     );
@@ -1536,6 +2021,115 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       if (n != null && d != null && d != 0) return n / d;
     }
     return null;
+  }
+
+  List<String> _ingredientLinesForNutrition() {
+    final ingredients = <Ingredient>[];
+    for (final row in _ingredients) {
+      if (row.name.trim().isEmpty) continue;
+      if (row.qualitative) {
+        final q = row.resolvedQualitativePhrase();
+        if (q.isEmpty) continue;
+        ingredients.add(
+          Ingredient(
+            name: row.name,
+            amount: 0,
+            unit: q,
+            category: GroceryCategory.other,
+            qualitative: true,
+          ),
+        );
+        continue;
+      }
+      final amt = _parseIngredientAmount(row.amountCtrl.text);
+      final unit = row.selectedUnit == 'custom'
+          ? row.customUnitCtrl.text.trim()
+          : row.selectedUnit;
+      if (amt == null || unit.trim().isEmpty) continue;
+      ingredients.add(
+        Ingredient(
+          name: row.name,
+          amount: amt,
+          unit: unit,
+          category: GroceryCategory.other,
+        ),
+      );
+    }
+    return ingredientLinesFromIngredients(ingredients);
+  }
+
+  String _computeNutritionFingerprint() {
+    final servings = _parseIntOrNull(_servingsCtrl.text) ?? 2;
+    final lines = _ingredientLinesForNutrition();
+    return '$servings|\u001e${lines.join('\u001e')}';
+  }
+
+  void _scheduleNutritionSync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _step != _kNutritionStepIndex) return;
+      unawaited(_syncNutritionEstimate());
+    });
+  }
+
+  Future<void> _syncNutritionEstimate() async {
+    final fp = _computeNutritionFingerprint();
+    if (fp == _loadedNutritionFingerprint && _nutritionError == null) {
+      return;
+    }
+    final lines = _ingredientLinesForNutrition();
+    if (lines.isEmpty) {
+      setState(() {
+        _nutritionLoading = false;
+        _nutritionError =
+            'Add ingredients with amounts on the ingredients step.';
+        _estimatedNutrition = const Nutrition();
+        _nutritionEstimateSource = null;
+        _nutritionBreakdown = const [];
+      });
+      return;
+    }
+    if (!Env.hasFdc && !Env.hasGemini) {
+      setState(() {
+        _nutritionLoading = false;
+        _nutritionError = null;
+        _estimatedNutrition = const Nutrition();
+        _nutritionEstimateSource = null;
+        _loadedNutritionFingerprint = fp;
+        _nutritionBreakdown = const [];
+      });
+      return;
+    }
+    setState(() {
+      _nutritionLoading = true;
+      _nutritionError = null;
+      _nutritionBreakdown = const [];
+    });
+    try {
+      final result = await estimateNutritionWithFallback(
+        foodDataCentral: ref.read(foodDataCentralServiceProvider),
+        cacheRepository: ref.read(ingredientNutritionCacheRepositoryProvider),
+        gemini: ref.read(geminiServiceProvider),
+        ingredientLines: lines,
+        servings: _parseIntOrNull(_servingsCtrl.text) ?? 2,
+      );
+      if (!mounted) return;
+      setState(() {
+        _estimatedNutrition = result.nutrition;
+        _nutritionEstimateSource = result.source;
+        _nutritionLoading = false;
+        _nutritionError = null;
+        _loadedNutritionFingerprint = fp;
+        _nutritionBreakdown = result.breakdown;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _nutritionLoading = false;
+        _nutritionError =
+            'Could not estimate nutrition. Check your connection and try again.';
+        _nutritionBreakdown = const [];
+      });
+    }
   }
 
   bool _isPresetAmountSelected(_IngredientInput row, String canonical) {
@@ -1569,17 +2163,20 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         setState(() => _validationMessage = 'Add at least one ingredient.');
         return false;
       }
-      final hasAmountIssue = _ingredients.any(
-        (row) =>
-            row.amountCtrl.text.trim().isEmpty ||
+      final hasIssue = _ingredients.any((row) {
+        if (row.nameCtrl.text.trim().isEmpty) return true;
+        if (row.qualitative) {
+          return row.resolvedQualitativePhrase().isEmpty;
+        }
+        return row.amountCtrl.text.trim().isEmpty ||
             _parseIngredientAmount(row.amountCtrl.text) == null ||
             row.selectedUnit.trim().isEmpty ||
             (row.selectedUnit == 'custom' &&
-                row.customUnitCtrl.text.trim().isEmpty),
-      );
-      if (hasAmountIssue) {
-        setState(() =>
-            _validationMessage = 'Each ingredient needs amount and unit.');
+                row.customUnitCtrl.text.trim().isEmpty);
+      });
+      if (hasIssue) {
+        setState(() => _validationMessage =
+            'Each ingredient needs a name and a valid amount (or To taste).');
         return false;
       }
     }
@@ -1593,17 +2190,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         setState(() => _validationMessage = 'Add at least one direction step.');
         return false;
       }
-      final invalidTime = _directionDrafts.any((d) {
-        final raw = d.timeCtrl.text.trim();
-        if (raw.isEmpty) return false;
-        final parsed = int.tryParse(raw);
-        return parsed == null || parsed < 0;
-      });
-      if (invalidTime) {
-        setState(() =>
-            _validationMessage = 'Step time must be a non-negative number.');
-        return false;
-      }
     }
 
     setState(() => _validationMessage = null);
@@ -1612,7 +2198,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
 
   void _nextStep() {
     if (!_validateCurrentStep()) return;
-    if (_step >= 4) {
+    FocusScope.of(context).unfocus();
+    if (_step >= 5) {
       _submit();
       return;
     }
@@ -1623,6 +2210,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
     );
+    if (_step == _kNutritionStepIndex) {
+      _scheduleNutritionSync();
+    }
   }
 
   void _prevStep() {
@@ -1634,78 +2224,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
-  }
-
-  List<String> _suggestionsForStep(int stepIndex) {
-    final title = _titleCtrl.text.toLowerCase();
-    final names = _ingredients.map((e) => e.name.toLowerCase()).join(' ');
-    final cuisines = _cuisineTags.map((e) => e.toLowerCase()).toSet();
-    final byStep = <int, List<String>>{
-      0: [
-        'Prep all ingredients and tools before turning on heat.',
-        if (title.contains('pasta') || names.contains('pasta'))
-          'Bring a large pot of salted water to a boil.',
-        if (title.contains('salad')) 'Wash and dry vegetables thoroughly.',
-        if (title.contains('soup'))
-          'Set a pot over medium heat and prep aromatics.',
-      ],
-      1: [
-        if (title.contains('pasta') || names.contains('pasta'))
-          'At the same time, chop vegetables and mince garlic.',
-        if (title.contains('stir') || names.contains('soy sauce'))
-          'Heat oil in a wok/pan and get it very hot before adding ingredients.',
-        if (title.contains('soup')) 'Saute onion and garlic until fragrant.',
-        if (title.contains('salad'))
-          'Whisk the dressing ingredients in a bowl.',
-      ],
-      2: [
-        if (title.contains('pasta') || names.contains('pasta'))
-          'Cook pasta until al dente, then reserve some pasta water.',
-        if (names.contains('chicken'))
-          'Cook chicken until browned and fully cooked through.',
-        if (names.contains('rice'))
-          'Cook rice according to package directions until tender.',
-        'Add vegetables and cook until just tender.',
-      ],
-      3: [
-        'Combine all cooked components and adjust seasoning.',
-        if (cuisines.contains('italian'))
-          'Finish with olive oil, herbs, and parmesan.',
-        if (cuisines.contains('chinese'))
-          'Add soy-based sauce and toss over high heat.',
-        if (cuisines.contains('mexican'))
-          'Finish with lime juice and chopped cilantro.',
-      ],
-    };
-
-    final fallback = <String>[
-      'Continue cooking and combine ingredients as needed.',
-      'Taste and adjust seasoning before serving.',
-      'Plate and garnish, then serve warm.',
-    ];
-
-    final suggestions =
-        byStep[stepIndex]?.where((e) => e.trim().isNotEmpty).toList() ??
-            fallback;
-    if (suggestions.isEmpty) return fallback;
-    return suggestions.take(5).toList();
-  }
-
-  void _applySuggestionToStep(int stepIndex, String suggestion) {
-    setState(() {
-      final draft = _directionDrafts[stepIndex];
-      if (draft.textCtrl.text.trim().isEmpty) {
-        draft.textCtrl.text = suggestion;
-      } else if (!draft.textCtrl.text.contains(suggestion)) {
-        draft.textCtrl.text = '${draft.textCtrl.text.trim()} $suggestion';
-      }
-    });
-  }
-
-  void _applyQuickTime(int stepIndex, int minutes) {
-    setState(() {
-      _directionDrafts[stepIndex].timeCtrl.text = '$minutes';
-    });
+    if (_step == _kNutritionStepIndex) {
+      _scheduleNutritionSync();
+    }
   }
 
   void _submit() {
@@ -1714,6 +2235,15 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
 
     final ingredients = _ingredients.map(
       (row) {
+        if (row.qualitative) {
+          return Ingredient(
+            name: row.name.trim(),
+            amount: 0,
+            unit: row.resolvedQualitativePhrase(),
+            category: GroceryCategory.other,
+            qualitative: true,
+          );
+        }
         final unit = row.selectedUnit == 'custom'
             ? row.customUnitCtrl.text.trim()
             : row.selectedUnit;
@@ -1727,13 +2257,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     ).toList();
 
     final directions = _directionDrafts
-        .map((d) {
-          final text = d.textCtrl.text.trim();
-          final minutes = int.tryParse(d.timeCtrl.text.trim());
-          if (text.isEmpty) return '';
-          if (minutes == null) return text;
-          return '$text (~$minutes min)';
-        })
+        .map((d) => d.textCtrl.text.trim())
         .where((step) => step.isNotEmpty)
         .toList();
 
@@ -1751,6 +2275,16 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     });
 
     final initial = widget.initialRecipe;
+    final Nutrition recipeNutrition;
+    final String? recipeNutritionSource;
+    if (_nutritionError != null) {
+      recipeNutrition = initial?.nutrition ?? const Nutrition();
+      recipeNutritionSource = initial?.nutritionSource;
+    } else {
+      recipeNutrition = _estimatedNutrition;
+      recipeNutritionSource = _nutritionEstimateSource;
+    }
+
     final recipe = Recipe(
       id: initial?.id ?? '',
       title: formatRecipeTitleCase(_titleCtrl.text.trim()),
@@ -1763,7 +2297,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       ingredients: ingredients,
       instructions: directions,
       imageUrl: initial?.imageUrl,
-      nutrition: initial?.nutrition ?? const Nutrition(),
+      nutrition: recipeNutrition,
       isFavorite: _markFavorite,
       isToTry: _markToTry,
       visibility: _makePublic
@@ -1775,8 +2309,395 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       userId: initial?.userId,
       householdId: initial?.householdId,
       apiId: initial?.apiId,
+      nutritionSource: recipeNutritionSource,
     );
     _closeWizard(recipe);
+  }
+
+  Widget _buildNutritionStepPage() {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final servings = (_parseIntOrNull(_servingsCtrl.text) ?? 2).clamp(1, 999999);
+    final n = _estimatedNutrition;
+    final showPerServing = _nutritionShowPerServing && servings > 0;
+    final shownNutrition = showPerServing
+        ? Nutrition(
+            calories: (n.calories / servings).round(),
+            protein: n.protein / servings,
+            fat: n.fat / servings,
+            carbs: n.carbs / servings,
+            fiber: n.fiber / servings,
+            sugar: n.sugar / servings,
+          )
+        : n;
+
+    Widget tile({
+      required IconData icon,
+      required String label,
+      required String value,
+    }) {
+      return Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label)),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+    }
+
+    final hasTotals = n.calories > 0 ||
+        n.protein > 0 ||
+        n.fat > 0 ||
+        n.carbs > 0 ||
+        n.fiber > 0 ||
+        n.sugar > 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            child: SectionCard(
+              title: 'Nutrition estimate',
+              subtitle:
+                  'Approximate totals for the full recipe (all servings). Not medical advice.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+            if (_nutritionLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_nutritionError != null) ...[
+              Text(
+                _nutritionError!,
+                style: textTheme.bodyMedium?.copyWith(color: scheme.error),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () {
+                    setState(() => _loadedNutritionFingerprint = null);
+                    unawaited(_syncNutritionEstimate());
+                  },
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  label: const Text('Try again'),
+                ),
+              ),
+            ] else if (!hasTotals) ...[
+              if (!Env.hasFdc && !Env.hasGemini)
+                Text(
+                  'Configure USDA FDC or Gemini API keys in your environment to estimate nutrition.',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                )
+              else ...[
+                Text(
+                  'No nutrition totals were returned. You can retry or continue; values may stay at zero.',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      setState(() => _loadedNutritionFingerprint = null);
+                      unawaited(_syncNutritionEstimate());
+                    },
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    label: const Text('Retry'),
+                  ),
+                ),
+              ],
+            ] else ...[
+              const SizedBox(height: 4),
+              Text(
+                'Nutritional values',
+                style: textTheme.labelLarge,
+              ),
+              const SizedBox(height: 8),
+              ToggleButtons(
+                isSelected: [!showPerServing, showPerServing],
+                onPressed: (index) {
+                  setState(() {
+                    _nutritionShowPerServing = index == 1;
+                  });
+                },
+                borderRadius: BorderRadius.circular(10),
+                constraints: const BoxConstraints(minHeight: 36, minWidth: 118),
+                children: const [
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text('Total'),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text('Per Serving'),
+                  ),
+                ],
+              ),
+              if (servings <= 1) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Serving size is 1, so total and per serving are the same.',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              tile(
+                icon: Icons.local_fire_department_rounded,
+                label: showPerServing
+                    ? 'Calories (per serving)'
+                    : 'Calories (total)',
+                value: '${shownNutrition.calories}',
+              ),
+              const SizedBox(height: 8),
+              tile(
+                icon: Icons.fitness_center_rounded,
+                label: 'Protein',
+                value: '${shownNutrition.protein.toStringAsFixed(1)} g',
+              ),
+              const SizedBox(height: 8),
+              tile(
+                icon: Icons.opacity_rounded,
+                label: 'Fat',
+                value: '${shownNutrition.fat.toStringAsFixed(1)} g',
+              ),
+              const SizedBox(height: 8),
+              tile(
+                icon: Icons.grain_rounded,
+                label: 'Carbs',
+                value: '${shownNutrition.carbs.toStringAsFixed(1)} g',
+              ),
+              const SizedBox(height: 8),
+              tile(
+                icon: Icons.grass_rounded,
+                label: 'Fiber',
+                value: '${shownNutrition.fiber.toStringAsFixed(1)} g',
+              ),
+              const SizedBox(height: 8),
+              tile(
+                icon: Icons.cake_rounded,
+                label: 'Sugar',
+                value: '${shownNutrition.sugar.toStringAsFixed(1)} g',
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _nutritionLoading
+                      ? null
+                      : () {
+                          setState(() => _loadedNutritionFingerprint = null);
+                          unawaited(_syncNutritionEstimate());
+                        },
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  label: const Text('Recalculate'),
+                ),
+              ),
+            ],
+            if (_kShowNutritionIngredientBreakdown &&
+                !_nutritionLoading &&
+                _nutritionError == null &&
+                _nutritionBreakdown.isNotEmpty)
+              _buildNutritionBreakdownSection(scheme, textTheme),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _breakdownSourceLabel(String tag) {
+    return switch (tag) {
+      'usda_cache' => 'USDA (cached per 100g)',
+      'usda_live' => 'USDA (live lookup)',
+      'gemini_estimated' => 'Gemini (batch total split evenly across lines)',
+      'gemini_full_recipe' => 'Gemini (full recipe)',
+      'gemini_failed' => 'Gemini failed (0 allocated)',
+      _ => tag,
+    };
+  }
+
+  /// Shown only when [_kShowNutritionIngredientBreakdown] is true.
+  Widget _buildNutritionBreakdownSection(
+    ColorScheme scheme,
+    TextTheme textTheme,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Per-ingredient breakdown (testing)',
+            style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'USDA rows are per line. Gemini batch rows share one API total, split evenly for display.',
+            style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          ..._nutritionBreakdown.map(
+            (row) => Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: scheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      row.label,
+                      maxLines: 6,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _breakdownSourceLabel(row.sourceTag),
+                      style: textTheme.labelSmall?.copyWith(
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${row.nutrition.calories} cal · '
+                      'P ${row.nutrition.protein.toStringAsFixed(1)} · '
+                      'F ${row.nutrition.fat.toStringAsFixed(1)} · '
+                      'C ${row.nutrition.carbs.toStringAsFixed(1)} g · '
+                      'fiber ${row.nutrition.fiber.toStringAsFixed(1)} · '
+                      'sugar ${row.nutrition.sugar.toStringAsFixed(1)}',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Ingredients step: scrollable list with "Add ingredient" pinned below (always visible).
+  Widget _buildIngredientStepPage() {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            child: SectionCard(
+              title: 'Add ingredients',
+              subtitle:
+                  'Drag to reorder. Use To taste for seasonings and small amounts.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_ingredients.isEmpty)
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'No ingredients yet. Tap Add ingredient to start.',
+                      ),
+                    ),
+                  if (_ingredients.isNotEmpty)
+                    ReorderableListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      buildDefaultDragHandles: false,
+                      itemCount: _ingredients.length,
+                      onReorder: _onReorderIngredients,
+                      itemBuilder: (context, i) {
+                        final row = _ingredients[i];
+                        return KeyedSubtree(
+                          key: ValueKey(row.reorderId),
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ReorderableDragStartListener(
+                                  index: i,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 10,
+                                      right: 4,
+                                    ),
+                                    child: Icon(
+                                      Icons.drag_handle,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _selectedIngredientIndex == i
+                                      ? _buildExpandedIngredientRow(
+                                          context,
+                                          i,
+                                          row,
+                                        )
+                                      : _buildCondensedIngredientRow(
+                                          context,
+                                          i,
+                                          row,
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: AppSpacing.xs),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed:
+                  _canAddAnotherIngredient ? _addBlankIngredient : null,
+              icon: const Icon(
+                Icons.add_circle_outline_rounded,
+                size: 20,
+              ),
+              label: const Text('Add ingredient'),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -1788,7 +2709,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       1 => 'Step 2: Serving + labels',
       2 => 'Step 3: Ingredients',
       3 => 'Step 4: Directions',
-      _ => 'Step 5: Final touches',
+      4 => 'Step 5: Nutrition',
+      _ => 'Step 6: Final touches',
     };
 
     return WillPopScope(
@@ -1851,17 +2773,17 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                               borderRadius: BorderRadius.circular(8),
                               child: LinearProgressIndicator(
                                 minHeight: 8,
-                                value: (_step + 1) / 5,
+                                value: (_step + 1) / 6,
                               ),
                             ),
                             const SizedBox(height: 10),
                             Row(
                               children: List.generate(
-                                5,
+                                6,
                                 (index) => Expanded(
                                   child: Container(
                                     margin: EdgeInsets.only(
-                                        right: index == 4 ? 0 : 6),
+                                        right: index == 5 ? 0 : 6),
                                     height: 6,
                                     decoration: BoxDecoration(
                                       color: index <= _step
@@ -2062,202 +2984,33 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                                 ],
                               ),
                             ),
-                            _StepCard(
-                              title: 'Add ingredients',
-                              subtitle:
-                                  'Type each ingredient name, amount, and unit. Add more rows as needed.',
-                              child: Column(
-                                children: [
-                                  if (_ingredients.isEmpty) ...[
-                                    const Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                          'No ingredients yet. Tap Add ingredient to start.'),
-                                    ),
-                                    const SizedBox(height: AppSpacing.sm),
-                                    Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: OutlinedButton.icon(
-                                        onPressed: _canAddAnotherIngredient
-                                            ? _addBlankIngredient
-                                            : null,
-                                        icon: const Icon(
-                                            Icons.add_circle_outline_rounded),
-                                        label: const Text('Add ingredient'),
-                                      ),
-                                    ),
-                                  ],
-                                  if (_ingredients.isNotEmpty) ...[
-                                    for (var i = 0;
-                                        i < _ingredients.length;
-                                        i++)
-                                      if (_selectedIngredientIndex == i)
-                                        _buildExpandedIngredientRow(
-                                          context,
-                                          i,
-                                          _ingredients[i],
-                                        )
-                                      else
-                                        _buildCondensedIngredientRow(
-                                          context,
-                                          i,
-                                          _ingredients[i],
-                                        ),
-                                    const SizedBox(height: AppSpacing.xs),
-                                    Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: OutlinedButton.icon(
-                                        onPressed: _canAddAnotherIngredient
-                                            ? _addBlankIngredient
-                                            : null,
-                                        icon: const Icon(
-                                            Icons.add_circle_outline_rounded,
-                                            size: 20),
-                                        label: const Text('Add ingredient'),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
+                            _buildIngredientStepPage(),
                             _StepCard(
                               title: 'Directions',
                               child: Column(
                                 children: [
-                                  ..._directionDrafts
-                                      .asMap()
-                                      .entries
-                                      .map((entry) {
-                                    final idx = entry.key;
-                                    final draft = entry.value;
-                                    final stepSuggestions =
-                                        _suggestionsForStep(idx);
-                                    return Card(
-                                      margin: const EdgeInsets.only(bottom: 10),
-                                      color: const Color(0xFFF3FAFF),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(14),
-                                        side: BorderSide(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                              .withOpacity(0.15),
-                                        ),
+                                  for (var i = 0;
+                                      i < _directionDrafts.length;
+                                      i++)
+                                    if (_selectedDirectionIndex == i)
+                                      _buildExpandedDirectionRow(
+                                        context,
+                                        i,
+                                        _directionDrafts[i],
+                                      )
+                                    else
+                                      _buildCondensedDirectionRow(
+                                        context,
+                                        i,
+                                        _directionDrafts[i],
                                       ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(10),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 6),
-                                              decoration: BoxDecoration(
-                                                color: const Color(0xFFDDEFFF),
-                                                borderRadius:
-                                                    BorderRadius.circular(20),
-                                              ),
-                                              child: Text(
-                                                'Step ${idx + 1}',
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .labelLarge
-                                                    ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.w700),
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            TextField(
-                                              controller: draft.textCtrl,
-                                              maxLines: 3,
-                                              textCapitalization:
-                                                  TextCapitalization.sentences,
-                                              decoration: const InputDecoration(
-                                                labelText: 'Instruction',
-                                                hintText:
-                                                    'Describe what to do for this step',
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: TextField(
-                                                    controller: draft.timeCtrl,
-                                                    keyboardType:
-                                                        TextInputType.number,
-                                                    decoration:
-                                                        const InputDecoration(
-                                                      labelText:
-                                                          'Estimated time (min)',
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Wrap(
-                                                  spacing: 6,
-                                                  children: [5, 10, 15]
-                                                      .map(
-                                                        (mins) => ActionChip(
-                                                          label:
-                                                              Text('${mins}m'),
-                                                          onPressed: () =>
-                                                              _applyQuickTime(
-                                                                  idx, mins),
-                                                        ),
-                                                      )
-                                                      .toList(),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Wrap(
-                                              spacing: 8,
-                                              runSpacing: 8,
-                                              children: stepSuggestions
-                                                  .map(
-                                                    (suggestion) => ActionChip(
-                                                      label: Text(suggestion),
-                                                      onPressed: () =>
-                                                          _applySuggestionToStep(
-                                                              idx, suggestion),
-                                                    ),
-                                                  )
-                                                  .toList(),
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Row(
-                                              children: [
-                                                const Spacer(),
-                                                if (_directionDrafts.length > 1)
-                                                  IconButton(
-                                                    onPressed: () =>
-                                                        setState(() {
-                                                      final removed =
-                                                          _directionDrafts
-                                                              .removeAt(idx);
-                                                      removed.dispose();
-                                                    }),
-                                                    icon: const Icon(Icons
-                                                        .remove_circle_outline),
-                                                  ),
-                                              ],
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  }),
+                                  const SizedBox(height: AppSpacing.xs),
                                   Align(
                                     alignment: Alignment.centerLeft,
                                     child: TextButton.icon(
-                                      onPressed: () => setState(() =>
-                                          _directionDrafts
-                                              .add(_DirectionDraft())),
+                                      onPressed: _canAddAnotherDirection
+                                          ? _addDirectionStep
+                                          : null,
                                       icon: const Icon(Icons.add),
                                       label: const Text('Add step'),
                                     ),
@@ -2265,6 +3018,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                                 ],
                               ),
                             ),
+                            _buildNutritionStepPage(),
                             _StepCard(
                               title: 'Final touches',
                               child: Column(
@@ -2384,10 +3138,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                           Expanded(
                             child: FilledButton.icon(
                               onPressed: _isSubmitting ? null : _nextStep,
-                              icon: Icon(_step == 4
+                              icon: Icon(_step == 5
                                   ? Icons.check_rounded
                                   : Icons.arrow_forward_rounded),
-                              label: Text(_step == 4
+                              label: Text(_step == 5
                                   ? (_isSubmitting
                                       ? 'Saving...'
                                       : 'Save Recipe')

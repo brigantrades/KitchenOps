@@ -104,10 +104,11 @@ class DiscoverRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
   Future<void> _ensureProfileRow(String userId) async {
-    await _client.from('profiles').upsert({
-      'id': userId,
-      'name': 'Leckerly User',
-    });
+    try {
+      await _client.from('profiles').insert({'id': userId});
+    } on PostgrestException catch (error) {
+      if (error.code != '23505') rethrow;
+    }
   }
 
   Future<List<Recipe>> generateWeekly(Profile profile) async {

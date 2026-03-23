@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -290,15 +291,13 @@ class MealReminderNotificationService {
     return slot.reminderAt!.isAfter(DateTime.now().toUtc());
   }
 
-  String _titleFor(MealPlanSlot slot, String weekdayLabel) {
-    final meal = _mealLabel(slot.mealLabel);
+  String _titleFor(
+    MealPlanSlot slot,
+    String weekdayLabel,
+    List<MealPlanSlot> allSlots,
+  ) {
+    final meal = plannerSlotDisplayLabelForWeek(allSlots, slot);
     return '$weekdayLabel · $meal';
-  }
-
-  String _mealLabel(String raw) {
-    if (raw.isEmpty) return 'Meal';
-    final lower = raw.toLowerCase();
-    return lower[0].toUpperCase() + lower.substring(1);
   }
 
   Future<void> syncFromSlots(List<MealPlanSlot> slots) async {
@@ -349,7 +348,7 @@ class MealReminderNotificationService {
         whenUtc.millisecondsSinceEpoch,
       );
       final weekdayLabel = _weekdayFromSlot(slot);
-      final title = _titleFor(slot, weekdayLabel);
+      final title = _titleFor(slot, weekdayLabel, slots);
       final body = slot.reminderMessage!.trim();
 
       try {

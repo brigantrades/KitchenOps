@@ -10,12 +10,13 @@ import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:plateplan/features/grocery/presentation/grocery_item_suggestions_grid.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-const double _groceryCardGridSpacing = 8;
-const double _groceryCardAspectRatio = 1.15;
+const double _groceryCardGridSpacing = kGroceryCardGridSpacing;
+const double _groceryCardAspectRatio = kGroceryCardAspectRatio;
 
 class GroceryScreen extends ConsumerStatefulWidget {
   const GroceryScreen({super.key});
@@ -38,7 +39,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   Future<void> _removeItem(GroceryItem item) async {
     await ref.read(groceryRecentsProvider.notifier).recordRemovedItem(item);
     await ref.read(groceryRepositoryProvider).removeItem(item.id);
-    ref.invalidate(groceryItemsProvider);
+    invalidateActiveGroceryStreams(ref);
   }
 
   Future<void> _addFromRecent(
@@ -72,9 +73,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         userId: user.id,
         listId: ref.read(selectedListIdProvider),
         name: entry.name,
-        quantity: entry.quantity?.trim().isNotEmpty == true
-            ? entry.quantity
-            : '1',
+        quantity:
+            entry.quantity?.trim().isNotEmpty == true ? entry.quantity : '1',
         unit: entry.unit,
         category: entry.category,
       );
@@ -113,7 +113,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     if (!mounted) {
       return;
     }
-    ref.invalidate(groceryItemsProvider);
+    invalidateActiveGroceryStreams(ref);
     ref.invalidate(groceryRecentsProvider);
   }
 
@@ -225,7 +225,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     setState(() {
       _addSheetOpen = false;
     });
-    ref.invalidate(groceryItemsProvider);
+    invalidateActiveGroceryStreams(ref);
     ref.invalidate(groceryRecentsProvider);
   }
 
@@ -273,7 +273,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           user.id,
           listId: ref.read(selectedListIdProvider),
         );
-    ref.invalidate(groceryItemsProvider);
+    invalidateActiveGroceryStreams(ref);
   }
 
   Future<void> _openReorderListSheet({
@@ -310,8 +310,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                   const SizedBox(height: 4),
                   Text(
                     working.length > 1
-                        ? 'Drag the grip to reorder. The top list opens first. Use the trash icon to delete a list.'
-                        : 'Use the trash icon to delete this list.',
+                        ? 'Drag the grip to reorder. The top list opens first. Use the pencil to rename or the trash icon to delete a list.'
+                        : 'Use the pencil to rename or the trash icon to delete this list.',
                     style: Theme.of(ctx).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 12),
@@ -381,29 +381,65 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                     ),
                                   ),
                             title: Text(list.name),
-                            trailing: IconButton(
-                              tooltip: 'Delete list',
-                              icon: Icon(
-                                Icons.delete_outline_rounded,
-                                color: scheme.error,
-                              ),
-                              onPressed: () async {
-                                final deleted = await _confirmDeleteList(
-                                  list,
-                                  anchorContext: ctx,
-                                );
-                                if (!deleted || !mounted) return;
-                                setModalState(() {
-                                  working.removeWhere((e) => e.id == list.id);
-                                  liveOrder = liveOrder.withIdsFor(
-                                    scope,
-                                    working.map((e) => e.id).toList(),
-                                  );
-                                });
-                                if (working.isEmpty && sheetCtx.mounted) {
-                                  Navigator.of(sheetCtx).pop();
-                                }
-                              },
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Rename list',
+                                  icon: Icon(
+                                    Icons.edit_outlined,
+                                    color: scheme.primary,
+                                  ),
+                                  onPressed: () async {
+                                    final newName = await _promptRenameList(
+                                      list,
+                                      anchorContext: ctx,
+                                    );
+                                    if (newName == null || !mounted) return;
+                                    setModalState(() {
+                                      final i = working
+                                          .indexWhere((e) => e.id == list.id);
+                                      if (i >= 0) {
+                                        final old = working[i];
+                                        working[i] = AppList(
+                                          id: old.id,
+                                          name: newName,
+                                          kind: old.kind,
+                                          scope: old.scope,
+                                          householdId: old.householdId,
+                                          ownerUserId: old.ownerUserId,
+                                          createdAt: old.createdAt,
+                                        );
+                                      }
+                                    });
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'Delete list',
+                                  icon: Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: scheme.error,
+                                  ),
+                                  onPressed: () async {
+                                    final deleted = await _confirmDeleteList(
+                                      list,
+                                      anchorContext: ctx,
+                                    );
+                                    if (!deleted || !mounted) return;
+                                    setModalState(() {
+                                      working
+                                          .removeWhere((e) => e.id == list.id);
+                                      liveOrder = liveOrder.withIdsFor(
+                                        scope,
+                                        working.map((e) => e.id).toList(),
+                                      );
+                                    });
+                                    if (working.isEmpty && sheetCtx.mounted) {
+                                      Navigator.of(sheetCtx).pop();
+                                    }
+                                  },
+                                ),
+                              ],
                             ),
                           ),
                         );
@@ -465,13 +501,12 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                   onPressed: () async {
                     if (nameCtrl.text.trim().isEmpty) return;
                     try {
-                      final createdList = await ref
-                          .read(groceryRepositoryProvider)
-                          .createList(
-                            userId: user.id,
-                            name: nameCtrl.text.trim(),
-                            scope: scope,
-                          );
+                      final createdList =
+                          await ref.read(groceryRepositoryProvider).createList(
+                                userId: user.id,
+                                name: nameCtrl.text.trim(),
+                                scope: scope,
+                              );
                       if (!ctx.mounted) return;
                       Navigator.of(ctx).pop(
                         (id: createdList.id, scope: scope),
@@ -564,7 +599,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       }
       ref.invalidate(listsProvider);
       ref.invalidate(profileProvider);
-      ref.invalidate(groceryItemsProvider);
+      invalidateActiveGroceryStreams(ref);
       if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Deleted "${list.name}"')),
@@ -589,6 +624,26 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       );
       return false;
     }
+  }
+
+  /// Returns the new name if the list was renamed on the server.
+  Future<String?> _promptRenameList(
+    AppList list, {
+    BuildContext? anchorContext,
+  }) async {
+    final sheetContext = anchorContext ?? context;
+    final newName = await showModalBottomSheet<String?>(
+      context: sheetContext,
+      showDragHandle: true,
+      builder: (ctx) => _RenameListSheet(list: list),
+    );
+    if (newName == null || !mounted) return null;
+    ref.invalidate(listsProvider);
+    invalidateActiveGroceryStreams(ref);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Renamed to "$newName"')),
+    );
+    return newName;
   }
 
   Future<void> _promptUpdateQuantity(GroceryItem item) async {
@@ -691,7 +746,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       await ref
           .read(groceryRepositoryProvider)
           .updateItemQuantity(item.id, nextQuantity);
-      ref.invalidate(groceryItemsProvider);
+      invalidateActiveGroceryStreams(ref);
       if (!mounted) {
         return;
       }
@@ -736,8 +791,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 if (sid != null && sid.isNotEmpty) {
                   items = await ref.read(groceryListItemsFamily(sid).future);
                 } else {
-                  items =
-                      await ref.read(groceryItemsDefaultListStreamProvider.future);
+                  items = await ref
+                      .read(groceryItemsDefaultListStreamProvider.future);
                 }
               }
               await ref.read(groceryRepositoryProvider).shareText(items);
@@ -768,15 +823,13 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           }
 
           final lists = listsAsync.valueOrNull ?? [];
-          final selectedScope = lists
-              .firstWhereOrNull((l) => l.id == selectedListId)
-              ?.scope;
-          final householdNewBadges = selectedScope == ListScope.household &&
-              currentUser != null;
+          final selectedScope =
+              lists.firstWhereOrNull((l) => l.id == selectedListId)?.scope;
+          final householdNewBadges =
+              selectedScope == ListScope.household && currentUser != null;
           final viewerId = currentUser?.id;
           final items = itemsAsync.valueOrNull;
-          final itemsAreaLoading =
-              itemsAsync.isLoading && !itemsAsync.hasValue;
+          final itemsAreaLoading = itemsAsync.isLoading && !itemsAsync.hasValue;
           final recentsAll = ref.watch(groceryRecentsProvider);
           final filteredRecents = () {
             if (itemsAreaLoading || items == null) {
@@ -832,8 +885,9 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                       : (effectiveScopeIndex == 0
                           ? ListScope.household
                           : ListScope.private);
-                  final listOrder = profileAsync.valueOrNull?.groceryListOrder ??
-                      GroceryListOrder.empty;
+                  final listOrder =
+                      profileAsync.valueOrNull?.groceryListOrder ??
+                          GroceryListOrder.empty;
                   final orderedFilteredLists =
                       applyGroceryListOrder(lists, scopeFilter, listOrder);
 
@@ -849,7 +903,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                   }
 
                   final dropdownValue = selectedListId != null &&
-                          orderedFilteredLists.any((l) => l.id == selectedListId)
+                          orderedFilteredLists
+                              .any((l) => l.id == selectedListId)
                       ? selectedListId
                       : orderedFilteredLists.firstOrNull?.id;
 
@@ -875,9 +930,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                 .any((l) => l.id == selectedListId);
                             if (!currentStillVisible &&
                                 newScopeLists.isNotEmpty) {
-                              ref
-                                  .read(selectedListIdProvider.notifier)
-                                  .state = newScopeLists.first.id;
+                              ref.read(selectedListIdProvider.notifier).state =
+                                  newScopeLists.first.id;
                             }
                           },
                         ),
@@ -890,9 +944,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                             child: orderedFilteredLists.isEmpty
                                 ? Text(
                                     'No lists yet',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium,
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
                                   )
                                 : InputDecorator(
                                     decoration: const InputDecoration(
@@ -930,7 +983,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                   ),
                           ),
                           IconButton(
-                            tooltip: 'Reorder or delete lists',
+                            tooltip: 'Reorder, rename, or delete lists',
                             onPressed: orderedFilteredLists.isEmpty
                                 ? null
                                 : () => _openReorderListSheet(
@@ -941,8 +994,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                           ),
                           IconButton(
                             tooltip: 'New list',
-                            onPressed: () =>
-                                _openCreateListSheet(scopeFilter),
+                            onPressed: () => _openCreateListSheet(scopeFilter),
                             icon: const Icon(Icons.add_circle_outline_rounded),
                           ),
                         ],
@@ -1061,7 +1113,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                           final entry = filteredRecents[index];
                           return _RecentGroceryEntryCard(
                             entry: entry,
-                            onTap: () => _addFromRecent(entry, items ?? const []),
+                            onTap: () =>
+                                _addFromRecent(entry, items ?? const []),
                           );
                         },
                       );
@@ -1072,6 +1125,108 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Owns the [TextEditingController] so it is disposed only after the modal route
+/// has unmounted (avoids TextEditingController dispose while TextField still depends on it).
+class _RenameListSheet extends ConsumerStatefulWidget {
+  const _RenameListSheet({required this.list});
+
+  final AppList list;
+
+  @override
+  ConsumerState<_RenameListSheet> createState() => _RenameListSheetState();
+}
+
+class _RenameListSheetState extends ConsumerState<_RenameListSheet> {
+  late final TextEditingController _nameCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.list.name);
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BrandedSheetScaffold(
+      title: 'Rename list',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _nameCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'List name',
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () async {
+                final trimmed = _nameCtrl.text.trim();
+                if (trimmed.isEmpty) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please enter a list name.'),
+                      ),
+                    );
+                  }
+                  return;
+                }
+                try {
+                  await ref.read(groceryRepositoryProvider).renameList(
+                        listId: widget.list.id,
+                        name: trimmed,
+                      );
+                  if (context.mounted) Navigator.of(context).pop(trimmed);
+                } on StateError catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please enter a list name.'),
+                      ),
+                    );
+                  }
+                } on PostgrestException catch (e) {
+                  if (!context.mounted) return;
+                  final msg = e.message.toLowerCase();
+                  final friendly = msg.contains('row-level security') ||
+                          msg.contains('violates row-level') ||
+                          msg.contains('permission denied')
+                      ? 'You don\'t have permission to rename this list.'
+                      : 'Could not rename list. Try again.';
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(friendly)),
+                  );
+                } catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Could not rename list. Try again.'),
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1105,7 +1260,6 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
   late final TextEditingController _qtyCtrl;
   late final FocusNode _searchFocusNode;
   Timer? _searchDebounce;
-  String _debouncedQuery = '';
 
   @override
   void initState() {
@@ -1113,7 +1267,6 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
     _nameCtrl = TextEditingController();
     _qtyCtrl = TextEditingController(text: '1');
     _searchFocusNode = FocusNode(debugLabel: 'grocery_search');
-    _nameCtrl.addListener(_onNameChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _searchFocusNode.requestFocus();
@@ -1125,20 +1278,9 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
     });
   }
 
-  void _onNameChanged() {
-    _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 140), () {
-      if (!mounted) return;
-      setState(() {
-        _debouncedQuery = _nameCtrl.text;
-      });
-    });
-  }
-
   @override
   void dispose() {
     _searchDebounce?.cancel();
-    _nameCtrl.removeListener(_onNameChanged);
     _searchFocusNode.dispose();
     _nameCtrl.dispose();
     _qtyCtrl.dispose();
@@ -1147,28 +1289,6 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final queryForSuggestions =
-        _debouncedQuery.trim().length < 2 ? '' : _debouncedQuery;
-    final suggestions = widget.repo.suggestItems(
-      query: queryForSuggestions,
-      recentItems: widget.currentItems,
-      limit: 12,
-    );
-    final existingNames = widget.currentItems
-        .map((item) => normalizeGroceryItemName(item.name))
-        .where((name) => name.isNotEmpty)
-        .toSet();
-    final typedQuery = _nameCtrl.text.trim();
-    final normalizedTypedQuery = normalizeGroceryItemName(typedQuery);
-    final hasExactSuggestion = suggestions.any(
-      (entry) => normalizeGroceryItemName(entry) == normalizedTypedQuery,
-    );
-    final hasExactExisting = existingNames.contains(normalizedTypedQuery);
-    final suggestionOptions = <({String label, bool isCreate})>[
-      if (typedQuery.isNotEmpty && !hasExactSuggestion && !hasExactExisting)
-        (label: typedQuery, isCreate: true),
-      ...suggestions.map((entry) => (label: entry, isCreate: false)),
-    ].take(12).toList();
     final media = MediaQuery.of(context);
     final maxSheetHeight = media.size.height * 0.82;
     return SafeArea(
@@ -1221,153 +1341,25 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      if (suggestionOptions.isNotEmpty)
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 230),
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final crossAxisCount =
-                                  constraints.maxWidth < 360 ? 2 : 3;
-                              return GridView.builder(
-                                primary: false,
-                                shrinkWrap: true,
-                                itemCount: suggestionOptions.length,
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: crossAxisCount,
-                                  mainAxisSpacing: _groceryCardGridSpacing,
-                                  crossAxisSpacing: _groceryCardGridSpacing,
-                                  childAspectRatio: _groceryCardAspectRatio,
-                                ),
-                                itemBuilder: (context, index) {
-                                  final option = suggestionOptions[index];
-                                  final suggestion = option.label;
-                                  final isCreateOption = option.isCreate;
-                                  final suggestionCategory =
-                                      widget.repo.categorize(suggestion);
-                                  final isAlreadyInBasket =
-                                      existingNames.contains(
-                                    normalizeGroceryItemName(suggestion),
-                                  );
-                                  final suggestionAsset = foodIconAssetForName(
-                                    suggestion,
-                                    category: suggestionCategory,
-                                  );
-                                  return Material(
-                                    color: isAlreadyInBasket
-                                        ? const Color(0xFFE8F7EE)
-                                        : const Color(0xFFF0F7FF),
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(12),
-                                      onTap: () {
-                                        final existing = widget.currentItems
-                                            .firstWhereOrNull(
-                                          (item) =>
-                                              normalizeGroceryItemName(
-                                                      item.name) ==
-                                              normalizeGroceryItemName(
-                                                  suggestion),
-                                        );
-                                        if (existing != null) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Already in basket. Long-press it in your list to edit quantity.',
-                                              ),
-                                            ),
-                                          );
-                                          return;
-                                        }
-                                        FocusManager.instance.primaryFocus
-                                            ?.unfocus();
-                                        final quantity = _displayQuantity(
-                                          _safeQuantity(
-                                            _qtyCtrl.text,
-                                            fallback: 1,
-                                          ),
-                                        );
-                                        Navigator.of(context).pop(
-                                          _PendingGroceryItem(
-                                            name: suggestion,
-                                            quantity: quantity,
-                                          ),
-                                        );
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8),
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            if (isCreateOption)
-                                              const Icon(
-                                                Icons.add_circle_rounded,
-                                                size: 24,
-                                                color: Color(0xFF3B74A8),
-                                              )
-                                            else if (suggestionAsset != null)
-                                              Image.asset(
-                                                suggestionAsset,
-                                                width: 38,
-                                                height: 38,
-                                                filterQuality:
-                                                    FilterQuality.high,
-                                                errorBuilder: (context, error,
-                                                    stackTrace) {
-                                                  return Icon(
-                                                    _iconForName(
-                                                      suggestion,
-                                                      fallback:
-                                                          suggestionCategory
-                                                              .icon,
-                                                    ),
-                                                    size: 38,
-                                                    color: isAlreadyInBasket
-                                                        ? const Color(
-                                                            0xFF2F8B57)
-                                                        : const Color(
-                                                            0xFF3B74A8),
-                                                  );
-                                                },
-                                              )
-                                            else
-                                              Icon(
-                                                _iconForName(
-                                                  suggestion,
-                                                  fallback:
-                                                      suggestionCategory.icon,
-                                                ),
-                                                size: 38,
-                                                color: isAlreadyInBasket
-                                                    ? const Color(0xFF2F8B57)
-                                                    : const Color(0xFF3B74A8),
-                                              ),
-                                            const SizedBox(height: 6),
-                                            Text(
-                                              suggestion,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              textAlign: TextAlign.center,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: isAlreadyInBasket
-                                                    ? const Color(0xFF1D5E39)
-                                                    : null,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              );
-                            },
-                          ),
-                        ),
+                      GroceryItemSuggestionsGrid(
+                        repo: widget.repo,
+                        typedValue: _nameCtrl.text,
+                        recentItems: widget.currentItems,
+                        duplicateMessage:
+                            'Already in basket. Long-press it in your list to edit quantity.',
+                        onPick: (suggestion) {
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          final quantity = _displayQuantity(
+                            _safeQuantity(_qtyCtrl.text, fallback: 1),
+                          );
+                          Navigator.of(context).pop(
+                            _PendingGroceryItem(
+                              name: suggestion,
+                              quantity: quantity,
+                            ),
+                          );
+                        },
+                      ),
                       const SizedBox(height: 12),
                     ],
                   ),
@@ -1453,105 +1445,106 @@ class _GroceryItemCard extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                        Center(
-                          child: foodAsset != null
-                              ? Image.asset(
-                                  foodAsset,
-                                  width: iconSize,
-                                  height: iconSize,
-                                  filterQuality: FilterQuality.high,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Icon(
-                                      _iconForName(
-                                        item.name,
-                                        fallback: item.category.icon,
-                                      ),
-                                      color: item.category.tint,
-                                      size: iconSize,
-                                    );
-                                  },
-                                )
-                              : Icon(
-                                  _iconForName(
-                                    item.name,
-                                    fallback: item.category.icon,
+                          Center(
+                            child: foodAsset != null
+                                ? Image.asset(
+                                    foodAsset,
+                                    width: iconSize,
+                                    height: iconSize,
+                                    filterQuality: FilterQuality.high,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Icon(
+                                        _iconForName(
+                                          item.name,
+                                          fallback: item.category.icon,
+                                        ),
+                                        color: item.category.tint,
+                                        size: iconSize,
+                                      );
+                                    },
+                                  )
+                                : Icon(
+                                    _iconForName(
+                                      item.name,
+                                      fallback: item.category.icon,
+                                    ),
+                                    color: item.category.tint,
+                                    size: iconSize,
                                   ),
-                                  color: item.category.tint,
-                                  size: iconSize,
-                                ),
-                        ),
-                        SizedBox(height: ultraCompact ? 4 : (compact ? 6 : 8)),
-                        SizedBox(
-                          width: double.infinity,
-                          child: Text(
-                            item.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: scheme.onSurface,
-                              fontWeight: FontWeight.w600,
-                              fontSize: ultraCompact ? 12 : 12,
-                            ),
                           ),
-                        ),
-                        if (ultraCompact && hasMultipleQuantity) ...[
-                          const SizedBox(height: 2),
+                          SizedBox(
+                              height: ultraCompact ? 4 : (compact ? 6 : 8)),
                           SizedBox(
                             width: double.infinity,
                             child: Text(
-                              '(${_displayQuantity(quantityValue)})',
-                              maxLines: 1,
+                              item.name,
+                              maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                color:
-                                    scheme.onSurface.withValues(alpha: 0.78),
-                                fontSize: 11,
+                                color: scheme.onSurface,
                                 fontWeight: FontWeight.w600,
+                                fontSize: ultraCompact ? 12 : 12,
                               ),
                             ),
                           ),
-                        ],
-                        if (hasMultipleQuantity && !ultraCompact) ...[
-                          SizedBox(height: compact ? 2 : 4),
-                          Align(
-                            alignment: Alignment.center,
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: compact ? 7 : 8,
-                                vertical: compact ? 2 : 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: scheme.primaryContainer,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
+                          if (ultraCompact && hasMultipleQuantity) ...[
+                            const SizedBox(height: 2),
+                            SizedBox(
+                              width: double.infinity,
                               child: Text(
-                                quantityLabel,
+                                '(${_displayQuantity(quantityValue)})',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  color: scheme.onSurface,
-                                  fontSize: compact ? 10 : 12,
-                                  fontWeight: FontWeight.w500,
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.78),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ),
-                          ),
+                          ],
+                          if (hasMultipleQuantity && !ultraCompact) ...[
+                            SizedBox(height: compact ? 2 : 4),
+                            Align(
+                              alignment: Alignment.center,
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: compact ? 7 : 8,
+                                  vertical: compact ? 2 : 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: scheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  quantityLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: scheme.onSurface,
+                                    fontSize: compact ? 10 : 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (item.fromPlanner && !compact) ...[
+                            const SizedBox(height: 6),
+                            Icon(
+                              Icons.auto_awesome_rounded,
+                              size: 16,
+                              color: scheme.secondary,
+                            ),
+                          ],
                         ],
-                        if (item.fromPlanner && !compact) ...[
-                          const SizedBox(height: 6),
-                          Icon(
-                            Icons.auto_awesome_rounded,
-                            size: 16,
-                            color: scheme.secondary,
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
                 ),
                 if (showNewBadge)
                   Positioned(
@@ -1730,15 +1723,39 @@ class _RecentGroceryEntryCard extends StatelessWidget {
 
 IconData _iconForName(String name, {required IconData fallback}) {
   final lower = name.toLowerCase();
-  if (lower.contains('milk')) return Icons.local_drink_rounded;
+  if (lower.contains('milk') || lower.contains('cream')) {
+    return Icons.local_drink_rounded;
+  }
+  if (lower.contains('cheese')) return Icons.breakfast_dining_rounded;
+  if (lower.contains('granola') || lower.contains('cereal')) {
+    return Icons.breakfast_dining_rounded;
+  }
   if (lower.contains('banana')) return Icons.energy_savings_leaf_rounded;
-  if (lower.contains('strawberr')) return Icons.local_florist_rounded;
-  if (lower.contains('bread')) return Icons.bakery_dining_rounded;
+  if (lower.contains('blueberr') ||
+      lower.contains('strawberr') ||
+      lower.contains('blackberr') ||
+      lower.contains('raspberr')) {
+    return Icons.local_florist_rounded;
+  }
+  if (lower.contains('grape')) return Icons.local_florist_rounded;
+  if (lower.contains('bread') || lower.contains('bagel')) {
+    return Icons.bakery_dining_rounded;
+  }
   if (lower.contains('jam')) return Icons.breakfast_dining_rounded;
   if (lower.contains('juice')) return Icons.local_bar_rounded;
   if (lower.contains('potato')) return Icons.circle_rounded;
   if (lower.contains('carrot')) return Icons.grass_rounded;
   if (lower.contains('apple')) return Icons.apple_rounded;
+  if (lower.contains('orange')) return Icons.local_florist_rounded;
+  if (lower.contains('mushroom')) return Icons.grass_rounded;
+  if (lower.contains('broccoli')) return Icons.spa_rounded;
+  if (lower.contains('bacon') || lower.contains('sausage')) {
+    return Icons.set_meal_rounded;
+  }
+  if (lower.contains('shrimp')) return Icons.set_meal_rounded;
+  if (lower.contains('tortilla') || lower.contains('salsa')) {
+    return Icons.restaurant_rounded;
+  }
   if (lower.contains('egg')) return Icons.egg_alt_rounded;
   return fallback;
 }

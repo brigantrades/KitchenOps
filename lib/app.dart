@@ -9,7 +9,10 @@ import 'package:plateplan/core/services/meal_reminder_notification_service.dart'
 import 'package:plateplan/core/services/push_notification_service.dart';
 import 'package:plateplan/core/theme/app_theme.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
+import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
 final pushNotificationServiceProvider =
     Provider<PushNotificationService>((ref) => PushNotificationService());
@@ -44,18 +47,24 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
     } else if (state == AppLifecycleState.resumed && _wasBackgrounded) {
       _wasBackgrounded = false;
       _resetPlannerIfViewingOtherWeek();
+      invalidateActiveGroceryStreams(ref);
+      ref.invalidate(recipesProvider);
     }
   }
 
   void _resetPlannerIfViewingOtherWeek() {
     final now = DateTime.now();
-    final currentWeekStart = weekStartMondayForDate(now);
+    final pref = ref.read(effectivePlannerWindowProvider);
+    final anchor = anchorDateForWindowContaining(now, pref);
     final viewed = ref.read(weekStartProvider);
-    final viewedStart = weekStartMondayForDate(viewed);
-    if (viewedStart != currentWeekStart) {
-      ref.read(weekStartProvider.notifier).state = currentWeekStart;
-      final day = now.weekday - DateTime.monday;
-      ref.read(selectedPlannerDayProvider.notifier).state = day.clamp(0, 6);
+    if (plannerDateOnly(viewed) != plannerDateOnly(anchor)) {
+      ref.read(weekStartProvider.notifier).state = anchor;
+      final dates = calendarDatesForPlannerWindow(anchor, pref);
+      final today = plannerDateOnly(now);
+      var idx = dates.indexWhere((d) => plannerDateOnly(d) == today);
+      if (idx < 0) idx = 0;
+      ref.read(selectedPlannerDayProvider.notifier).state =
+          idx.clamp(0, pref.dayCount - 1);
     }
   }
 

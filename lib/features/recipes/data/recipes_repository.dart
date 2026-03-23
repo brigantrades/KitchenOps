@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/network/http_client.dart';
 import 'package:plateplan/core/services/api_services.dart';
+import 'package:plateplan/core/services/food_data_central_service.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/recipes/data/ingredient_nutrition_cache_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class RecipesRepository {
@@ -16,10 +19,11 @@ class RecipesRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
   Future<void> _ensureProfileRow(String userId) async {
-    await _client.from('profiles').upsert({
-      'id': userId,
-      'name': 'Leckerly User',
-    });
+    try {
+      await _client.from('profiles').insert({'id': userId});
+    } on PostgrestException catch (error) {
+      if (error.code != '23505') rethrow;
+    }
   }
 
   Future<String?> _householdForUser(String userId) async {
@@ -82,6 +86,75 @@ class RecipesRepository {
       final cached = _cache.loadRecipes();
       return cached.map(Recipe.fromJson).toList();
     }
+  }
+
+  /// Live updates via Realtime; refetches merged personal + household list on
+  /// each change. No column filter on the subscription (same pattern as
+  /// [GroceryRepository.streamItemsForList]); RLS scopes which events apply.
+  Stream<List<Recipe>> streamRecipesForUser(String userId) {
+    return Stream<List<Recipe>>.multi((multi) {
+      RealtimeChannel? channel;
+      Timer? debounce;
+      final topic =
+          'public:recipes:nofilter=$userId:${DateTime.now().microsecondsSinceEpoch}';
+
+      Future<void> pushFresh() async {
+        if (multi.isClosed) return;
+        final items = await listForUser(userId);
+        if (!multi.isClosed) {
+          multi.add(items);
+        }
+      }
+
+      void scheduleRefetch() {
+        debounce?.cancel();
+        debounce = Timer(const Duration(milliseconds: 350), () {
+          unawaited(pushFresh());
+        });
+      }
+
+      var sawSubscribedOnce = false;
+
+      Future<void> setup() async {
+        await pushFresh();
+        if (multi.isClosed) return;
+        channel = _client.channel(topic);
+        void onChange(PostgresChangePayload _) {
+          scheduleRefetch();
+        }
+
+        channel!
+            .onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'recipes',
+              callback: onChange,
+            )
+            .subscribe((RealtimeSubscribeStatus status, Object? error) {
+          switch (status) {
+            case RealtimeSubscribeStatus.subscribed:
+              if (sawSubscribedOnce) {
+                unawaited(pushFresh());
+              }
+              sawSubscribedOnce = true;
+              break;
+            case RealtimeSubscribeStatus.timedOut:
+            case RealtimeSubscribeStatus.channelError:
+              unawaited(pushFresh());
+              break;
+            case RealtimeSubscribeStatus.closed:
+              break;
+          }
+        });
+      }
+
+      unawaited(setup());
+
+      multi.onCancel = () {
+        debounce?.cancel();
+        unawaited(channel?.unsubscribe());
+      };
+    });
   }
 
   /// Inserts a recipe row and returns the new row id.
@@ -249,13 +322,22 @@ final spoonacularServiceProvider = Provider<SpoonacularService>((ref) {
   return SpoonacularService(const HttpClient());
 });
 
+final foodDataCentralServiceProvider = Provider<FoodDataCentralService>((ref) {
+  return FoodDataCentralService(const HttpClient());
+});
+
+final ingredientNutritionCacheRepositoryProvider =
+    Provider<IngredientNutritionCacheRepository>((ref) {
+  return IngredientNutritionCacheRepository();
+});
+
 final recipesRepositoryProvider = Provider<RecipesRepository>((ref) {
   return RecipesRepository(
       ref.watch(localCacheProvider), ref.watch(spoonacularServiceProvider));
 });
 
-final recipesProvider = FutureProvider<List<Recipe>>((ref) async {
+final recipesProvider = StreamProvider<List<Recipe>>((ref) {
   final user = ref.watch(currentUserProvider);
-  if (user == null) return [];
-  return ref.watch(recipesRepositoryProvider).listForUser(user.id);
+  if (user == null) return Stream.value(const []);
+  return ref.read(recipesRepositoryProvider).streamRecipesForUser(user.id);
 });

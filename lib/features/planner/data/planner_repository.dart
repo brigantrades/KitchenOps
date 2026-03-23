@@ -1,16 +1,112 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class PlannerRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
+  /// True when API reports [meal_plan_slots.grocery_draft_lines] is missing (migration not applied).
+  static bool _isGroceryDraftColumnMissing(PostgrestException e) {
+    return e.code == 'PGRST204' && e.message.contains('grocery_draft_lines');
+  }
+
+  static bool _isSideItemsColumnMissing(PostgrestException e) {
+    return e.code == 'PGRST204' && e.message.contains('side_items');
+  }
+
+  /// True when API reports assignment relation is missing (migration not applied).
+  static bool _isSlotMembersTableMissing(PostgrestException e) {
+    final message = '${e.message} ${e.details ?? ''}'.toLowerCase();
+    return message.contains('meal_plan_slot_members');
+  }
+
+  Future<List<String>> _activeMemberIdsForHousehold(String householdId) async {
+    final rows = await _client
+        .from('household_members')
+        .select('user_id')
+        .eq('household_id', householdId)
+        .eq('status', HouseholdMemberStatus.active.name);
+    return (rows as List)
+        .whereType<Map<String, dynamic>>()
+        .map((row) => row['user_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  List<String> _sanitizeAssignedUserIds(List<String> ids) {
+    return ids
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  Future<void> _syncSlotMembers(
+      String slotId, List<String> assignedUserIds) async {
+    final sanitized = _sanitizeAssignedUserIds(assignedUserIds);
+    if (sanitized.isEmpty) return;
+    try {
+      await _client
+          .from('meal_plan_slot_members')
+          .delete()
+          .eq('slot_id', slotId);
+      await _client.from('meal_plan_slot_members').upsert([
+        for (final userId in sanitized)
+          {
+            'slot_id': slotId,
+            'user_id': userId,
+          }
+      ]);
+    } on PostgrestException catch (e) {
+      if (_isSlotMembersTableMissing(e)) return;
+      rethrow;
+    }
+  }
+
+  Future<List<MealPlanSlot>> _hydrateSlotsWithAssignments(
+    List<MealPlanSlot> slots,
+  ) async {
+    if (slots.isEmpty) return slots;
+    try {
+      final ids = slots.map((s) => s.id).toList();
+      final rows = await _client
+          .from('meal_plan_slot_members')
+          .select('slot_id,user_id')
+          .inFilter('slot_id', ids);
+      final bySlot = <String, List<String>>{};
+      for (final row in (rows as List).whereType<Map<String, dynamic>>()) {
+        final slotId = row['slot_id']?.toString();
+        final userId = row['user_id']?.toString();
+        if (slotId == null ||
+            slotId.isEmpty ||
+            userId == null ||
+            userId.isEmpty) {
+          continue;
+        }
+        (bySlot[slotId] ??= <String>[]).add(userId);
+      }
+      return slots
+          .map((slot) => slot.copyWith(
+                assignedUserIds:
+                    _sanitizeAssignedUserIds(bySlot[slot.id] ?? const []),
+              ))
+          .toList();
+    } on PostgrestException catch (e) {
+      if (_isSlotMembersTableMissing(e)) return slots;
+      rethrow;
+    }
+  }
+
   Future<void> _ensureProfileRow(String userId) async {
-    await _client.from('profiles').upsert({
-      'id': userId,
-      'name': 'Leckerly User',
-    });
+    try {
+      await _client.from('profiles').insert({'id': userId});
+    } on PostgrestException catch (error) {
+      if (error.code != '23505') rethrow;
+    }
   }
 
   Future<String?> _householdForUser(String userId) async {
@@ -83,10 +179,11 @@ class PlannerRepository {
         .eq('household_id', householdId)
         .eq('week_start', weekStart.toIso8601String().split('T').first)
         .order('slot_order');
-    return (rows as List)
+    final slots = (rows as List)
         .whereType<Map<String, dynamic>>()
         .map(MealPlanSlot.fromJson)
         .toList();
+    return _hydrateSlotsWithAssignments(slots);
   }
 
   Stream<List<MealPlanSlot>> streamSlots(
@@ -103,47 +200,123 @@ class PlannerRepository {
         .from('meal_plan_slots')
         .stream(primaryKey: ['id'])
         .order('slot_order')
-        .map((rows) => rows
-            .whereType<Map<String, dynamic>>()
-            .where((row) =>
-                row['household_id']?.toString() == householdId &&
-                row['week_start']?.toString() == date)
-            .map(MealPlanSlot.fromJson)
-            .toList());
+        .asyncMap((rows) async {
+          final slots = rows
+              .whereType<Map<String, dynamic>>()
+              .where((row) =>
+                  row['household_id']?.toString() == householdId &&
+                  row['week_start']?.toString() == date)
+              .map(MealPlanSlot.fromJson)
+              .toList();
+          return _hydrateSlotsWithAssignments(slots);
+        });
+  }
+
+  /// Slots whose calendar dates fall in the planner window starting at [anchorDate].
+  Future<List<MealPlanSlot>> listPlannerWindowSlots(
+    String userId,
+    DateTime anchorDate,
+    PlannerWindowPreference pref,
+  ) async {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) return [];
+    final allowed = calendarDatesForPlannerWindow(anchorDate, pref)
+        .map(plannerDateOnly)
+        .toSet();
+    final buckets = weekStartMondaysForWindow(anchorDate, pref);
+    final byId = <String, MealPlanSlot>{};
+    for (final mon in buckets) {
+      final slots = await listSlots(userId, mon);
+      for (final s in slots) {
+        if (allowed.contains(plannerDateOnly(calendarDateForSlot(s)))) {
+          byId[s.id] = s;
+        }
+      }
+    }
+    return byId.values.toList();
+  }
+
+  Stream<List<MealPlanSlot>> streamPlannerWindowSlots(
+    String userId,
+    DateTime anchorDate,
+    PlannerWindowPreference pref,
+  ) async* {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) {
+      yield const [];
+      return;
+    }
+    final initial = await listPlannerWindowSlots(userId, anchorDate, pref);
+    yield initial;
+    final allowed = calendarDatesForPlannerWindow(anchorDate, pref)
+        .map(plannerDateOnly)
+        .toSet();
+    final mondays = weekStartMondaysForWindow(anchorDate, pref);
+    final mondayStrs = mondays
+        .map((m) => m.toIso8601String().split('T').first)
+        .toSet();
+
+    yield* _client
+        .from('meal_plan_slots')
+        .stream(primaryKey: ['id'])
+        .order('slot_order')
+        .asyncMap((rows) async {
+          final slots = rows
+              .whereType<Map<String, dynamic>>()
+              .where((row) {
+                if (row['household_id']?.toString() != householdId) {
+                  return false;
+                }
+                final ws = row['week_start']?.toString();
+                return mondayStrs.contains(ws);
+              })
+              .map(MealPlanSlot.fromJson)
+              .where(
+                (s) => allowed.contains(plannerDateOnly(calendarDateForSlot(s))),
+              )
+              .toList();
+          return _hydrateSlotsWithAssignments(slots);
+        });
   }
 
   Future<void> ensureDefaultSlots(String userId, DateTime weekStart) async {
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) return;
+    final defaultMemberIds = await _activeMemberIdsForHousehold(householdId);
     final existing = await listSlots(userId, weekStart);
-    final existingKeys = existing
-        .map((s) => '${s.dayOfWeek}:${s.mealLabel.toLowerCase()}')
-        .toSet();
-    const defaults = ['entree', 'side', 'sauce'];
+    const targetSlotsPerDay = 3;
 
     for (var day = 0; day < 7; day++) {
       final daySlots = existing.where((s) => s.dayOfWeek == day).toList();
       final usedOrders = daySlots.map((s) => s.slotOrder).toSet();
-      for (var i = 0; i < defaults.length; i++) {
-        final label = defaults[i];
-        final key = '$day:$label';
-        if (existingKeys.contains(key)) continue;
-        var order = i;
+      final needed = targetSlotsPerDay - daySlots.length;
+      if (needed <= 0) continue;
+
+      for (var n = 0; n < needed; n++) {
+        var order = 0;
         while (usedOrders.contains(order)) {
           order += 1;
         }
         usedOrders.add(order);
         try {
-          await _client.from('meal_plan_slots').insert({
-            'user_id': userId,
-            'household_id': householdId,
-            'week_start': weekStart.toIso8601String().split('T').first,
-            'day_of_week': day,
-            'meal_type': label,
-            'slot_order': order,
-            'recipe_id': null,
-            'servings_used': 1,
-          });
+          final inserted = await _client
+              .from('meal_plan_slots')
+              .insert({
+                'user_id': userId,
+                'household_id': householdId,
+                'week_start': weekStart.toIso8601String().split('T').first,
+                'day_of_week': day,
+                'meal_type': 'meal',
+                'slot_order': order,
+                'recipe_id': null,
+                'servings_used': 1,
+              })
+              .select('id')
+              .single();
+          final slotId = inserted['id']?.toString();
+          if (slotId != null && slotId.isNotEmpty) {
+            await _syncSlotMembers(slotId, defaultMemberIds);
+          }
         } on PostgrestException catch (error) {
           if (error.code != '23505') rethrow;
         }
@@ -160,24 +333,74 @@ class PlannerRepository {
     String? slotId,
     String? recipeId,
     String? mealText,
+    String? sideRecipeId,
+    String? sideText,
+    List<PlannerSlotSideItem>? sideItems,
     String? sauceRecipeId,
     String? sauceText,
     int servings = 1,
+    List<String>? assignedUserIds,
   }) async {
+    final normalizedSideItems = sideItems?.where((e) => !e.isEmpty).toList() ??
+        const <PlannerSlotSideItem>[];
+    final firstSide =
+        normalizedSideItems.isEmpty ? null : normalizedSideItems.first;
     final payload = <String, dynamic>{
       'recipe_id': recipeId,
       'meal_text': mealText?.trim().isEmpty == true ? null : mealText?.trim(),
+      'side_recipe_id': firstSide?.recipeId ?? sideRecipeId,
+      'side_text': firstSide?.text ?? sideText?.trim(),
+      'side_items': PlannerSlotSideItem.toJsonList(normalizedSideItems),
       'sauce_recipe_id': sauceRecipeId,
       'sauce_text':
           sauceText?.trim().isEmpty == true ? null : sauceText?.trim(),
       'servings_used': servings,
+      if (recipeId != null) 'grocery_draft_lines': [],
     };
     if (slotId != null) {
-      return _client.from('meal_plan_slots').update(payload).eq('id', slotId);
+      try {
+        await _client.from('meal_plan_slots').update(payload).eq('id', slotId);
+        if (assignedUserIds != null) {
+          await _syncSlotMembers(slotId, assignedUserIds);
+        }
+      } on PostgrestException catch (e) {
+        if (_isGroceryDraftColumnMissing(e)) {
+          final without = Map<String, dynamic>.from(payload)
+            ..remove('grocery_draft_lines');
+          await _client
+              .from('meal_plan_slots')
+              .update(without)
+              .eq('id', slotId);
+          if (assignedUserIds != null) {
+            await _syncSlotMembers(slotId, assignedUserIds);
+          }
+          return;
+        }
+        if (_isSideItemsColumnMissing(e)) {
+          final without = Map<String, dynamic>.from(payload)
+            ..remove('side_items');
+          await _client
+              .from('meal_plan_slots')
+              .update(without)
+              .eq('id', slotId);
+          if (assignedUserIds != null) {
+            await _syncSlotMembers(slotId, assignedUserIds);
+          }
+          return;
+        }
+        rethrow;
+      }
+      return;
     }
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) return;
-    return _client.from('meal_plan_slots').insert({
+    final effectiveAssignedUserIds = assignedUserIds == null
+        ? await _activeMemberIdsForHousehold(householdId)
+        : _sanitizeAssignedUserIds(assignedUserIds);
+    if (effectiveAssignedUserIds.isEmpty) {
+      effectiveAssignedUserIds.add(userId);
+    }
+    final insertRow = <String, dynamic>{
       'user_id': userId,
       'household_id': householdId,
       'week_start': weekStart.toIso8601String().split('T').first,
@@ -185,19 +408,99 @@ class PlannerRepository {
       'meal_type': mealLabel,
       'slot_order': slotOrder,
       ...payload,
-    });
+    };
+    try {
+      final inserted = await _client
+          .from('meal_plan_slots')
+          .insert(insertRow)
+          .select('id')
+          .single();
+      final newSlotId = inserted['id']?.toString();
+      if (newSlotId != null && newSlotId.isNotEmpty) {
+        await _syncSlotMembers(newSlotId, effectiveAssignedUserIds);
+      }
+    } on PostgrestException catch (e) {
+      if (_isGroceryDraftColumnMissing(e)) {
+        insertRow.remove('grocery_draft_lines');
+        final inserted = await _client
+            .from('meal_plan_slots')
+            .insert(insertRow)
+            .select('id')
+            .single();
+        final newSlotId = inserted['id']?.toString();
+        if (newSlotId != null && newSlotId.isNotEmpty) {
+          await _syncSlotMembers(newSlotId, effectiveAssignedUserIds);
+        }
+        return;
+      }
+      if (_isSideItemsColumnMissing(e)) {
+        insertRow.remove('side_items');
+        final inserted = await _client
+            .from('meal_plan_slots')
+            .insert(insertRow)
+            .select('id')
+            .single();
+        final newSlotId = inserted['id']?.toString();
+        if (newSlotId != null && newSlotId.isNotEmpty) {
+          await _syncSlotMembers(newSlotId, effectiveAssignedUserIds);
+        }
+        return;
+      }
+      rethrow;
+    }
   }
 
   Future<void> unassignSlot({
     required String slotId,
-  }) {
-    return _client.from('meal_plan_slots').update({
+  }) async {
+    final withDraft = <String, dynamic>{
       'recipe_id': null,
       'meal_text': null,
+      'side_recipe_id': null,
+      'side_text': null,
+      'side_items': [],
       'sauce_recipe_id': null,
       'sauce_text': null,
       'servings_used': 1,
-    }).eq('id', slotId);
+      'grocery_draft_lines': [],
+    };
+    try {
+      await _client.from('meal_plan_slots').update(withDraft).eq('id', slotId);
+    } on PostgrestException catch (e) {
+      if (_isGroceryDraftColumnMissing(e)) {
+        withDraft.remove('grocery_draft_lines');
+        await _client
+            .from('meal_plan_slots')
+            .update(withDraft)
+            .eq('id', slotId);
+        return;
+      }
+      if (_isSideItemsColumnMissing(e)) {
+        withDraft.remove('side_items');
+        await _client
+            .from('meal_plan_slots')
+            .update(withDraft)
+            .eq('id', slotId);
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> updateSlotGroceryDraft(
+    String slotId,
+    List<PlannerGroceryDraftLine> lines,
+  ) async {
+    try {
+      await _client.from('meal_plan_slots').update({
+        'grocery_draft_lines': lines.map((e) => e.toJson()).toList(),
+      }).eq('id', slotId);
+    } on PostgrestException catch (e) {
+      if (_isGroceryDraftColumnMissing(e)) {
+        return;
+      }
+      rethrow;
+    }
   }
 
   Future<void> updateSlotReminder({
@@ -218,6 +521,7 @@ class PlannerRepository {
     required int dayOfWeek,
     required String mealLabel,
     required int slotOrder,
+    List<String>? assignedUserIds,
   }) {
     return _addSlotWithRetry(
       userId: userId,
@@ -226,6 +530,7 @@ class PlannerRepository {
       mealLabel: mealLabel,
       slotOrder: slotOrder,
       attempt: 0,
+      assignedUserIds: assignedUserIds,
     );
   }
 
@@ -264,18 +569,21 @@ class PlannerRepository {
   }
 
   Future<void> reorderSlots(List<MealPlanSlot> orderedSlots) async {
-    // Phase 1: move to temporary range to avoid unique collisions.
-    for (var i = 0; i < orderedSlots.length; i++) {
-      await _client
-          .from('meal_plan_slots')
-          .update({'slot_order': 1000 + i}).eq('id', orderedSlots[i].id);
-    }
-    // Phase 2: set final compact ordering.
-    for (var i = 0; i < orderedSlots.length; i++) {
-      await _client
-          .from('meal_plan_slots')
-          .update({'slot_order': i}).eq('id', orderedSlots[i].id);
-    }
+    if (orderedSlots.isEmpty) return;
+    // Phase 1: move to temporary range to avoid unique collisions (parallel).
+    await Future.wait([
+      for (var i = 0; i < orderedSlots.length; i++)
+        _client
+            .from('meal_plan_slots')
+            .update({'slot_order': 1000 + i}).eq('id', orderedSlots[i].id),
+    ]);
+    // Phase 2: set final compact ordering (parallel).
+    await Future.wait([
+      for (var i = 0; i < orderedSlots.length; i++)
+        _client
+            .from('meal_plan_slots')
+            .update({'slot_order': i}).eq('id', orderedSlots[i].id),
+    ]);
   }
 
   Future<void> _addSlotWithRetry({
@@ -285,23 +593,41 @@ class PlannerRepository {
     required String mealLabel,
     required int slotOrder,
     required int attempt,
+    List<String>? assignedUserIds,
   }) async {
     try {
       final householdId = await _householdForUser(userId);
       if (householdId == null || householdId.isEmpty) return;
-      await _client.from('meal_plan_slots').insert({
-        'user_id': userId,
-        'household_id': householdId,
-        'week_start': weekStart.toIso8601String().split('T').first,
-        'day_of_week': dayOfWeek,
-        'meal_type': mealLabel,
-        'slot_order': slotOrder,
-        'recipe_id': null,
-        'meal_text': null,
-        'sauce_recipe_id': null,
-        'sauce_text': null,
-        'servings_used': 1,
-      });
+      final effectiveAssignedUserIds = assignedUserIds == null
+          ? await _activeMemberIdsForHousehold(householdId)
+          : _sanitizeAssignedUserIds(assignedUserIds);
+      if (effectiveAssignedUserIds.isEmpty) {
+        effectiveAssignedUserIds.add(userId);
+      }
+      final inserted = await _client
+          .from('meal_plan_slots')
+          .insert({
+            'user_id': userId,
+            'household_id': householdId,
+            'week_start': weekStart.toIso8601String().split('T').first,
+            'day_of_week': dayOfWeek,
+            'meal_type': mealLabel,
+            'slot_order': slotOrder,
+            'recipe_id': null,
+            'meal_text': null,
+            'side_recipe_id': null,
+            'side_text': null,
+            'side_items': [],
+            'sauce_recipe_id': null,
+            'sauce_text': null,
+            'servings_used': 1,
+          })
+          .select('id')
+          .single();
+      final slotId = inserted['id']?.toString();
+      if (slotId != null && slotId.isNotEmpty) {
+        await _syncSlotMembers(slotId, effectiveAssignedUserIds);
+      }
     } on PostgrestException catch (error) {
       if (error.code != '23505' || attempt >= 4) rethrow;
       final next = await nextSlotOrder(
@@ -317,6 +643,7 @@ class PlannerRepository {
         mealLabel: mealLabel,
         slotOrder: retryOrder,
         attempt: attempt + 1,
+        assignedUserIds: assignedUserIds,
       );
     }
   }
@@ -325,36 +652,44 @@ class PlannerRepository {
 final plannerRepositoryProvider =
     Provider<PlannerRepository>((ref) => PlannerRepository());
 
+/// Effective window: household settings when in a household, else app default.
+final effectivePlannerWindowProvider = Provider<PlannerWindowPreference>((ref) {
+  final household = ref.watch(activeHouseholdProvider).valueOrNull;
+  return PlannerWindowPreference.resolve(household: household);
+});
+
+/// First calendar day of the visible planner window (not always Monday).
 final weekStartProvider = StateProvider<DateTime>((ref) {
-  final now = DateTime.now();
-  return now.subtract(Duration(days: now.weekday - 1));
+  return anchorDateForWindowContaining(
+    DateTime.now(),
+    PlannerWindowPreference.appDefault,
+  );
 });
 
-/// Selected day index 0–6 matching [MealPlanSlot.dayOfWeek] (Monday = 0).
+/// Selected strip index 0 .. dayCount-1 for the current window.
 final selectedPlannerDayProvider = StateProvider<int>((ref) {
-  final current = DateTime.now().weekday - 1;
-  if (current < 0) return 0;
-  if (current > 6) return 6;
-  return current;
+  return 0;
 });
-
-/// Monday-start week for [date] (time cleared).
-DateTime weekStartMondayForDate(DateTime date) {
-  final d = DateTime(date.year, date.month, date.day);
-  return d.subtract(Duration(days: date.weekday - DateTime.monday));
-}
 
 final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
   final user = ref.watch(currentUserProvider);
-  final weekStart = ref.watch(weekStartProvider);
+  final anchor = ref.watch(weekStartProvider);
+  final pref = ref.watch(effectivePlannerWindowProvider);
   if (user == null) {
     yield const [];
     return;
   }
   final repo = ref.watch(plannerRepositoryProvider);
-  final current = await repo.listSlots(user.id, weekStart);
+  final mondays = weekStartMondaysForWindow(anchor, pref);
+  final current = await repo.listPlannerWindowSlots(user.id, anchor, pref);
   if (current.isEmpty) {
-    await repo.ensureDefaultSlots(user.id, weekStart);
+    for (final m in mondays) {
+      await repo.ensureDefaultSlots(user.id, m);
+    }
+  } else {
+    for (final m in mondays) {
+      await repo.ensureDefaultSlots(user.id, m);
+    }
   }
-  yield* repo.streamSlots(user.id, weekStart);
+  yield* repo.streamPlannerWindowSlots(user.id, anchor, pref);
 });

@@ -442,11 +442,15 @@ class _DiscoverRecipeDetailPageState
     final ingredientRows = recipe.ingredients.asMap().entries.map((entry) {
       final index = entry.key;
       final ingredient = entry.value;
-      final amount = ingredient.amount.toStringAsFixed(
-        ingredient.amount % 1 == 0 ? 0 : 1,
-      );
+      final amount = ingredient.qualitative
+          ? '—'
+          : ingredient.amount.toStringAsFixed(
+              ingredient.amount % 1 == 0 ? 0 : 1,
+            );
       final evenRow = index.isEven;
-      final unit = _shortUnit(ingredient.unit);
+      final unit = ingredient.qualitative
+          ? ingredient.unit
+          : _shortUnit(ingredient.unit);
       return TableRow(
         decoration: BoxDecoration(
           color: evenRow

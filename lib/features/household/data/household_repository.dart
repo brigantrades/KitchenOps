@@ -1,5 +1,7 @@
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:io';
+import 'dart:convert';
 
 enum HouseholdInviteResult {
   invitedExistingMember,
@@ -18,6 +20,62 @@ class HouseholdSharingStatus {
 
 class HouseholdRepository {
   final SupabaseClient _client = Supabase.instance.client;
+  static const String _debugLogPath =
+      '/Users/brigan/Personal Development/KitchenOps/.cursor/debug-e663ae.log';
+
+  // #region agent log
+  void _debugLog({
+    required String runId,
+    required String hypothesisId,
+    required String location,
+    required String message,
+    required Map<String, dynamic> data,
+  }) {
+    try {
+      Directory(_debugLogPath.substring(0, _debugLogPath.lastIndexOf('/')))
+          .createSync(recursive: true);
+      final payload = <String, dynamic>{
+        'sessionId': 'e663ae',
+        'runId': runId,
+        'hypothesisId': hypothesisId,
+        'location': location,
+        'message': message,
+        'data': data,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+      File(_debugLogPath).writeAsStringSync(
+        '${jsonEncode(payload)}\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+      // #region agent log
+      void postTo(String url) {
+        final client = HttpClient();
+        client.postUrl(Uri.parse(url)).then((request) {
+          request.headers.set('Content-Type', 'application/json');
+          request.headers.set('X-Debug-Session-Id', 'e663ae');
+          request.add(utf8.encode(jsonEncode(payload)));
+          return request.close();
+        }).then((response) {
+          response.drain<void>();
+          client.close();
+        }).catchError((_) {
+          client.close(force: true);
+        });
+      }
+
+      postTo(
+          'http://127.0.0.1:7665/ingest/8958ce1e-f127-4a23-8040-af744424700a');
+      postTo(
+          'http://10.0.2.2:7665/ingest/8958ce1e-f127-4a23-8040-af744424700a');
+      postTo(
+          'http://localhost:7665/ingest/8958ce1e-f127-4a23-8040-af744424700a');
+      // #endregion
+    } catch (_) {
+      // no-op in production paths
+    }
+  }
+  // #endregion
 
   Future<Household?> fetchActiveHousehold(String userId) async {
     final profile = await _client
@@ -42,10 +100,42 @@ class HouseholdRepository {
         .select('household_id,user_id,role,status,invited_email,profiles(name)')
         .eq('household_id', householdId)
         .order('created_at');
-    return (rows as List)
+    final mapped = (rows as List)
         .whereType<Map<String, dynamic>>()
         .map(HouseholdMember.fromJson)
         .toList();
+    // #region agent log
+    _debugLog(
+      runId: 'initial',
+      hypothesisId: 'H1_H2_H3_H5',
+      location: 'household_repository.dart:listMembers',
+      message: 'listMembers payload and parsed names',
+      data: {
+        'householdId': householdId,
+        'rowCount': (rows as List).length,
+        'sample': (rows)
+            .whereType<Map<String, dynamic>>()
+            .take(3)
+            .map((r) => {
+                  'user_id': r['user_id']?.toString(),
+                  'profiles_type': r['profiles']?.runtimeType.toString(),
+                  'profiles_value': r['profiles'],
+                })
+            .toList(),
+        'parsedSample': mapped
+            .take(3)
+            .map((m) => {
+                  'userId': m.userId,
+                  'name': m.name,
+                  'displayName': m.displayName,
+                  'status': m.status.name,
+                })
+            .toList(),
+        'unknownCount': mapped.where((m) => m.displayName == 'Unknown user').length,
+      },
+    );
+    // #endregion
+    return mapped;
   }
 
   Stream<List<HouseholdMember>> streamMembers(String householdId) {
@@ -53,11 +143,24 @@ class HouseholdRepository {
         .from('household_members')
         .stream(primaryKey: ['household_id', 'user_id'])
         .order('created_at')
-        .map((rows) => rows
-            .whereType<Map<String, dynamic>>()
-            .where((row) => row['household_id']?.toString() == householdId)
-            .map(HouseholdMember.fromJson)
-            .toList());
+        .asyncMap((rawRows) async {
+      // #region agent log
+      _debugLog(
+        runId: 'initial',
+        hypothesisId: 'H4',
+        location: 'household_repository.dart:streamMembers',
+        message: 'streamMembers realtime event',
+        data: {
+          'householdId': householdId,
+          'rawCount': rawRows.length,
+          'firstHouseholdId': rawRows.isNotEmpty
+              ? rawRows.first['household_id']?.toString()
+              : null,
+        },
+      );
+      // #endregion
+      return listMembers(householdId);
+    });
   }
 
   Future<String> createHousehold(String name) async {
@@ -115,6 +218,17 @@ class HouseholdRepository {
     await _client
         .from('households')
         .update({'name': nextName}).eq('id', householdId);
+  }
+
+  Future<void> updateHouseholdPlannerWindow({
+    required String householdId,
+    required int plannerStartDay,
+    required int plannerDayCount,
+  }) async {
+    await _client.from('households').update({
+      'planner_start_day': plannerStartDay,
+      'planner_day_count': plannerDayCount,
+    }).eq('id', householdId);
   }
 
   Future<HouseholdSharingStatus> fetchSharingStatus() async {
@@ -249,6 +363,14 @@ class HouseholdRepository {
   Future<void> removeMember(String memberUserId) async {
     await _client.rpc(
       'remove_household_member',
+      params: {'member_user_id': memberUserId},
+    );
+  }
+
+  /// Promotes an active member to co-owner (caller must be an owner).
+  Future<void> promoteMemberToOwner(String memberUserId) async {
+    await _client.rpc(
+      'promote_household_member_to_owner',
       params: {'member_user_id': memberUserId},
     );
   }

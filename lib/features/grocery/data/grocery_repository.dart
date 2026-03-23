@@ -46,10 +46,11 @@ class GroceryRepository {
   static const int _maxAutocompleteCatalogItems = 7500;
 
   Future<void> _ensureProfileRow(String userId) async {
-    await _client.from('profiles').upsert({
-      'id': userId,
-      'name': 'Leckerly User',
-    });
+    try {
+      await _client.from('profiles').insert({'id': userId});
+    } on PostgrestException catch (error) {
+      if (error.code != '23505') rethrow;
+    }
   }
 
   Future<String?> _householdForUser(String userId) async {
@@ -114,58 +115,306 @@ class GroceryRepository {
     return membershipHouseholdId;
   }
 
+  /// Keyword hints for categorization (longer/specific keys should appear before
+  /// broader substrings where order matters).
   static const Map<String, GroceryCategory> _categoryMap = {
+    'blueberr': GroceryCategory.produce,
+    'blackberr': GroceryCategory.produce,
+    'raspberr': GroceryCategory.produce,
+    'strawberr': GroceryCategory.produce,
+    'lettuce': GroceryCategory.produce,
+    'cucumber': GroceryCategory.produce,
+    'avocado': GroceryCategory.produce,
+    'broccoli': GroceryCategory.produce,
+    'cauliflower': GroceryCategory.produce,
+    'celery': GroceryCategory.produce,
+    'mushroom': GroceryCategory.produce,
+    'zucchini': GroceryCategory.produce,
+    'squash': GroceryCategory.produce,
+    'asparagus': GroceryCategory.produce,
+    'kale': GroceryCategory.produce,
+    'cilantro': GroceryCategory.produce,
+    'parsley': GroceryCategory.produce,
+    'basil': GroceryCategory.produce,
+    'lime': GroceryCategory.produce,
+    'lemon': GroceryCategory.produce,
+    'grape': GroceryCategory.produce,
+    'watermelon': GroceryCategory.produce,
+    'pineapple': GroceryCategory.produce,
+    'mango': GroceryCategory.produce,
+    'peach': GroceryCategory.produce,
+    'pear': GroceryCategory.produce,
+    'cherry': GroceryCategory.produce,
+    'green bean': GroceryCategory.produce,
+    'corn': GroceryCategory.produce,
     'tomato': GroceryCategory.produce,
     'onion': GroceryCategory.produce,
     'spinach': GroceryCategory.produce,
+    'potato': GroceryCategory.produce,
+    'carrot': GroceryCategory.produce,
+    'garlic': GroceryCategory.produce,
+    'apple': GroceryCategory.produce,
+    'banana': GroceryCategory.produce,
+    'bell pepper': GroceryCategory.produce,
+    'jalapeno': GroceryCategory.produce,
     'chicken': GroceryCategory.meatFish,
     'salmon': GroceryCategory.meatFish,
+    'shrimp': GroceryCategory.meatFish,
+    'bacon': GroceryCategory.meatFish,
+    'sausage': GroceryCategory.meatFish,
+    'pork': GroceryCategory.meatFish,
+    'steak': GroceryCategory.meatFish,
+    'ground beef': GroceryCategory.meatFish,
+    'turkey': GroceryCategory.meatFish,
+    'tuna': GroceryCategory.meatFish,
+    'fish': GroceryCategory.meatFish,
     'egg': GroceryCategory.dairyEggs,
     'milk': GroceryCategory.dairyEggs,
+    'cream cheese': GroceryCategory.dairyEggs,
+    'sour cream': GroceryCategory.dairyEggs,
+    'yogurt': GroceryCategory.dairyEggs,
+    'butter': GroceryCategory.dairyEggs,
+    'cheddar': GroceryCategory.dairyEggs,
+    'mozzarella': GroceryCategory.dairyEggs,
+    'parmesan': GroceryCategory.dairyEggs,
+    'feta': GroceryCategory.dairyEggs,
+    'cheese': GroceryCategory.dairyEggs,
+    'granola': GroceryCategory.pantryGrains,
+    'cereal': GroceryCategory.pantryGrains,
+    'oat': GroceryCategory.pantryGrains,
+    'quinoa': GroceryCategory.pantryGrains,
+    'bean': GroceryCategory.pantryGrains,
+    'lentil': GroceryCategory.pantryGrains,
     'rice': GroceryCategory.pantryGrains,
     'pasta': GroceryCategory.pantryGrains,
+    'flour': GroceryCategory.pantryGrains,
+    'sugar': GroceryCategory.pantryGrains,
+    'honey': GroceryCategory.pantryGrains,
+    'maple syrup': GroceryCategory.pantryGrains,
+    'oil': GroceryCategory.pantryGrains,
+    'vinegar': GroceryCategory.pantryGrains,
+    'salsa': GroceryCategory.pantryGrains,
+    'tortilla': GroceryCategory.pantryGrains,
+    'mayo': GroceryCategory.pantryGrains,
+    'mustard': GroceryCategory.pantryGrains,
+    'ketchup': GroceryCategory.pantryGrains,
+    'soy sauce': GroceryCategory.pantryGrains,
     'bread': GroceryCategory.bakery,
+    'bagel': GroceryCategory.bakery,
+    'croissant': GroceryCategory.bakery,
+    'muffin': GroceryCategory.bakery,
   };
 
+  /// Common grocery staples shown first in search; USDA catalog fills only when needed.
   static const List<String> _localCatalog = [
-    'Milk',
-    'Bananas',
-    'Strawberries',
-    'Bread',
-    'Eggs',
-    'Chicken Breast',
-    'Salmon',
-    'Rice',
-    'Pasta',
-    'Tomatoes',
-    'Onions',
-    'Potatoes',
-    'Carrots',
-    'Spinach',
+    // Produce
     'Apples',
-    'Yogurt',
-    'Cheese',
-    'Butter',
-    'Olive Oil',
-    'Garlic',
-    'Bell Peppers',
-    'Lettuce',
-    'Cucumber',
+    'Bananas',
+    'Blueberries',
+    'Blackberries',
+    'Raspberries',
+    'Strawberries',
+    'Grapes',
+    'Pears',
+    'Peaches',
+    'Cherries',
+    'Oranges',
+    'Lemons',
+    'Limes',
     'Avocado',
-    'Ground Beef',
+    'Pineapple',
+    'Mango',
+    'Watermelon',
+    'Cantaloupe',
+    'Kiwi',
+    'Tomatoes',
+    'Cherry Tomatoes',
+    'Onions',
+    'Red Onions',
+    'Green Onions',
+    'Garlic',
+    'Potatoes',
+    'Sweet Potatoes',
+    'Carrots',
+    'Broccoli',
+    'Cauliflower',
+    'Spinach',
+    'Lettuce',
+    'Romaine',
+    'Kale',
+    'Arugula',
+    'Cucumber',
+    'Bell Peppers',
+    'Jalapenos',
+    'Zucchini',
+    'Mushrooms',
+    'Asparagus',
+    'Celery',
+    'Cabbage',
+    'Green Beans',
+    'Corn',
+    'Peas',
+    'Brussels Sprouts',
+    'Cilantro',
+    'Parsley',
+    'Basil',
+    'Ginger',
+
+    // Meat, fish, eggs
+    'Chicken Breast',
+    'Chicken Thighs',
+    'Chicken Drumsticks',
+    'Chicken Wings',
+    'Ground Chicken',
+    'Ground Turkey',
     'Turkey',
+    'Ground Beef',
+    'Beef Stew Meat',
+    'Steak',
+    'Pork Chops',
+    'Ground Pork',
+    'Sausage',
+    'Bacon',
+    'Ham',
+    'Salmon',
     'Tuna',
+    'Tilapia',
+    'Cod',
+    'Shrimp',
+    'Scallops',
+    'Crab',
+    'Eggs',
+
+    // Dairy and refrigerated
+    'Milk',
+    'Half and Half',
+    'Heavy Cream',
+    'Butter',
+    'Cheese',
+    'Cheddar Cheese',
+    'Mozzarella',
+    'Parmesan',
+    'Feta',
+    'Cream Cheese',
+    'Sour Cream',
+    'Cottage Cheese',
+    'Yogurt',
+    'Greek Yogurt',
+    'Almond Milk',
+    'Oat Milk',
+
+    // Bakery
+    'Bread',
+    'Whole Wheat Bread',
+    'Sourdough Bread',
+    'Bagels',
+    'Hamburger Buns',
+    'Hot Dog Buns',
+    'English Muffins',
+    'Tortillas',
+    'Pita Bread',
+    'Croissants',
+
+    // Pantry staples
+    'Rice',
+    'Brown Rice',
+    'Jasmine Rice',
+    'Basmati Rice',
+    'Quinoa',
+    'Pasta',
+    'Spaghetti',
+    'Macaroni',
+    'Penne',
     'Oats',
+    'Rolled Oats',
+    'Granola',
+    'Cereal',
     'Flour',
     'Sugar',
+    'Brown Sugar',
+    'Powdered Sugar',
     'Salt',
     'Black Pepper',
+    'Paprika',
+    'Chili Powder',
+    'Cumin',
+    'Garlic Powder',
+    'Onion Powder',
+    'Cinnamon',
+    'Vanilla Extract',
+    'Baking Soda',
+    'Baking Powder',
+    'Yeast',
+    'Cornstarch',
+    'Olive Oil',
+    'Vegetable Oil',
+    'Sesame Oil',
+    'Vinegar',
+    'Apple Cider Vinegar',
+    'Soy Sauce',
+    'Hot Sauce',
+    'Mustard',
+    'Mayonnaise',
+    'Ketchup',
+    'BBQ Sauce',
+    'Salsa',
+    'Pasta Sauce',
+    'Tomato Sauce',
+    'Tomato Paste',
+    'Broth',
+    'Chicken Broth',
+    'Beef Broth',
+    'Peanut Butter',
+    'Jam',
+    'Honey',
+    'Maple Syrup',
+
+    // Canned and dry goods
+    'Black Beans',
+    'Pinto Beans',
+    'Chickpeas',
+    'Lentils',
+    'Kidney Beans',
+    'Canned Corn',
+    'Canned Tomatoes',
+    'Diced Tomatoes',
+    'Coconut Milk',
+    'Tuna Cans',
+    'Crackers',
+    'Breadcrumbs',
+
+    // Frozen
+    'Frozen Berries',
+    'Frozen Broccoli',
+    'Frozen Peas',
+    'Frozen Corn',
+    'Frozen Pizza',
+    'Ice Cream',
+
+    // Snacks
+    'Chips',
+    'Tortilla Chips',
+    'Pretzels',
+    'Popcorn',
+    'Nuts',
+    'Almonds',
+    'Walnuts',
+    'Trail Mix',
+    'Protein Bars',
+    'Chocolate',
+    'Cookies',
+
+    // Drinks
     'Coffee',
     'Tea',
     'Orange Juice',
-    'Jam',
-    'Peanut Butter',
+    'Apple Juice',
+    'Sparkling Water',
+    'Soda',
   ];
+
+  static final Set<String> _stapleCatalogLower =
+      _localCatalog.map((e) => e.toLowerCase()).toSet();
 
   GroceryCategory categorize(String ingredient) {
     final lower = ingredient.toLowerCase();
@@ -210,13 +459,6 @@ class GroceryRepository {
         .map((e) => e.name.trim())
         .where((e) => e.isNotEmpty)
         .toSet();
-    final normalizedSearch = _normalizedForSearch(normalizedQuery);
-    final candidates = _candidatesByQuery(normalizedSearch);
-    final merged = <String>{
-      ..._localCatalog,
-      ...recentNames,
-      ...candidates,
-    }.where((item) => !_isNoisyCatalogItem(item)).toList();
 
     if (normalizedQuery.isEmpty) {
       final recentFirst = [
@@ -226,25 +468,79 @@ class GroceryRepository {
       return recentFirst.take(limit).toList();
     }
 
-    final matched = merged
-        .where((item) => item.toLowerCase().contains(normalizedQuery))
-        .toList();
-    matched.sort((a, b) {
-      final scoreA = _matchScore(
-        item: a,
+    bool matchesQuery(String item) =>
+        item.toLowerCase().contains(normalizedQuery);
+
+    // Phase 1: curated staples + names already on this list (never USDA noise).
+    final primaryMatches = <String>[
+      ...recentNames.where(matchesQuery),
+      ..._localCatalog.where(
+        (n) => matchesQuery(n) && !recentNames.contains(n),
+      ),
+    ];
+    primaryMatches.sort(
+      (a, b) => _compareSuggestionRank(
+        a,
+        b,
         query: normalizedQuery,
         recentNames: recentNames,
+        isUsdaFallback: false,
+      ),
+    );
+
+    final out = <String>[...primaryMatches];
+    final seen = out.toSet();
+
+    // Phase 2: USDA catalog only to fill remaining slots; deprioritized vs staples.
+    if (out.length < limit && _usdaCatalog.isNotEmpty) {
+      final normalizedSearch = _normalizedForSearch(normalizedQuery);
+      final usdaPool = _candidatesByQuery(normalizedSearch)
+          .where((item) => !seen.contains(item))
+          .where(matchesQuery)
+          .where((item) => !_isNoisyCatalogItem(item))
+          .where((item) => !_isHeavyBrandedUsdaLine(item))
+          .toList();
+      usdaPool.sort(
+        (a, b) => _compareSuggestionRank(
+          a,
+          b,
+          query: normalizedQuery,
+          recentNames: recentNames,
+          isUsdaFallback: true,
+        ),
       );
-      final scoreB = _matchScore(
-        item: b,
-        query: normalizedQuery,
-        recentNames: recentNames,
-      );
-      if (scoreA != scoreB) return scoreA.compareTo(scoreB);
-      if (a.length != b.length) return a.length.compareTo(b.length);
-      return a.compareTo(b);
-    });
-    return matched.take(limit).toList();
+      for (final item in usdaPool) {
+        if (out.length >= limit) break;
+        out.add(item);
+        seen.add(item);
+      }
+    }
+
+    return out.take(limit).toList();
+  }
+
+  int _compareSuggestionRank(
+    String a,
+    String b, {
+    required String query,
+    required Set<String> recentNames,
+    required bool isUsdaFallback,
+  }) {
+    final scoreA = _matchScore(
+      item: a,
+      query: query,
+      recentNames: recentNames,
+      isUsdaFallback: isUsdaFallback,
+    );
+    final scoreB = _matchScore(
+      item: b,
+      query: query,
+      recentNames: recentNames,
+      isUsdaFallback: isUsdaFallback,
+    );
+    if (scoreA != scoreB) return scoreA.compareTo(scoreB);
+    if (a.length != b.length) return a.length.compareTo(b.length);
+    return a.compareTo(b);
   }
 
   List<String> _candidatesByQuery(String normalizedQuery) {
@@ -300,13 +596,36 @@ class GroceryRepository {
     return false;
   }
 
+  /// Filters branded / industrial USDA descriptions so autocomplete stays grocery-like.
+  bool _isHeavyBrandedUsdaLine(String item) {
+    final t = item.trim();
+    if (t.isEmpty) return true;
+    if (t.length > 90) return true;
+    if (t.startsWith('!') || t.startsWith('"')) return true;
+    if (t.contains('""')) return true;
+    final commaCount = ','.allMatches(t).length;
+    if (commaCount >= 4) return true;
+    final wordCount = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    if (wordCount > 12) return true;
+    if (RegExp(r'#\d').hasMatch(t)) return true;
+    return false;
+  }
+
   int _matchScore({
     required String item,
     required String query,
     required Set<String> recentNames,
+    bool isUsdaFallback = false,
   }) {
     final lower = item.toLowerCase();
     var score = 100;
+    final isStaple = _stapleCatalogLower.contains(lower);
+    if (isStaple) score -= 28;
+    if (isUsdaFallback &&
+        !isStaple &&
+        !recentNames.contains(item)) {
+      score += 32;
+    }
     if (lower == query) score -= 90;
     if (lower.startsWith(query)) score -= 60;
     if (RegExp(r'\b' + RegExp.escape(query)).hasMatch(lower)) score -= 40;
@@ -349,8 +668,9 @@ class GroceryRepository {
   }
 
   /// Live updates via Realtime; refetches on each change. No column filter on
-  /// the subscription: DELETE replication often omits `list_id` from the old
-  /// row, so `list_id=eq...` filters block delete events; RLS scopes events.
+  /// the subscription: without a filter, DELETE old rows still reach the
+  /// client; RLS scopes events. DB uses `REPLICA IDENTITY FULL` on `list_items`
+  /// so DELETE payloads include columns needed for RLS.
   Stream<List<GroceryItem>> streamItemsForList(String listId) {
     return Stream<List<GroceryItem>>.multi((multi) {
       RealtimeChannel? channel;
@@ -365,21 +685,40 @@ class GroceryRepository {
         }
       }
 
-      () async {
+      var sawSubscribedOnce = false;
+
+      Future<void> setup() async {
         await pushFresh();
         if (multi.isClosed) return;
         channel = _client.channel(topic);
         channel!
             .onPostgresChanges(
-              event: PostgresChangeEvent.all,
-              schema: 'public',
-              table: 'list_items',
-              callback: (_) {
-                pushFresh();
-              },
-            )
-            .subscribe();
-      }();
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'list_items',
+          callback: (_) {
+            unawaited(pushFresh());
+          },
+        )
+            .subscribe((RealtimeSubscribeStatus status, Object? error) {
+          switch (status) {
+            case RealtimeSubscribeStatus.subscribed:
+              if (sawSubscribedOnce) {
+                unawaited(pushFresh());
+              }
+              sawSubscribedOnce = true;
+              break;
+            case RealtimeSubscribeStatus.timedOut:
+            case RealtimeSubscribeStatus.channelError:
+              unawaited(pushFresh());
+              break;
+            case RealtimeSubscribeStatus.closed:
+              break;
+          }
+        });
+      }
+
+      unawaited(setup());
 
       multi.onCancel = () {
         unawaited(channel?.unsubscribe());
@@ -395,6 +734,7 @@ class GroceryRepository {
     String? unit,
     GroceryCategory? category,
     String? fromRecipeId,
+    String? sourceSlotId,
   }) {
     return _insertItem(
       userId: userId,
@@ -404,6 +744,7 @@ class GroceryRepository {
       unit: unit,
       category: category ?? categorize(name),
       fromRecipeId: fromRecipeId,
+      sourceSlotId: sourceSlotId,
     );
   }
 
@@ -447,6 +788,27 @@ class GroceryRepository {
           (e) => e.name.toLowerCase() == ingredient.name.toLowerCase());
       if (current != null) continue;
 
+      if (ingredient.qualitative) {
+        await _client.from('list_items').insert({
+          'list_id': targetListId,
+          'user_id': userId,
+          'name': ingredient.name,
+          'category': ingredient.category.dbValue,
+          'quantity': null,
+          'unit': ingredient.unit,
+          'from_recipe_id': recipe.id,
+          'source_type': 'planner_recipe',
+          'source_slot_id': sourceSlotId,
+        });
+        await touchRecent(
+          name: ingredient.name,
+          category: ingredient.category,
+          quantity: null,
+          unit: ingredient.unit,
+        );
+        continue;
+      }
+
       final qty = (ingredient.amount * ratio).toStringAsFixed(1);
       await _client.from('list_items').insert({
         'list_id': targetListId,
@@ -476,12 +838,19 @@ class GroceryRepository {
     String? unit,
     required GroceryCategory category,
     String? fromRecipeId,
+    String? sourceSlotId,
   }) async {
     final targetListId = listId ?? await _defaultListIdForUser(userId);
     if (targetListId == null || targetListId.isEmpty) {
       throw StateError('Could not initialize your list.');
     }
-    await _client.from('list_items').insert({
+    final String sourceType;
+    if (sourceSlotId != null && sourceSlotId.isNotEmpty) {
+      sourceType = fromRecipeId != null ? 'planner_recipe' : 'planner_slot';
+    } else {
+      sourceType = fromRecipeId == null ? 'manual' : 'planner_recipe';
+    }
+    final row = <String, dynamic>{
       'list_id': targetListId,
       'user_id': userId,
       'name': name,
@@ -489,8 +858,12 @@ class GroceryRepository {
       'quantity': quantity,
       'unit': unit,
       'from_recipe_id': fromRecipeId,
-      'source_type': fromRecipeId == null ? 'manual' : 'planner_recipe',
-    });
+      'source_type': sourceType,
+    };
+    if (sourceSlotId != null && sourceSlotId.isNotEmpty) {
+      row['source_slot_id'] = sourceSlotId;
+    }
+    await _client.from('list_items').insert(row);
     await touchRecent(
       name: name,
       category: category,
@@ -527,8 +900,7 @@ class GroceryRepository {
       unit: unit,
       lastUsedAt: DateTime.now().toUtc(),
     );
-    final next =
-        [entry, ...filtered].take(_maxGroceryRecentsStored).toList();
+    final next = [entry, ...filtered].take(_maxGroceryRecentsStored).toList();
     await _cache.saveGroceryRecents(next.map((e) => e.toJson()).toList());
   }
 
@@ -572,6 +944,19 @@ class GroceryRepository {
     final list = AppList.fromJson(row);
     await _profileRepo.appendGroceryListId(userId, scope, list.id);
     return list;
+  }
+
+  /// Updates the display name of a list. RLS: owner for private lists; any household
+  /// member for household lists.
+  Future<void> renameList({
+    required String listId,
+    required String name,
+  }) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw StateError('List name cannot be empty.');
+    }
+    await _client.from('lists').update({'name': trimmed}).eq('id', listId);
   }
 
   /// Deletes the list and its items (DB cascade). Updates saved list order for [userId].
@@ -638,14 +1023,14 @@ class GroceryRepository {
   Future<void> upsertDeviceToken(String userId, String token) async {
     final platform = Platform.operatingSystem;
     await _client.from('user_device_tokens').upsert(
-          {
-            'user_id': userId,
-            'platform': platform,
-            'token': token,
-            'last_seen_at': DateTime.now().toIso8601String(),
-          },
-          onConflict: 'token',
-        );
+      {
+        'user_id': userId,
+        'platform': platform,
+        'token': token,
+        'last_seen_at': DateTime.now().toIso8601String(),
+      },
+      onConflict: 'token',
+    );
   }
 }
 
@@ -718,3 +1103,15 @@ final groceryItemsProvider = Provider<AsyncValue<List<GroceryItem>>>((ref) {
   }
   return ref.watch(groceryItemsDefaultListStreamProvider);
 });
+
+/// Recreates the Realtime channel and refetches items for the active list
+/// (or default list when none is selected).
+void invalidateActiveGroceryStreams(WidgetRef ref) {
+  final selectedListId = ref.read(selectedListIdProvider);
+  if (selectedListId != null && selectedListId.isNotEmpty) {
+    ref.invalidate(groceryListItemsFamily(selectedListId));
+  } else {
+    ref.invalidate(groceryItemsDefaultListStreamProvider);
+  }
+  ref.invalidate(groceryItemsProvider);
+}

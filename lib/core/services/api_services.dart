@@ -42,6 +42,8 @@ class SpoonacularService {
     double protein = 0;
     double fat = 0;
     double carbs = 0;
+    double fiber = 0;
+    double sugar = 0;
 
     if (json['results'] is List) {
       for (final entry
@@ -55,12 +57,20 @@ class SpoonacularService {
           if (name == 'protein') protein += amount;
           if (name == 'fat') fat += amount;
           if (name == 'carbohydrates') carbs += amount;
+          if (name == 'fiber') fiber += amount;
+          if (name == 'sugar') sugar += amount;
         }
       }
     }
 
     return Nutrition(
-        calories: calories, protein: protein, fat: fat, carbs: carbs);
+      calories: calories,
+      protein: protein,
+      fat: fat,
+      carbs: carbs,
+      fiber: fiber,
+      sugar: sugar,
+    );
   }
 }
 
@@ -214,12 +224,19 @@ Rules:
   }
 
   Future<Nutrition> estimateNutritionFromIngredients(
-      List<String> ingredients) async {
+    List<String> ingredients, {
+    int? servings,
+  }) async {
     if (_model == null || ingredients.isEmpty) return const Nutrition();
+    final servingsClause = servings != null && servings > 0
+        ? 'The recipe makes $servings servings; totals are for the full batch (all servings combined).'
+        : '';
     final prompt = '''
-Estimate nutrition for one recipe made from: ${ingredients.join(', ')}.
+Estimate nutrition for one recipe made from these ingredients (with amounts):
+${ingredients.join('\n')}
+$servingsClause
 Return strict JSON object with numeric keys: calories, protein, fat, carbs, fiber, sugar.
-Keep values realistic for one full recipe, not per 100g.
+Keep values realistic for one full recipe (entire batch), not per 100g.
 ''';
     final response = await _generateWithFallback(prompt);
     if (response == null) return const Nutrition();

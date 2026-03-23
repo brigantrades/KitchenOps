@@ -80,35 +80,18 @@ class _NameOnboardingBodyState extends ConsumerState<_NameOnboardingBody> {
   }
 
   Future<void> _continue() async {
-    final name = _nameCtrl.text.trim();
-    if (name.isEmpty) {
+    final firstName = _nameCtrl.text.trim();
+    if (firstName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your name.')),
+        const SnackBar(content: Text('Please enter your first name.')),
       );
       return;
     }
     setState(() => _busy = true);
     try {
-      await ref.read(profileRepositoryProvider).upsertProfile(_profileWithName(name));
-      if (!mounted) return;
-      context.go('/');
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not save: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _skip() async {
-    final name = widget.profile?.name.trim().isNotEmpty == true
-        ? widget.profile!.name
-        : 'Leckerly User';
-    setState(() => _busy = true);
-    try {
-      await ref.read(profileRepositoryProvider).upsertProfile(_profileWithName(name));
+      await ref
+          .read(profileRepositoryProvider)
+          .upsertProfile(_profileWithName(firstName));
       if (!mounted) return;
       context.go('/');
     } catch (e) {
@@ -133,14 +116,14 @@ class _NameOnboardingBodyState extends ConsumerState<_NameOnboardingBody> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'What should we call you?',
+              'What is your first name?',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'Your name appears in your profile. You can change it anytime.',
+              'This appears in your profile. You can change it anytime.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -150,7 +133,7 @@ class _NameOnboardingBodyState extends ConsumerState<_NameOnboardingBody> {
               controller: _nameCtrl,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(
-                labelText: 'Name',
+                labelText: 'First Name',
                 border: OutlineInputBorder(),
               ),
               onSubmitted: (_) {
@@ -167,11 +150,6 @@ class _NameOnboardingBodyState extends ConsumerState<_NameOnboardingBody> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Text('Continue'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextButton(
-              onPressed: _busy ? null : _skip,
-              child: const Text('Skip for now'),
             ),
           ],
         ),

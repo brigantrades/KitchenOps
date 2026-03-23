@@ -12,6 +12,7 @@ import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/planner_slot_labels.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -78,7 +79,8 @@ class HomeScreen extends ConsumerWidget {
                           recipes.valueOrNull ?? const <Recipe>[];
                       _showTodayMealsPreview(
                         context,
-                        slots: filledToday,
+                        allPlannerSlots: slots,
+                        filledTodaySlots: filledToday,
                         recipes: allRecipes,
                       );
                     },
@@ -138,7 +140,8 @@ class HomeScreen extends ConsumerWidget {
 
   void _showTodayMealsPreview(
     BuildContext context, {
-    required List<MealPlanSlot> slots,
+    required List<MealPlanSlot> allPlannerSlots,
+    required List<MealPlanSlot> filledTodaySlots,
     required List<Recipe> recipes,
   }) {
     showModalBottomSheet<void>(
@@ -152,7 +155,7 @@ class HomeScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 4),
-              ...slots.map((slot) {
+              ...filledTodaySlots.map((slot) {
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
                   padding: const EdgeInsets.all(12),
@@ -171,7 +174,10 @@ class HomeScreen extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(_mealLabelDisplay(slot.mealLabel)),
+                            Text(
+                              plannerSlotDisplayLabelForWeek(
+                                  allPlannerSlots, slot),
+                            ),
                             Text(
                               _plannedMealDescription(slot, recipes),
                               style: Theme.of(context).textTheme.bodySmall,
@@ -314,12 +320,6 @@ class _StatCard extends StatelessWidget {
       ),
     );
   }
-}
-
-String _mealLabelDisplay(String mealLabel) {
-  if (mealLabel.isEmpty) return 'Meal';
-  final lower = mealLabel.toLowerCase();
-  return lower[0].toUpperCase() + lower.substring(1);
 }
 
 DateTime _dateOnlyLocal(DateTime d) => DateTime(d.year, d.month, d.day);

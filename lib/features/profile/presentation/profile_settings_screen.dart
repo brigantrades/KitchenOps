@@ -23,7 +23,6 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
   TextEditingController? _nameCtrl;
   String? _nameCtrlUserId;
   bool _savingName = false;
-
   @override
   void dispose() {
     _nameCtrl?.dispose();
@@ -101,7 +100,7 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
             final trimmed = ctrl.text.trim();
             if (trimmed.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Name cannot be empty.')),
+                const SnackBar(content: Text('First name cannot be empty.')),
               );
               return;
             }
@@ -125,7 +124,7 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
               ref.invalidate(profileProvider);
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Name updated')),
+                const SnackBar(content: Text('First name updated')),
               );
             } catch (e) {
               if (!context.mounted) return;
@@ -250,8 +249,8 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                                                   pendingHouseholdInvitesProvider);
                                               ref.invalidate(
                                                   plannerSlotsProvider);
-                                              ref.invalidate(
-                                                  groceryItemsProvider);
+                                              invalidateActiveGroceryStreams(
+                                                  ref);
                                               ref.invalidate(listsProvider);
                                               ref.invalidate(recipesProvider);
                                               if (!context.mounted) return;
@@ -307,7 +306,7 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
               ),
               const SizedBox(height: AppSpacing.sm),
               SectionCard(
-                title: 'Name',
+                title: 'First Name',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -316,7 +315,7 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                       textCapitalization: TextCapitalization.words,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        hintText: 'Your name',
+                        hintText: 'Your first name',
                       ),
                     ),
                     const SizedBox(height: AppSpacing.sm),
@@ -330,9 +329,20 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                                 strokeWidth: 2,
                               ),
                             )
-                          : const Text('Save name'),
+                          : const Text('Save first name'),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SectionCard(
+                title: 'Planner window',
+                subtitle:
+                    'The visible week is set for your whole household. Open Household to change it (owner only), or use the tune icon on the Planner tab.',
+                child: OutlinedButton.icon(
+                  onPressed: () => context.push('/household'),
+                  icon: const Icon(Icons.home_outlined),
+                  label: const Text('Open Household'),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),

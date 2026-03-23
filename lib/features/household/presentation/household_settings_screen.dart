@@ -2,11 +2,13 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/household/data/household_repository.dart';
+import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
@@ -222,6 +224,136 @@ class _HouseholdSettingsScreenState
     }
   }
 
+  Future<void> _editHouseholdPlannerWindow(Household household) async {
+    var startDay = household.plannerStartDay;
+    var dayCount = household.plannerDayCount;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModal) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.viewInsetsOf(ctx).bottom + 16,
+                left: 16,
+                right: 16,
+                top: 8,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Household planner default',
+                    style: Theme.of(ctx).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Everyone in this household shares this planner window.',
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: startDay.clamp(0, 6),
+                    decoration: const InputDecoration(
+                      labelText: 'Start day',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('Monday')),
+                      DropdownMenuItem(value: 1, child: Text('Tuesday')),
+                      DropdownMenuItem(value: 2, child: Text('Wednesday')),
+                      DropdownMenuItem(value: 3, child: Text('Thursday')),
+                      DropdownMenuItem(value: 4, child: Text('Friday')),
+                      DropdownMenuItem(value: 5, child: Text('Saturday')),
+                      DropdownMenuItem(value: 6, child: Text('Sunday')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setModal(() => startDay = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: dayCount.clamp(1, 14),
+                    decoration: const InputDecoration(
+                      labelText: 'Number of days',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (var n = 1; n <= 14; n++)
+                        DropdownMenuItem(
+                          value: n,
+                          child: Text('$n day${n == 1 ? '' : 's'}'),
+                        ),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setModal(() => dayCount = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Builder(
+                    builder: (ctx) {
+                      final range = plannerWindowRangeLabel(
+                        startDay.clamp(0, 6),
+                        dayCount.clamp(1, 14),
+                      );
+                      if (range.isEmpty) return const SizedBox.shrink();
+                      return Text(
+                        'Shown as: $range',
+                        style: Theme.of(ctx).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: Theme.of(ctx).colorScheme.primary,
+                            ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () async {
+                      setState(() => _working = true);
+                      try {
+                        await ref
+                            .read(householdRepositoryProvider)
+                            .updateHouseholdPlannerWindow(
+                              householdId: household.id,
+                              plannerStartDay: startDay,
+                              plannerDayCount: dayCount,
+                            );
+                        ref.invalidate(activeHouseholdProvider);
+                        ref.invalidate(profileProvider);
+                        ref.invalidate(plannerSlotsProvider);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Household planner default saved.'),
+                          ),
+                        );
+                      } catch (error) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                              content: Text('Could not save: $error'),
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => _working = false);
+                      }
+                    },
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _loadCreatePersonalRecipesIfNeeded(String? userId) {
     if (userId == null ||
         userId.isEmpty ||
@@ -252,7 +384,7 @@ class _HouseholdSettingsScreenState
       builder: (context) => AlertDialog(
         title: const Text('Remove member?'),
         content: Text(
-          'Remove ${member.name?.trim().isNotEmpty == true ? member.name : (member.invitedEmail ?? member.userId)} from this household?',
+          'Remove ${member.displayName} from this household?',
         ),
         actions: [
           TextButton(
@@ -280,6 +412,49 @@ class _HouseholdSettingsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not remove member: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _promoteMemberToOwner(HouseholdMember member) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Make owner?'),
+        content: Text(
+          '${member.displayName} will be able to edit household settings, '
+          'the planner window, and manage members like you.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Make owner'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _working = true);
+    try {
+      await ref
+          .read(householdRepositoryProvider)
+          .promoteMemberToOwner(member.userId);
+      ref.invalidate(householdMembersProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${member.displayName} is now an owner.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not promote member: $error')),
       );
     } finally {
       if (mounted) setState(() => _working = false);
@@ -377,6 +552,14 @@ class _HouseholdSettingsScreenState
                               : () => _editHouseholdName(household.name),
                           icon: const Icon(Icons.edit_rounded),
                           label: const Text('Edit household name'),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        OutlinedButton.icon(
+                          onPressed: _working
+                              ? null
+                              : () => _editHouseholdPlannerWindow(household),
+                          icon: const Icon(Icons.calendar_view_week_outlined),
+                          label: const Text('Household planner default'),
                         ),
                       ],
                       if (canLeave) ...[
@@ -574,23 +757,38 @@ class _HouseholdSettingsScreenState
                                 ? Icons.shield_outlined
                                 : Icons.person_outline_rounded,
                           ),
-                          title: Text(member.name?.trim().isNotEmpty == true
-                              ? member.name!
-                              : (member.invitedEmail ?? member.userId)),
+                          title: Text(member.displayName),
                           subtitle: Text(
                             '${member.role.name} • ${member.status.name}',
                           ),
                           trailing: isCurrentOwner &&
                                   user != null &&
                                   member.userId != user.id &&
-                                  member.role != HouseholdRole.owner
-                              ? IconButton(
-                                  tooltip: 'Remove member',
-                                  onPressed: _working
-                                      ? null
-                                      : () => _removeMember(member),
-                                  icon: const Icon(
-                                      Icons.person_remove_alt_1_rounded),
+                                  member.role != HouseholdRole.owner &&
+                                  member.status == HouseholdMemberStatus.active
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Make owner',
+                                      onPressed: _working
+                                          ? null
+                                          : () =>
+                                              _promoteMemberToOwner(member),
+                                      icon: const Icon(
+                                        Icons.workspace_premium_outlined,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Remove member',
+                                      onPressed: _working
+                                          ? null
+                                          : () => _removeMember(member),
+                                      icon: const Icon(
+                                        Icons.person_remove_alt_1_rounded,
+                                      ),
+                                    ),
+                                  ],
                                 )
                               : null,
                         ),
