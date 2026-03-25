@@ -9,11 +9,15 @@ import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/theme/theme_extensions.dart';
 import 'package:plateplan/core/ui/food_icon_resolver.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
+import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
+import 'package:plateplan/core/measurement/ingredient_display_units.dart';
+import 'package:plateplan/core/measurement/measurement_system.dart';
+import 'package:plateplan/core/measurement/measurement_system_provider.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/strings/recipe_title_case.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
@@ -1071,13 +1075,14 @@ const _kQualitativePresets = [
 class _IngredientInput {
   _IngredientInput({
     required String name,
-    required this.unitOptions,
+    required List<String> unitOptions,
     required this.selectedUnit,
     String? customUnit,
     String? reorderId,
     bool qualitative = false,
     String qualitativePhrase = '',
-  }) : reorderId = reorderId ?? 'ing_${_nextReorderId++}' {
+  })  : unitOptions = List<String>.from(unitOptions),
+        reorderId = reorderId ?? 'ing_${_nextReorderId++}' {
     nameCtrl.text = name;
     if (customUnit != null) {
       customUnitCtrl.text = customUnit;
@@ -1103,7 +1108,7 @@ class _IngredientInput {
   final TextEditingController amountCtrl = TextEditingController();
   final TextEditingController customUnitCtrl = TextEditingController();
   final TextEditingController qualitativeCustomCtrl = TextEditingController();
-  final List<String> unitOptions;
+  List<String> unitOptions;
   String selectedUnit;
 
   bool qualitative = false;
@@ -1333,6 +1338,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   void _hydrateFromInitialRecipe() {
     final initial = widget.initialRecipe;
     if (initial == null) return;
+    final system = ref.read(measurementSystemProvider);
     _titleCtrl.text = initial.title;
     _servingsCtrl.text = '${initial.servings}';
     _mealType = initial.mealType;
@@ -1349,7 +1355,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _ingredients.clear();
     for (final ingredient in initial.ingredients) {
       if (ingredient.qualitative) {
-        final profile = _detectUnitProfile(ingredient.name);
+        final profile = _detectUnitProfile(ingredient.name, system);
         _ingredients.add(
           _IngredientInput(
             name: ingredient.name,
@@ -1361,7 +1367,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         );
         continue;
       }
-      final profile = _detectUnitProfile(ingredient.name);
+      final profile = _detectUnitProfile(ingredient.name, system);
       final normalizedUnit = ingredient.unit.trim().toLowerCase();
       final isCustom = !profile.options.contains(normalizedUnit);
       // profile.options already ends with 'custom'; do not append again or the
@@ -1464,9 +1470,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     setState(() {});
   }
 
-  _UnitProfile _detectUnitProfile(String ingredientName) {
+  _UnitProfile _detectUnitProfile(String ingredientName, MeasurementSystem system) {
     final lower = ingredientName.toLowerCase();
-    final liquidWords = [
+    const liquidWords = [
       'milk',
       'oil',
       'broth',
@@ -1476,7 +1482,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       'vinegar',
       'stock'
     ];
-    final powderWords = [
+    const powderWords = [
       'flour',
       'sugar',
       'salt',
@@ -1486,21 +1492,111 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       'spice'
     ];
     if (liquidWords.any(lower.contains)) {
-      return const _UnitProfile(
-        options: ['ml', 'l', 'cup', 'tbsp', 'tsp', 'custom'],
-        defaultUnit: 'ml',
-      );
+      return switch (system) {
+        MeasurementSystem.metric => const _UnitProfile(
+            options: ['ml', 'l', 'tsp', 'tbsp', 'custom'],
+            defaultUnit: 'ml',
+          ),
+        MeasurementSystem.imperial => const _UnitProfile(
+            options: [
+              'fl oz',
+              'cup',
+              'tbsp',
+              'tsp',
+              'pt',
+              'qt',
+              'gal',
+              'custom',
+            ],
+            defaultUnit: 'fl oz',
+          ),
+      };
     }
     if (powderWords.any(lower.contains)) {
-      return const _UnitProfile(
-        options: ['tsp', 'tbsp', 'g', 'cup', 'custom'],
-        defaultUnit: 'tsp',
-      );
+      return switch (system) {
+        MeasurementSystem.metric => const _UnitProfile(
+            options: ['tsp', 'tbsp', 'g', 'kg', 'mg', 'custom'],
+            defaultUnit: 'tsp',
+          ),
+        MeasurementSystem.imperial => const _UnitProfile(
+            options: ['tsp', 'tbsp', 'oz', 'cup', 'custom'],
+            defaultUnit: 'tsp',
+          ),
+      };
     }
-    return const _UnitProfile(
-      options: ['g', 'kg', 'piece', 'cup', 'tbsp', 'tsp', 'custom'],
-      defaultUnit: 'g',
-    );
+    return switch (system) {
+      MeasurementSystem.metric => const _UnitProfile(
+          options: ['g', 'kg', 'mg', 'ml', 'l', 'tsp', 'tbsp', 'piece', 'custom'],
+          defaultUnit: 'g',
+        ),
+      MeasurementSystem.imperial => const _UnitProfile(
+          options: [
+            'oz',
+            'lb',
+            'fl oz',
+            'cup',
+            'tbsp',
+            'tsp',
+            'pt',
+            'qt',
+            'gal',
+            'piece',
+            'custom',
+          ],
+          defaultUnit: 'oz',
+        ),
+    };
+  }
+
+  String? _matchUnitOption(List<String> options, String unit) {
+    final t = unit.trim().toLowerCase();
+    for (final o in options) {
+      if (o.toLowerCase() == t) return o;
+    }
+    return null;
+  }
+
+  void _applyMeasurementSystem(MeasurementSystem next) {
+    ref.read(measurementSystemProvider.notifier).setSystem(next);
+    setState(() {
+      for (final row in _ingredients) {
+        final profile = _detectUnitProfile(row.nameCtrl.text, next);
+        row.unitOptions
+          ..clear()
+          ..addAll(profile.options);
+        if (row.qualitative) continue;
+        final amt = _parseIngredientAmount(row.amountCtrl.text);
+        final unit = row.selectedUnit == 'custom'
+            ? row.customUnitCtrl.text.trim()
+            : row.selectedUnit;
+        if (amt == null || unit.isEmpty) continue;
+        final conv = convertAmountAndUnitForMeasurementSystem(
+          amount: amt,
+          unitRaw: unit,
+          target: next,
+        );
+        if (conv != null) {
+          final matched = _matchUnitOption(row.unitOptions, conv.unit);
+          if (matched != null) {
+            row.selectedUnit = matched;
+            row.customUnitCtrl.clear();
+          } else {
+            row.selectedUnit = 'custom';
+            row.customUnitCtrl.text = conv.unit;
+          }
+          row.amountCtrl.text = formatIngredientAmount(conv.amount);
+        } else {
+          final matched = _matchUnitOption(row.unitOptions, unit);
+          if (matched != null) {
+            row.selectedUnit = matched;
+            row.customUnitCtrl.clear();
+          } else {
+            row.selectedUnit = 'custom';
+            row.customUnitCtrl.text = unit;
+          }
+        }
+      }
+    });
   }
 
   /// Rebuilds the recipe sheet and, when open, the ingredients dialog overlay.
@@ -3002,7 +3098,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   Future<void> _addIngredientAndOpenModal() async {
     if (!_canAddAnotherIngredient) return;
     FocusScope.of(context).unfocus();
-    final profile = _detectUnitProfile('');
+    final profile = _detectUnitProfile(
+      '',
+      ref.read(measurementSystemProvider),
+    );
     final row = _IngredientInput(
       name: '',
       unitOptions: profile.options,
@@ -3179,9 +3278,13 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     return SingleChildScrollView(
       child: SectionCard(
         title: 'Ingredients',
+        titleTrailing: MeasurementSystemToggle(
+          onChanged: _applyMeasurementSystem,
+        ),
         subtitle:
             'Tap a chip to edit, or Add ingredient. Use Save in the editor '
-            'when you are finished.',
+            'when you are finished. Switching Metric / US converts amounts '
+            'and updates unit choices.',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

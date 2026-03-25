@@ -11,6 +11,7 @@ class LocalCache {
   static const _homePinnedListIdKey = 'home_pinned_list_id';
   static const _householdCtaHiddenUntilKey = 'home_household_cta_hidden_until';
   static const _plannerLayoutModeKey = 'planner_layout_mode';
+  static const _measurementSystemKey = 'measurement_system';
   static const _plannerSlotsKeyPrefix = 'planner_slots_json_';
 
   static Future<void> init() async {
@@ -113,6 +114,19 @@ class LocalCache {
   String? loadPlannerLayoutMode() {
     final box = Hive.box<String>(_discoverBox);
     final raw = box.get(_plannerLayoutModeKey);
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
+  }
+
+  /// Stored enum name: `metric` or `imperial`.
+  Future<void> saveMeasurementSystem(String name) async {
+    final box = Hive.box<String>(_discoverBox);
+    await box.put(_measurementSystemKey, name);
+  }
+
+  String? loadMeasurementSystem() {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get(_measurementSystemKey);
     if (raw == null || raw.isEmpty) return null;
     return raw;
   }

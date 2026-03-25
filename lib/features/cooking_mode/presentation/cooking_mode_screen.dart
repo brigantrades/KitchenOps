@@ -4,6 +4,9 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:collection/collection.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/config/env.dart';
+import 'package:plateplan/core/measurement/ingredient_display_units.dart';
+import 'package:plateplan/core/measurement/measurement_system_provider.dart';
+import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
@@ -210,10 +213,12 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     if (_nutritionBreakdownOverride.isNotEmpty) {
       return _nutritionBreakdownOverride;
     }
+    final measurementSystem = ref.watch(measurementSystemProvider);
     return recipe.ingredients.map((ingredient) {
       final label = ingredient.qualitative
           ? '${ingredient.name}: ${ingredient.unit}'
-          : '${ingredient.quantityLabel} ${ingredient.name}'.trim();
+          : '${ingredientDisplayQuantityLabel(ingredient, measurementSystem)} ${ingredient.name}'
+              .trim();
       final lineNutrition = ingredient.lineNutrition;
       if (lineNutrition != null && _hasNutritionData(lineNutrition)) {
         return IngredientNutritionBreakdownLine(
@@ -596,6 +601,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
               ? const ['Follow your recipe details.']
               : recipe.instructions;
           final step = steps[_stepIndex.clamp(0, steps.length - 1)];
+          final measurementSystem = ref.watch(measurementSystemProvider);
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -635,8 +641,18 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
               const SizedBox(height: 12),
               _buildNutritionSection(context, recipe),
               const SizedBox(height: 16),
-              Text('Ingredients',
-                  style: Theme.of(context).textTheme.titleLarge),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Ingredients',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  const MeasurementSystemToggle(),
+                ],
+              ),
               const SizedBox(height: 6),
               ...recipe.ingredients.asMap().entries.map(
                     (entry) => Card(
@@ -646,7 +662,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                         title: Text(
                           entry.value.qualitative
                               ? '${entry.value.name} · ${entry.value.unit}'
-                              : '${entry.value.quantityLabel} ${entry.value.name}',
+                              : '${ingredientDisplayQuantityLabel(entry.value, measurementSystem)} ${entry.value.name}',
                         ),
                         onChanged: (_) {
                           setState(() {

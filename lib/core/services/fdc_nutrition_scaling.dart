@@ -1,3 +1,4 @@
+import 'package:plateplan/core/measurement/us_customary_units.dart';
 import 'package:plateplan/core/models/app_models.dart';
 
 /// USDA FoodData Central nutrient ids (see FDC nutrient list).
@@ -100,11 +101,6 @@ Nutrition scaleNutritionProportional(Nutrition base, double factor) {
 /// Result of converting the user's amount + unit to grams for FDC scaling.
 typedef FdcGramResolve = ({double? grams, bool estimated});
 
-const double _mlPerUsCup = 236.588;
-const double _mlPerTbsp = 14.7868;
-const double _mlPerTsp = 4.92892;
-const double _gPerOz = 28.349523125;
-const double _gPerLb = 453.59237;
 
 /// g/ml fallbacks when FDC portions don't match (volume → mass).
 double _densityGPerMlHint(String ingredientNameLower) {
@@ -134,15 +130,15 @@ double? _volumeToMl(double amount, String unitNorm) {
       return amount * 1000;
     case 'cup':
     case 'cups':
-      return amount * _mlPerUsCup;
+      return amount * UsCustomaryUnits.mlPerCup;
     case 'tbsp':
     case 'tablespoon':
     case 'tablespoons':
-      return amount * _mlPerTbsp;
+      return amount * UsCustomaryUnits.mlPerTbsp;
     case 'tsp':
     case 'teaspoon':
     case 'teaspoons':
-      return amount * _mlPerTsp;
+      return amount * UsCustomaryUnits.mlPerTsp;
     default:
       return null;
   }
@@ -213,12 +209,12 @@ FdcGramResolve resolveGramsForFdcFood({
     case 'oz':
     case 'ounce':
     case 'ounces':
-      return (grams: amount * _gPerOz, estimated: false);
+      return (grams: amount * UsCustomaryUnits.gPerAvoirdupoisOz, estimated: false);
     case 'lb':
     case 'lbs':
     case 'pound':
     case 'pounds':
-      return (grams: amount * _gPerLb, estimated: false);
+      return (grams: amount * UsCustomaryUnits.gPerLb, estimated: false);
     case 'ml':
     case 'milliliter':
     case 'milliliters':
@@ -278,7 +274,7 @@ double? brandedServingGrams(Map<String, dynamic> foodDetail) {
     case 'oz':
     case 'ounce':
     case 'ounces':
-      return size * _gPerOz;
+      return size * UsCustomaryUnits.gPerAvoirdupoisOz;
     default:
       return size;
   }

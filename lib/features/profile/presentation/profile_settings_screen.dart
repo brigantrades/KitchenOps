@@ -7,6 +7,7 @@ import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
+import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
@@ -334,6 +335,13 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                     ),
                   ],
                 ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SectionCard(
+                title: 'Recipe ingredients',
+                subtitle:
+                    'Units for new ingredients and for viewing amounts. Saved recipes keep their values; display converts. US customary volumes (cup, fl oz).',
+                child: const MeasurementSystemToggle(),
               ),
               const SizedBox(height: AppSpacing.sm),
               SectionCard(

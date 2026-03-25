@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
-import 'package:plateplan/core/strings/ingredient_amount_display.dart';
+import 'package:plateplan/core/measurement/ingredient_display_units.dart';
+import 'package:plateplan/core/measurement/measurement_system_provider.dart';
+import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/ui/app_surface.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -318,7 +320,8 @@ class _DiscoverRecipeDetailPageState
       case _DiscoverDetailSection.ingredients:
         return SectionCard(
           title: 'Ingredients',
-          child: _buildIngredientsTable(context, recipe),
+          titleTrailing: const MeasurementSystemToggle(),
+          child: _buildIngredientsTable(context, ref, recipe),
         );
       case _DiscoverDetailSection.directions:
         return SectionCard(
@@ -406,11 +409,16 @@ class _DiscoverRecipeDetailPageState
     );
   }
 
-  Widget _buildIngredientsTable(BuildContext context, Recipe recipe) {
+  Widget _buildIngredientsTable(
+    BuildContext context,
+    WidgetRef ref,
+    Recipe recipe,
+  ) {
     if (recipe.ingredients.isEmpty) {
       return const Text('No ingredients available yet.');
     }
 
+    final measurementSystem = ref.watch(measurementSystemProvider);
     final scheme = Theme.of(context).colorScheme;
     final amountHeader =
         MediaQuery.sizeOf(context).width < 380 ? 'Amt.' : 'Amount';
@@ -443,13 +451,10 @@ class _DiscoverRecipeDetailPageState
     final ingredientRows = recipe.ingredients.asMap().entries.map((entry) {
       final index = entry.key;
       final ingredient = entry.value;
-      final amount = ingredient.qualitative
-          ? '—'
-          : formatIngredientAmount(ingredient.amount);
+      final cols = ingredientDisplayColumns(ingredient, measurementSystem);
+      final amount = cols.amount;
       final evenRow = index.isEven;
-      final unit = ingredient.qualitative
-          ? ingredient.unit
-          : _shortUnit(ingredient.unit);
+      final unit = cols.unit;
       return TableRow(
         decoration: BoxDecoration(
           color: evenRow
@@ -490,59 +495,6 @@ class _DiscoverRecipeDetailPageState
         ],
       ),
     );
-  }
-
-  String _shortUnit(String rawUnit) {
-    final unit = rawUnit.trim().toLowerCase();
-    if (unit.isEmpty) return '';
-
-    const shorthand = <String, String>{
-      'tablespoon': 'tbsp',
-      'tablespoons': 'tbsp',
-      'tbsp': 'tbsp',
-      'tbl': 'tbsp',
-      'teaspoon': 'tsp',
-      'teaspoons': 'tsp',
-      'tsp': 'tsp',
-      'ounce': 'oz',
-      'ounces': 'oz',
-      'oz': 'oz',
-      'fluid ounce': 'fl oz',
-      'fluid ounces': 'fl oz',
-      'cup': 'cup',
-      'cups': 'cups',
-      'pint': 'pt',
-      'pints': 'pt',
-      'quart': 'qt',
-      'quarts': 'qt',
-      'gallon': 'gal',
-      'gallons': 'gal',
-      'pound': 'lb',
-      'pounds': 'lb',
-      'lb': 'lb',
-      'lbs': 'lb',
-      'gram': 'g',
-      'grams': 'g',
-      'g': 'g',
-      'kilogram': 'kg',
-      'kilograms': 'kg',
-      'kg': 'kg',
-      'milligram': 'mg',
-      'milligrams': 'mg',
-      'mg': 'mg',
-      'liter': 'l',
-      'liters': 'l',
-      'litre': 'l',
-      'litres': 'l',
-      'l': 'l',
-      'milliliter': 'ml',
-      'milliliters': 'ml',
-      'millilitre': 'ml',
-      'millilitres': 'ml',
-      'ml': 'ml',
-    };
-
-    return shorthand[unit] ?? unit;
   }
 
   Future<void> _setRecipeFlag({bool? favorite, bool? toTry}) async {
