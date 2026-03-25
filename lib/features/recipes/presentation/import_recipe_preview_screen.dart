@@ -87,7 +87,11 @@ class _ImportRecipePreviewScreenState
       }
       final imageUrl = _recipe.imageUrl;
       setState(() {
-        _recipe = recipeFromInstagramGeminiMap(map, imageUrl: imageUrl);
+        _recipe = recipeFromInstagramGeminiMap(
+          map,
+          imageUrl: imageUrl,
+          sourceUrl: _recipe.sourceUrl,
+        );
         _titleCtrl.text = _recipe.title;
         _descCtrl.text = _recipe.description ?? '';
         _instructionDrafts =
@@ -224,6 +228,25 @@ class _ImportRecipePreviewScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (_recipe.source == 'instagram_import') ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      const Chip(
+                        avatar: Icon(Icons.camera_alt_rounded, size: 16),
+                        label: Text('Instagram'),
+                      ),
+                      if (_recipe.sourceUrl != null &&
+                          _recipe.sourceUrl!.trim().isNotEmpty)
+                        const Chip(
+                          avatar: Icon(Icons.link_rounded, size: 16),
+                          label: Text('Original post linked'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
                 TextField(
                   controller: _titleCtrl,
                   textCapitalization: TextCapitalization.sentences,

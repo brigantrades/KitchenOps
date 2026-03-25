@@ -332,7 +332,11 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
         );
       }
 
-      var recipe = recipeFromInstagramGeminiMap(map);
+      final sourceUrl = _extractFirstInstagramUrl(combined);
+      var recipe = recipeFromInstagramGeminiMap(
+        map,
+        sourceUrl: sourceUrl,
+      );
 
       if (imagePath != null && imagePath.isNotEmpty) {
         final file = File(imagePath);
@@ -378,5 +382,22 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     if (lower.endsWith('.gif')) return 'image/gif';
     if (lower.endsWith('.heic')) return 'image/heic';
     return 'image/jpeg';
+  }
+
+  String? _extractFirstInstagramUrl(String raw) {
+    final matches = RegExp(r'https?://[^\s)>\]]+', caseSensitive: false)
+        .allMatches(raw);
+    for (final m in matches) {
+      final candidate = m.group(0);
+      if (candidate == null) continue;
+      final parsed = Uri.tryParse(candidate.trim());
+      if (parsed == null || parsed.host.isEmpty) continue;
+      final host = parsed.host.toLowerCase();
+      final isInstagram = host == 'instagram.com' ||
+          host == 'www.instagram.com' ||
+          host.endsWith('.instagram.com');
+      if (isInstagram) return parsed.toString();
+    }
+    return null;
   }
 }

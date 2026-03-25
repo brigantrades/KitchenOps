@@ -160,6 +160,7 @@ Recipe recipeFromInstagramGeminiMap(
   Map<String, dynamic> json, {
   String? id,
   String? imageUrl,
+  String? sourceUrl,
 }) {
   final tempId =
       id ?? 'import-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(999999)}';
@@ -198,6 +199,7 @@ Recipe recipeFromInstagramGeminiMap(
     isFavorite: false,
     isToTry: false,
     source: 'instagram_import',
+    sourceUrl: sourceUrl,
     visibility: RecipeVisibility.personal,
   );
 }

@@ -217,6 +217,7 @@ class Recipe {
     this.isFavorite = false,
     this.isToTry = false,
     this.source = 'user_created',
+    this.sourceUrl,
     this.userId,
     this.householdId,
     this.visibility = RecipeVisibility.personal,
@@ -241,6 +242,7 @@ class Recipe {
   final bool isFavorite;
   final bool isToTry;
   final String source;
+  final String? sourceUrl;
   final String? userId;
   final String? householdId;
   final RecipeVisibility visibility;
@@ -274,6 +276,7 @@ class Recipe {
     bool? isFavorite,
     bool? isToTry,
     String? source,
+    String? sourceUrl,
     String? userId,
     String? householdId,
     RecipeVisibility? visibility,
@@ -298,6 +301,7 @@ class Recipe {
         isFavorite: isFavorite ?? this.isFavorite,
         isToTry: isToTry ?? this.isToTry,
         source: source ?? this.source,
+        sourceUrl: sourceUrl ?? this.sourceUrl,
         userId: userId ?? this.userId,
         householdId: householdId ?? this.householdId,
         visibility: visibility ?? this.visibility,
@@ -324,6 +328,7 @@ class Recipe {
         'is_favorite': isFavorite,
         'is_to_try': isToTry,
         'source': source,
+        'source_url': sourceUrl,
         'user_id': userId,
         'household_id': householdId,
         'visibility': visibility.name,
@@ -362,6 +367,7 @@ class Recipe {
         isFavorite: json['is_favorite'] == true,
         isToTry: json['is_to_try'] == true,
         source: json['source']?.toString() ?? 'user_created',
+        sourceUrl: json['source_url']?.toString(),
         userId: json['user_id']?.toString(),
         householdId: json['household_id']?.toString(),
         visibility: RecipeVisibility.values.firstWhereOrNull(

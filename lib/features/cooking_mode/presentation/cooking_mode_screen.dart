@@ -9,6 +9,7 @@ import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CookingModeScreen extends ConsumerStatefulWidget {
   const CookingModeScreen({super.key, required this.recipeId});
@@ -28,6 +29,33 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   DateTime? _recipeMissingSince;
   Nutrition? _nutritionOverride;
   List<IngredientNutritionBreakdownLine> _nutritionBreakdownOverride = const [];
+
+  bool _isInstagramSourceUrl(String? raw) {
+    final parsed = Uri.tryParse(raw?.trim() ?? '');
+    if (parsed == null || parsed.host.isEmpty) return false;
+    final host = parsed.host.toLowerCase();
+    return host == 'instagram.com' ||
+        host == 'www.instagram.com' ||
+        host.endsWith('.instagram.com');
+  }
+
+  Future<void> _openSourcePost(String? raw) async {
+    final text = raw?.trim() ?? '';
+    final uri = Uri.tryParse(text);
+    if (uri == null || !_isInstagramSourceUrl(text)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No valid Instagram post link available.')),
+      );
+      return;
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the Instagram post.')),
+      );
+    }
+  }
 
   bool _hasNutritionData(Nutrition n) {
     return n.calories > 0 ||
@@ -441,6 +469,11 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                 children: [
                   Chip(label: Text('${recipe.ingredients.length} ingredients')),
                   Chip(label: Text('${steps.length} steps')),
+                  if (recipe.source == 'instagram_import')
+                    const Chip(
+                      avatar: Icon(Icons.camera_alt_rounded, size: 16),
+                      label: Text('Instagram'),
+                    ),
                   Chip(
                     label: const Text('Cook mode'),
                     backgroundColor: scheme.secondary,
@@ -448,6 +481,17 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                   ),
                 ],
               ),
+              if (_isInstagramSourceUrl(recipe.sourceUrl)) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => _openSourcePost(recipe.sourceUrl),
+                    icon: const Icon(Icons.open_in_new_rounded),
+                    label: const Text('Open Post'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               _buildNutritionSection(context, recipe),
               const SizedBox(height: 16),
