@@ -7,7 +7,9 @@ import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
+import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -55,6 +57,130 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
         const SnackBar(content: Text('Could not open the Instagram post.')),
       );
     }
+  }
+
+  Future<void> _openListsAndSharingSheet(Recipe recipe) async {
+    final scheme = Theme.of(context).colorScheme;
+    final hasSharedHousehold =
+        ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+    final canSharePersonal =
+        hasSharedHousehold && recipe.visibility == RecipeVisibility.personal;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
+        var localFavorite = recipe.isFavorite;
+        var localToTry = recipe.isToTry;
+        var sharing = false;
+        return StatefulBuilder(
+          builder: (ctx, setLocalState) {
+            Future<void> toggleFavorite(bool value) async {
+              await ref
+                  .read(recipesRepositoryProvider)
+                  .toggleFavorite(recipe.id, value);
+              ref.invalidate(recipesProvider);
+              setLocalState(() => localFavorite = value);
+            }
+
+            Future<void> toggleToTry(bool value) async {
+              await ref.read(recipesRepositoryProvider).toggleToTry(
+                    recipe.id,
+                    value,
+                  );
+              ref.invalidate(recipesProvider);
+              setLocalState(() => localToTry = value);
+            }
+
+            Future<void> shareToHousehold() async {
+              if (sharing) return;
+              final user = ref.read(currentUserProvider);
+              if (user == null) return;
+              setLocalState(() => sharing = true);
+              try {
+                await ref
+                    .read(recipesRepositoryProvider)
+                    .copyPersonalRecipeToHousehold(
+                      userId: user.id,
+                      recipeId: recipe.id,
+                    );
+                ref.invalidate(recipesProvider);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Shared to household.')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Could not share recipe: $e')),
+                  );
+                }
+              } finally {
+                if (mounted) setLocalState(() => sharing = false);
+              }
+            }
+
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottom),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Lists & Sharing',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Choose where this recipe appears.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (canSharePersonal)
+                    ListTile(
+                      leading: const Icon(Icons.home_outlined),
+                      title: const Text('Share to household'),
+                      subtitle: const Text(
+                        'Create a copy everyone in your household can access.',
+                      ),
+                      trailing: sharing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : FilledButton.tonal(
+                              onPressed: shareToHousehold,
+                              child: const Text('Share'),
+                            ),
+                    ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.favorite_outline),
+                    title: const Text('My Favorites'),
+                    subtitle: const Text('Show under Favorites on My Recipes.'),
+                    value: localFavorite,
+                    onChanged: (v) => toggleFavorite(v),
+                  ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.bookmark_outline),
+                    title: const Text('To Try'),
+                    subtitle: const Text('Show under To Try on My Recipes.'),
+                    value: localToTry,
+                    onChanged: (v) => toggleToTry(v),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   bool _hasNutritionData(Nutrition n) {
@@ -427,6 +553,20 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
           tooltip: 'Back to Recipes',
           onPressed: () => context.go('/recipes'),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Lists & Sharing',
+            onPressed: () {
+              final recipes = ref.read(recipesProvider).valueOrNull;
+              final recipe = recipes?.firstWhereOrNull(
+                (r) => r.id == widget.recipeId,
+              );
+              if (recipe == null) return;
+              _openListsAndSharingSheet(recipe);
+            },
+            icon: const Icon(Icons.library_books_outlined),
+          ),
+        ],
       ),
       body: recipesAsync.when(
         data: (recipes) {
@@ -467,31 +607,31 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  Chip(label: Text('${recipe.ingredients.length} ingredients')),
-                  Chip(label: Text('${steps.length} steps')),
-                  if (recipe.source == 'instagram_import')
-                    const Chip(
-                      avatar: Icon(Icons.camera_alt_rounded, size: 16),
-                      label: Text('Instagram'),
-                    ),
                   Chip(
-                    label: const Text('Cook mode'),
-                    backgroundColor: scheme.secondary,
-                    labelStyle: TextStyle(color: scheme.onSecondary),
+                    avatar: const Icon(Icons.shopping_basket_rounded, size: 16),
+                    label: Text('${recipe.ingredients.length} ingredients'),
                   ),
+                  Chip(
+                    avatar: const Icon(Icons.format_list_numbered_rounded, size: 16),
+                    label: Text('${steps.length} steps'),
+                  ),
+                  Chip(
+                    avatar: const Icon(Icons.people_alt_rounded, size: 16),
+                    label: Text('${recipe.servings} servings'),
+                  ),
+                  if (recipe.source == 'instagram_import')
+                    ActionChip(
+                      avatar: const Icon(Icons.camera_alt_rounded, size: 16),
+                      label: const Text('Instagram'),
+                      side: BorderSide(
+                        color: scheme.error.withValues(alpha: 0.35),
+                      ),
+                      onPressed: _isInstagramSourceUrl(recipe.sourceUrl)
+                          ? () => _openSourcePost(recipe.sourceUrl)
+                          : null,
+                    ),
                 ],
               ),
-              if (_isInstagramSourceUrl(recipe.sourceUrl)) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton.tonalIcon(
-                    onPressed: () => _openSourcePost(recipe.sourceUrl),
-                    icon: const Icon(Icons.open_in_new_rounded),
-                    label: const Text('Open Post'),
-                  ),
-                ),
-              ],
               const SizedBox(height: 12),
               _buildNutritionSection(context, recipe),
               const SizedBox(height: 16),
