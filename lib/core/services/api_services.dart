@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
@@ -79,17 +80,19 @@ class GeminiService {
       : _apiKey = Env.geminiApiKey,
         _model = Env.hasGemini
             ? GenerativeModel(
-                model: 'gemini-2.0-flash',
+                model: 'gemini-2.5-flash-lite',
                 apiKey: Env.geminiApiKey,
               )
             : null;
 
   final String _apiKey;
   final GenerativeModel? _model;
+  String? _lastGenerateFailure;
+  String? get lastGenerateFailure => _lastGenerateFailure;
   static const List<String> _fallbackModels = <String>[
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
     'gemini-2.0-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
   ];
 
   Future<GenerateContentResponse?> _generateWithFallback(String prompt) async {
@@ -100,16 +103,22 @@ class GeminiService {
     }
 
     try {
-      return await callModel(_model);
-    } catch (_) {
+      final r = await callModel(_model);
+      _lastGenerateFailure = null;
+      return r;
+    } catch (e) {
+      final err = e.toString();
       for (final modelName in _fallbackModels) {
         try {
           final model = GenerativeModel(model: modelName, apiKey: _apiKey);
-          return await callModel(model);
-        } catch (_) {
+          final r = await callModel(model);
+          _lastGenerateFailure = null;
+          return r;
+        } catch (e2, _) {
           continue;
         }
       }
+      _lastGenerateFailure = err;
       return null;
     }
   }
@@ -223,8 +232,93 @@ Rules:
     return const [];
   }
 
+  /// Instagram share import: returns decoded JSON map or null if Gemini is disabled or parsing fails.
+  Future<Map<String, dynamic>?> extractRecipeFromInstagramContent(
+      String sharedContent) async {
+    if (_model == null) return null;
+    final trimmed = sharedContent.trim();
+    if (trimmed.isEmpty) return null;
+    final prompt = '''
+Extract a complete recipe from the following Instagram post content.
+Return ONLY valid JSON with these keys:
+{
+  "title": string,
+  "description": string (short summary),
+  "ingredients": array of objects [{ "name": string, "amount": string, "unit": string }],
+  "instructions": array of strings (each step as one string),
+  "servings": number (default 2 if missing),
+  "prep_time": number (minutes, null if missing),
+  "cook_time": number (minutes, null if missing),
+  "meal_type": "dinner" or "lunch" etc (best guess),
+  "cuisine_tags": array of strings
+}
+Here is the shared content: $trimmed
+
+Serving size guidance:
+- Infer servings from ingredient quantities and yield language (e.g. "serves 4", tray size, pan size, portions).
+- Return an integer servings estimate even if not explicit.
+- If uncertain, choose the most plausible household size from {2, 3, 4, 6}.
+''';
+    final response = await _generateWithFallback(prompt);
+    if (response == null) {
+      debugPrint(
+        'Gemini Instagram import: generateContent returned null (API key, '
+        'network, quota, or all fallback models failed). Check GEMINI_API_KEY '
+        'and device network.',
+      );
+      return null;
+    }
+    final raw = (response.text ?? '').trim();
+    final decoded = _decodeJsonSafe(raw.isEmpty ? '{}' : raw);
+    Map<String, dynamic>? asMap;
+    if (decoded is Map<String, dynamic>) {
+      asMap = decoded;
+    } else if (decoded is List) {
+      for (final item in decoded) {
+        if (item is Map<String, dynamic>) {
+          asMap = item;
+          break;
+        }
+        if (item is Map) {
+          asMap = Map<String, dynamic>.from(item);
+          break;
+        }
+      }
+    }
+
+    bool looksValidRecipeJson(Map<String, dynamic> m) {
+      final ingredients = m['ingredients'];
+      final instructions = m['instructions'];
+      final hasIngredients = ingredients is List && ingredients.isNotEmpty;
+      final hasInstructions = instructions is List && instructions.isNotEmpty;
+      return hasIngredients || hasInstructions;
+    }
+
+    if (asMap != null && looksValidRecipeJson(asMap)) {
+      return asMap;
+    }
+
+    // Truncated raw response (refusals, markdown, empty JSON, wrong shape).
+    final snippet = raw.isEmpty
+        ? '<empty response.text>'
+        : (raw.length <= 800 ? raw : raw.substring(0, 800));
+    debugPrint('Gemini Instagram import: invalid or empty recipe JSON.');
+    debugPrint('Gemini raw (first 800 chars): $snippet');
+    if (asMap != null) {
+      debugPrint(
+        'Gemini decoded keys: ${asMap.keys.toList()} '
+        '(ingredients/instructions missing or empty?)',
+      );
+    } else {
+      debugPrint(
+        'Gemini decode result type: ${decoded.runtimeType} (expected object or array of object)',
+      );
+    }
+    return null;
+  }
+
   Future<Nutrition> estimateNutritionFromIngredients(
-    List<String> ingredients, {
+      List<String> ingredients, {
     int? servings,
   }) async {
     if (_model == null || ingredients.isEmpty) return const Nutrition();

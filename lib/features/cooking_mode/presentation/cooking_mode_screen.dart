@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:collection/collection.dart';
+import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
@@ -24,6 +25,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   final Set<int> _checkedIngredients = {};
   bool _nutritionShowPerServing = false;
   bool _nutritionBusy = false;
+  DateTime? _recipeMissingSince;
   Nutrition? _nutritionOverride;
   List<IngredientNutritionBreakdownLine> _nutritionBreakdownOverride = const [];
 
@@ -390,14 +392,37 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Cooking')),
+      appBar: AppBar(
+        title: const Text('Cooking'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back to Recipes',
+          onPressed: () => context.go('/recipes'),
+        ),
+      ),
       body: recipesAsync.when(
         data: (recipes) {
           final recipe =
               recipes.firstWhereOrNull((r) => r.id == widget.recipeId);
           if (recipe == null) {
+            _recipeMissingSince ??= DateTime.now();
+            final waiting = DateTime.now().difference(_recipeMissingSince!) <
+                const Duration(seconds: 2);
+            if (waiting) {
+              return const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 12),
+                    Text('Opening recipe...'),
+                  ],
+                ),
+              );
+            }
             return const Center(child: Text('Recipe not found'));
           }
+          _recipeMissingSince = null;
 
           final steps = recipe.instructions.isEmpty
               ? const ['Follow your recipe details.']

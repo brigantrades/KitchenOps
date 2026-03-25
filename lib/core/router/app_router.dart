@@ -15,6 +15,8 @@ import 'package:plateplan/features/household/presentation/household_settings_scr
 import 'package:plateplan/features/planner/presentation/planner_screen.dart';
 import 'package:plateplan/features/profile/presentation/onboarding_screen.dart';
 import 'package:plateplan/features/profile/presentation/profile_settings_screen.dart';
+import 'package:plateplan/features/recipes/presentation/import_recipe_preview_screen.dart';
+import 'package:plateplan/features/recipes/presentation/instagram_import_test_screen.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/presentation/recipes_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -34,7 +36,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           !Env.hasSupabase || Supabase.instance.client.auth.currentUser != null;
       final atAuth = state.matchedLocation == '/auth';
       final atOnboarding = state.matchedLocation == '/onboarding';
+      final atImportPreview = state.matchedLocation == '/import-recipe-preview';
+      final atInstagramImportTest =
+          state.matchedLocation == '/instagram-import-test';
 
+      if (!loggedIn && (atImportPreview || atInstagramImportTest)) {
+        return '/auth';
+      }
       if (!loggedIn && !atAuth) return '/auth';
       if (loggedIn && atAuth) return '/';
       if (!loggedIn && atOnboarding) return '/auth';
@@ -76,9 +84,50 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           recipeId: state.pathParameters['recipeId']!,
         ),
       ),
+      GoRoute(
+        path: '/import-recipe-preview',
+        builder: (context, state) {
+          final extra = state.extra;
+          if (extra is! ImportRecipePreviewArgs) {
+            return const _ImportRecipeMissingScreen();
+          }
+          return ImportRecipePreviewScreen(args: extra);
+        },
+      ),
+      GoRoute(
+        path: '/instagram-import-test',
+        builder: (context, state) => const InstagramImportTestScreen(),
+      ),
     ],
   );
 });
+
+class _ImportRecipeMissingScreen extends StatelessWidget {
+  const _ImportRecipeMissingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Import recipe')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('No import data found.'),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () => context.go('/recipes'),
+                child: const Text('Go to Recipes'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _AppScaffold extends ConsumerWidget {
   const _AppScaffold({required this.child});

@@ -370,6 +370,13 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
         shadowColor: Colors.black26,
         surfaceTintColor: Colors.transparent,
         backgroundColor: colors.surfaceBase,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_awesome_outlined),
+            tooltip: 'Test Instagram import',
+            onPressed: () => context.push('/instagram-import-test'),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _createRecipeManually,

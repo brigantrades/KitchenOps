@@ -2,17 +2,22 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/router/app_router.dart';
+import 'package:plateplan/core/router/root_navigation.dart';
 import 'package:plateplan/core/services/meal_reminder_notification_service.dart';
 import 'package:plateplan/core/services/push_notification_service.dart';
+import 'package:plateplan/core/services/share_handler_service.dart';
 import 'package:plateplan/core/theme/app_theme.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/import_recipe_preview_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show User;
 
 final pushNotificationServiceProvider =
     Provider<PushNotificationService>((ref) => PushNotificationService());
@@ -27,6 +32,7 @@ class LeckerlyApp extends ConsumerStatefulWidget {
 class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
     with WidgetsBindingObserver {
   bool _wasBackgrounded = false;
+  bool _shareInitScheduled = false;
 
   @override
   void initState() {
@@ -74,6 +80,93 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
     final router = ref.watch(appRouterProvider);
     final currentUser = ref.watch(currentUserProvider);
     final mealReminders = ref.read(mealReminderNotificationServiceProvider);
+
+    if (!_shareInitScheduled) {
+      _shareInitScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(shareImportNotifierProvider.notifier).ensureInitialized();
+      });
+    }
+
+    ref.listen<User?>(currentUserProvider, (prev, next) {
+      if (prev == null && next != null) {
+        ref.read(shareImportNotifierProvider.notifier).flushPendingAfterLogin();
+      }
+    });
+    ref.listen<ShareImportState>(shareImportNotifierProvider, (prev, next) {
+      if (next.isLoading && !(prev?.isLoading ?? false)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final c = rootNavigatorKey.currentContext;
+          if (c == null) return;
+          showDialog<void>(
+            context: c,
+            barrierDismissible: false,
+            builder: (_) => const AlertDialog(
+              content: Row(
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(width: 16),
+                  Expanded(child: Text('Importing recipe…')),
+                ],
+              ),
+            ),
+          );
+        });
+      }
+      if (!next.isLoading && (prev?.isLoading ?? false)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final c = rootNavigatorKey.currentContext;
+          if (c == null) return;
+          Navigator.of(c, rootNavigator: true).maybePop();
+        });
+      }
+      if (next.recipeToNavigate != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final c = rootNavigatorKey.currentContext;
+          if (c == null) return;
+          GoRouter.of(c).push(
+            '/import-recipe-preview',
+            extra: ImportRecipePreviewArgs(
+              recipe: next.recipeToNavigate!,
+              sourcePayload: next.navigationSourcePayload,
+            ),
+          );
+          ref.read(shareImportNotifierProvider.notifier).clearRecipeNavigation();
+        });
+      }
+      if (next.snackMessage != null &&
+          next.snackMessage != prev?.snackMessage) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final c = rootNavigatorKey.currentContext;
+          if (c == null) return;
+          ScaffoldMessenger.of(c).showSnackBar(
+            SnackBar(content: Text(next.snackMessage!)),
+          );
+          ref.read(shareImportNotifierProvider.notifier).clearSnack();
+        });
+      }
+      if (next.errorMessage != null &&
+          next.errorMessage != prev?.errorMessage) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final c = rootNavigatorKey.currentContext;
+          if (c == null) return;
+          ScaffoldMessenger.of(c).showSnackBar(
+            SnackBar(
+              content: Text(next.errorMessage!),
+              action: next.canRetry
+                  ? SnackBarAction(
+                      label: 'Retry',
+                      onPressed: () => ref
+                          .read(shareImportNotifierProvider.notifier)
+                          .retryLastImport(),
+                    )
+                  : null,
+            ),
+          );
+        });
+      }
+    });
+
     ref.listen<AsyncValue<List<MealPlanSlot>>>(plannerSlotsProvider,
         (prev, next) {
       next.whenData((slots) {
