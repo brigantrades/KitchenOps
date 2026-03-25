@@ -3,9 +3,40 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
+import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+/// Hive cache key for the visible planner window (anchor + window pref).
+String plannerWindowSlotsCacheKey(
+  String userId,
+  DateTime anchor,
+  PlannerWindowPreference pref,
+) {
+  final mondays = weekStartMondaysForWindow(anchor, pref).toList()
+    ..sort((a, b) => a.compareTo(b));
+  final mons = mondays
+      .map((m) => m.toIso8601String().split('T').first)
+      .join('|');
+  return '$userId|$mons|${pref.startDay}|${pref.dayCount}';
+}
+
+/// Hive cache key for home 3-day outlook (covers one or two ISO weeks).
+String plannerOutlookSlotsCacheKey(String userId, List<DateTime> dates) {
+  final mondays = weekStartMondaysForDates(dates).toList()
+    ..sort((a, b) => a.compareTo(b));
+  final mons = mondays
+      .map((m) => m.toIso8601String().split('T').first)
+      .join('|');
+  return '$userId|$mons|outlook';
+}
+
+/// Hive cache key for month-scoped planner queries.
+String plannerMonthSlotsCacheKey(String userId, DateTime monthStart) {
+  final m = firstDayOfPlannerMonth(monthStart);
+  return '$userId|month|${m.toIso8601String().split('T').first}';
+}
 
 class PlannerRepository {
   final SupabaseClient _client = Supabase.instance.client;
@@ -111,7 +142,29 @@ class PlannerRepository {
     }
   }
 
+  /// Only cache a resolved non-null household. Caching `null` caused every
+  /// planner query to stay empty forever if the first fetch ran before profile
+  /// / membership was ready.
+  String? _householdCacheUserId;
+  String? _householdCacheValue;
+
   Future<String?> _householdForUser(String userId) async {
+    if (_householdCacheUserId == userId &&
+        _householdCacheValue != null &&
+        _householdCacheValue!.isNotEmpty) {
+      return _householdCacheValue;
+    }
+    _householdCacheUserId = userId;
+    final resolved = await _resolveHouseholdForUser(userId);
+    if (resolved != null && resolved.isNotEmpty) {
+      _householdCacheValue = resolved;
+    } else {
+      _householdCacheValue = null;
+    }
+    return resolved;
+  }
+
+  Future<String?> _resolveHouseholdForUser(String userId) async {
     await _ensureProfileRow(userId);
     final profile = await _client
         .from('profiles')
@@ -195,23 +248,13 @@ class PlannerRepository {
       yield const [];
       return;
     }
-    final date = weekStart.toIso8601String().split('T').first;
     final initial = await listSlots(userId, weekStart);
     yield initial;
+    // Realtime sends incremental row batches, not the full table — refetch on each event.
     yield* _client
         .from('meal_plan_slots')
         .stream(primaryKey: ['id'])
-        .order('slot_order')
-        .asyncMap((rows) async {
-          final slots = rows
-              .whereType<Map<String, dynamic>>()
-              .where((row) =>
-                  row['household_id']?.toString() == householdId &&
-                  row['week_start']?.toString() == date)
-              .map(MealPlanSlot.fromJson)
-              .toList();
-          return _hydrateSlotsWithAssignments(slots);
-        });
+        .asyncMap((_) async => listSlots(userId, weekStart));
   }
 
   /// Slots whose calendar dates fall in the planner window starting at [anchorDate].
@@ -252,35 +295,105 @@ class PlannerRepository {
     }
     final initial = await listPlannerWindowSlots(userId, anchorDate, pref);
     yield initial;
-    final allowed = calendarDatesForPlannerWindow(anchorDate, pref)
-        .map(plannerDateOnly)
-        .toSet();
-    final mondays = weekStartMondaysForWindow(anchorDate, pref);
-    final mondayStrs = mondays
-        .map((m) => m.toIso8601String().split('T').first)
-        .toSet();
-
+    // Realtime sends incremental row batches — refetch the full window on each event.
     yield* _client
         .from('meal_plan_slots')
         .stream(primaryKey: ['id'])
-        .order('slot_order')
-        .asyncMap((rows) async {
-          final slots = rows
-              .whereType<Map<String, dynamic>>()
-              .where((row) {
-                if (row['household_id']?.toString() != householdId) {
-                  return false;
-                }
-                final ws = row['week_start']?.toString();
-                return mondayStrs.contains(ws);
-              })
-              .map(MealPlanSlot.fromJson)
-              .where(
-                (s) => allowed.contains(plannerDateOnly(calendarDateForSlot(s))),
-              )
-              .toList();
-          return _hydrateSlotsWithAssignments(slots);
-        });
+        .asyncMap(
+          (_) async => listPlannerWindowSlots(userId, anchorDate, pref),
+        );
+  }
+
+  /// Slots whose calendar dates are in [calendarDates] (local, date-only).
+  Future<List<MealPlanSlot>> listPlannerDatesSlots(
+    String userId,
+    List<DateTime> calendarDates,
+  ) async {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) return [];
+    if (calendarDates.isEmpty) return [];
+    final allowed = calendarDates.map(plannerDateOnly).toSet();
+    final buckets = weekStartMondaysForDates(allowed);
+    final byId = <String, MealPlanSlot>{};
+    final slotLists = await Future.wait(
+      buckets.map((mon) => listSlots(userId, mon)),
+    );
+    for (final slots in slotLists) {
+      for (final s in slots) {
+        if (allowed.contains(plannerDateOnly(calendarDateForSlot(s)))) {
+          byId[s.id] = s;
+        }
+      }
+    }
+    return byId.values.toList();
+  }
+
+  Stream<List<MealPlanSlot>> streamPlannerDatesSlots(
+    String userId,
+    List<DateTime> calendarDates,
+  ) async* {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) {
+      yield const [];
+      return;
+    }
+    if (calendarDates.isEmpty) {
+      yield const [];
+      return;
+    }
+    final initial = await listPlannerDatesSlots(userId, calendarDates);
+    yield initial;
+    // Realtime sends incremental row batches — refetch covered dates on each event.
+    yield* _client
+        .from('meal_plan_slots')
+        .stream(primaryKey: ['id'])
+        .asyncMap(
+          (_) async => listPlannerDatesSlots(userId, calendarDates),
+        );
+  }
+
+  /// Slots whose calendar date falls in the month of [monthStart] (local).
+  Future<List<MealPlanSlot>> listPlannerMonthSlots(
+    String userId,
+    DateTime monthStart,
+  ) async {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) return [];
+    final month = firstDayOfPlannerMonth(monthStart);
+    final allowed = plannerCalendarDatesInMonth(month);
+    final buckets = weekStartMondaysForCalendarMonth(month);
+    final byId = <String, MealPlanSlot>{};
+    final slotLists = await Future.wait(
+      buckets.map((mon) => listSlots(userId, mon)),
+    );
+    for (final slots in slotLists) {
+      for (final s in slots) {
+        final cal = plannerDateOnly(calendarDateForSlot(s));
+        if (allowed.contains(cal)) {
+          byId[s.id] = s;
+        }
+      }
+    }
+    return byId.values.toList();
+  }
+
+  Stream<List<MealPlanSlot>> streamPlannerMonthSlots(
+    String userId,
+    DateTime monthStart,
+  ) async* {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) {
+      yield const [];
+      return;
+    }
+    final month = firstDayOfPlannerMonth(monthStart);
+    final initial = await listPlannerMonthSlots(userId, month);
+    yield initial;
+    // Realtime sends incremental row batches — refetch the month on each event.
+    yield* _client
+        .from('meal_plan_slots')
+        .stream(primaryKey: ['id'])
+        .asyncMap((_) async => listPlannerMonthSlots(userId, month));
   }
 
   Future<void> ensureDefaultSlots(String userId, DateTime weekStart) async {
@@ -683,6 +796,16 @@ final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
     yield const [];
     return;
   }
+  final cache = ref.read(localCacheProvider);
+  final cacheKey = plannerWindowSlotsCacheKey(user.id, anchor, pref);
+  final cachedRaw = cache.loadPlannerSlotList(cacheKey);
+  if (cachedRaw != null && cachedRaw.isNotEmpty) {
+    try {
+      yield cachedRaw.map(MealPlanSlot.fromJson).toList();
+    } catch (_) {
+      // Stale or incompatible cache — wait for network.
+    }
+  }
   final repo = ref.watch(plannerRepositoryProvider);
   final mondays = weekStartMondaysForWindow(anchor, pref);
   // Do not block the first stream emission on default-slot creation (many round-trips).
@@ -693,5 +816,132 @@ final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
       mondays.map((m) => repo.ensureDefaultSlots(user.id, m)),
     ),
   );
-  yield* repo.streamPlannerWindowSlots(user.id, anchor, pref);
+  await for (final slots
+      in repo.streamPlannerWindowSlots(user.id, anchor, pref)) {
+    unawaited(
+      cache.savePlannerSlotList(
+        cacheKey,
+        slots.map((s) => s.toJson()).toList(),
+      ),
+    );
+    yield slots;
+  }
+});
+
+/// Today through two days ahead (local), independent of planner week navigation.
+final plannerThreeDayOutlookSlotsProvider =
+    StreamProvider.autoDispose<List<MealPlanSlot>>((ref) async* {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) {
+    yield const [];
+    return;
+  }
+  final dates = plannerOutlookDates(DateTime.now());
+  final cache = ref.read(localCacheProvider);
+  final cacheKey = plannerOutlookSlotsCacheKey(user.id, dates);
+  final cachedRaw = cache.loadPlannerSlotList(cacheKey);
+  if (cachedRaw != null && cachedRaw.isNotEmpty) {
+    try {
+      yield cachedRaw.map(MealPlanSlot.fromJson).toList();
+    } catch (_) {
+      // Stale cache
+    }
+  }
+  final repo = ref.watch(plannerRepositoryProvider);
+  final mondays = weekStartMondaysForDates(dates);
+  unawaited(
+    Future.wait(
+      mondays.map((m) => repo.ensureDefaultSlots(user.id, m)),
+    ),
+  );
+  await for (final slots in repo.streamPlannerDatesSlots(user.id, dates)) {
+    unawaited(
+      cache.savePlannerSlotList(
+        cacheKey,
+        slots.map((s) => s.toJson()).toList(),
+      ),
+    );
+    yield slots;
+  }
+});
+
+/// Sets planner window anchor and selected day so [day] is visible, then open Planner.
+void focusPlannerOnCalendarDate(WidgetRef ref, DateTime day) {
+  final pref = ref.read(effectivePlannerWindowProvider);
+  final dayOnly = plannerDateOnly(day);
+  final anchor = anchorDateForWindowContaining(dayOnly, pref);
+  ref.read(weekStartProvider.notifier).state = anchor;
+  final windowDates = calendarDatesForPlannerWindow(anchor, pref);
+  final idx = windowDates.indexWhere((d) => plannerDateOnly(d) == dayOnly);
+  ref.read(selectedPlannerDayProvider.notifier).state =
+      idx >= 0 ? idx.clamp(0, pref.dayCount - 1) : 0;
+}
+
+enum PlannerLayoutMode { list, calendar }
+
+class PlannerLayoutModeNotifier extends Notifier<PlannerLayoutMode> {
+  @override
+  PlannerLayoutMode build() {
+    final raw = ref.read(localCacheProvider).loadPlannerLayoutMode();
+    if (raw == null) return PlannerLayoutMode.list;
+    return PlannerLayoutMode.values.firstWhere(
+      (m) => m.name == raw,
+      orElse: () => PlannerLayoutMode.list,
+    );
+  }
+
+  void setMode(PlannerLayoutMode mode) {
+    state = mode;
+    unawaited(ref.read(localCacheProvider).savePlannerLayoutMode(mode.name));
+  }
+}
+
+final plannerLayoutModeProvider =
+    NotifierProvider<PlannerLayoutModeNotifier, PlannerLayoutMode>(
+  PlannerLayoutModeNotifier.new,
+);
+
+/// Invalidates window slots and the month stream for [calendarDate]'s month.
+void invalidatePlannerSlotCaches(WidgetRef ref, DateTime calendarDate) {
+  ref.invalidate(plannerSlotsProvider);
+  ref.invalidate(plannerThreeDayOutlookSlotsProvider);
+  ref.invalidate(
+    plannerMonthSlotsProvider(firstDayOfPlannerMonth(calendarDate)),
+  );
+}
+
+final plannerMonthSlotsProvider = StreamProvider.autoDispose
+    .family<List<MealPlanSlot>, DateTime>((ref, monthStart) async* {
+  final user = ref.watch(currentUserProvider);
+  final month = firstDayOfPlannerMonth(monthStart);
+  if (user == null) {
+    yield const [];
+    return;
+  }
+  final cache = ref.read(localCacheProvider);
+  final cacheKey = plannerMonthSlotsCacheKey(user.id, month);
+  final cachedRaw = cache.loadPlannerSlotList(cacheKey);
+  if (cachedRaw != null && cachedRaw.isNotEmpty) {
+    try {
+      yield cachedRaw.map(MealPlanSlot.fromJson).toList();
+    } catch (_) {
+      // Stale cache
+    }
+  }
+  final repo = ref.watch(plannerRepositoryProvider);
+  final mondays = weekStartMondaysForCalendarMonth(month);
+  unawaited(
+    Future.wait(
+      mondays.map((m) => repo.ensureDefaultSlots(user.id, m)),
+    ),
+  );
+  await for (final slots in repo.streamPlannerMonthSlots(user.id, month)) {
+    unawaited(
+      cache.savePlannerSlotList(
+        cacheKey,
+        slots.map((s) => s.toJson()).toList(),
+      ),
+    );
+    yield slots;
+  }
 });

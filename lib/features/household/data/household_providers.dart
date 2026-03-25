@@ -7,10 +7,14 @@ import 'package:plateplan/features/profile/data/profile_providers.dart';
 final householdRepositoryProvider =
     Provider<HouseholdRepository>((ref) => HouseholdRepository());
 
-final activeHouseholdProvider = FutureProvider<Household?>((ref) async {
+final activeHouseholdProvider = StreamProvider<Household?>((ref) async* {
   final user = ref.watch(currentUserProvider);
-  if (user == null) return null;
-  return ref.watch(householdRepositoryProvider).fetchActiveHousehold(user.id);
+  if (user == null) {
+    yield null;
+    return;
+  }
+  final repo = ref.watch(householdRepositoryProvider);
+  yield* repo.streamActiveHousehold(user.id);
 });
 
 final activeHouseholdIdProvider = Provider<String?>((ref) {

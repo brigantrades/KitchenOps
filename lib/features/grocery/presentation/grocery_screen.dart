@@ -42,6 +42,22 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     invalidateActiveGroceryStreams(ref);
   }
 
+  Future<void> _toggleItemStatus(GroceryItem item) async {
+    final next =
+        item.isDone ? GroceryItemStatus.open : GroceryItemStatus.done;
+    try {
+      await ref
+          .read(groceryRepositoryProvider)
+          .updateItemStatus(item.id, next);
+      invalidateActiveGroceryStreams(ref);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not update item right now.')),
+      );
+    }
+  }
+
   Future<void> _addFromRecent(
     RecentGroceryEntry entry,
     List<GroceryItem> currentItems,
@@ -1077,6 +1093,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                             showNewBadge: showNewBadge,
                             onRemove: _removeItem,
                             onUpdateQuantity: _promptUpdateQuantity,
+                            onToggleStatus: _toggleItemStatus,
                           );
                         },
                       );
@@ -1401,12 +1418,14 @@ class _GroceryItemCard extends StatelessWidget {
     required this.showNewBadge,
     required this.onRemove,
     required this.onUpdateQuantity,
+    required this.onToggleStatus,
   });
 
   final GroceryItem item;
   final bool showNewBadge;
   final Future<void> Function(GroceryItem item) onRemove;
   final Future<void> Function(GroceryItem item) onUpdateQuantity;
+  final Future<void> Function(GroceryItem item) onToggleStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -1417,6 +1436,13 @@ class _GroceryItemCard extends StatelessWidget {
         : '${_displayQuantity(quantityValue)} ${item.unit!.trim()}';
     final scheme = Theme.of(context).colorScheme;
     final foodAsset = foodIconAssetForName(item.name, category: item.category);
+    final nameStyle = TextStyle(
+      color: scheme.onSurface.withValues(alpha: item.isDone ? 0.55 : 1),
+      fontWeight: FontWeight.w600,
+      fontSize: 12,
+      decoration: item.isDone ? TextDecoration.lineThrough : null,
+      decorationColor: scheme.onSurface.withValues(alpha: 0.45),
+    );
     return Material(
       color: scheme.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(16),
@@ -1481,11 +1507,7 @@ class _GroceryItemCard extends StatelessWidget {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: scheme.onSurface,
-                                fontWeight: FontWeight.w600,
-                                fontSize: ultraCompact ? 12 : 12,
-                              ),
+                              style: nameStyle,
                             ),
                           ),
                           if (ultraCompact && hasMultipleQuantity) ...[
@@ -1542,6 +1564,33 @@ class _GroceryItemCard extends StatelessWidget {
                             ),
                           ],
                         ],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 30,
+                        minHeight: 30,
+                      ),
+                      tooltip: item.isDone
+                          ? 'Mark as not purchased'
+                          : 'Mark as purchased',
+                      onPressed: () => unawaited(onToggleStatus(item)),
+                      icon: Icon(
+                        item.isDone
+                            ? Icons.check_circle_rounded
+                            : Icons.circle_outlined,
+                        size: 18,
+                        color: item.isDone
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
                       ),
                     ),
                   ),

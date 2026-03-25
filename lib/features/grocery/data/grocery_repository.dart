@@ -776,10 +776,25 @@ class GroceryRepository {
     return _client.from('list_items').delete().eq('id', itemId);
   }
 
+  /// Deletes all [GroceryItemStatus.done] rows for [listId] (e.g. after shopping).
+  Future<void> removeDoneItemsForList(String listId) {
+    return _client
+        .from('list_items')
+        .delete()
+        .eq('list_id', listId)
+        .eq('status', GroceryItemStatus.done.dbValue);
+  }
+
   Future<void> updateItemQuantity(String itemId, String quantity) {
     return _client
         .from('list_items')
         .update({'quantity': quantity}).eq('id', itemId);
+  }
+
+  Future<void> updateItemStatus(String itemId, GroceryItemStatus status) {
+    return _client
+        .from('list_items')
+        .update({'status': status.dbValue}).eq('id', itemId);
   }
 
   Future<void> removeItemsByRecipe(String recipeId) {

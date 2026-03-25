@@ -2,17 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:collection/collection.dart';
-import 'package:plateplan/core/ui/action_pill.dart';
 import 'package:plateplan/core/ui/app_surface.dart';
-import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
+import 'package:plateplan/features/home/presentation/home_outlook_day_card.dart';
+import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/core/models/app_models.dart';
-import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -21,8 +20,6 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final planner = ref.watch(plannerSlotsProvider);
-    final grocery = ref.watch(groceryItemsProvider);
-    final recipes = ref.watch(recipesProvider);
     final pendingInvites = ref.watch(pendingHouseholdInvitesProvider);
     final pendingInviteCount = pendingInvites.valueOrNull?.length ?? 0;
     return Scaffold(
@@ -42,162 +39,366 @@ class HomeScreen extends ConsumerWidget {
         ],
       ),
       body: AppSurface(
-        child: Column(
-          children: [
-            _HomeHeader(plannerSlots: planner),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _StatCard(
-                    title: 'Today',
-                    icon: Icons.calendar_today_rounded,
-                    value: planner.when(
-                      data: (slots) => _todayMealsStatLabel(
-                        _filledTodaySlots(slots).length,
-                      ),
-                      loading: () => '...',
-                      error: (e, _) => 'Error',
-                    ),
-                    onTap: () {
-                      final slots = planner.valueOrNull;
-                      if (slots == null) return;
-                      final filledToday =
-                          _filledTodaySlots(slots).toList();
-                      if (filledToday.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('No meals planned for today yet.'),
-                          ),
-                        );
-                        return;
-                      }
-                      final allRecipes =
-                          recipes.valueOrNull ?? const <Recipe>[];
-                      _showTodayMealsPreview(
-                        context,
-                        allPlannerSlots: slots,
-                        filledTodaySlots: filledToday,
-                        recipes: allRecipes,
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _StatCard(
-                    title: 'Grocery',
-                    icon: Icons.shopping_basket_rounded,
-                    value: grocery.when(
-                      data: (items) => '${items.length} items',
-                      loading: () => '...',
-                      error: (e, _) => 'Error',
-                    ),
-                    onTap: () => context.go('/grocery'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            SectionCard(
-              title: 'Quick jump',
-              subtitle: 'Everything from planning to discovery in one tap.',
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ActionPill(
-                    label: 'Recipes',
-                    icon: Icons.menu_book_rounded,
-                    onTap: () => context.go('/recipes'),
-                  ),
-                  ActionPill(
-                    label: 'Planner',
-                    icon: Icons.calendar_month_rounded,
-                    onTap: () => context.go('/planner'),
-                  ),
-                  ActionPill(
-                    label: 'Grocery',
-                    icon: Icons.shopping_cart_checkout_rounded,
-                    onTap: () => context.go('/grocery'),
-                  ),
-                  ActionPill(
-                    label: 'Discover',
-                    icon: Icons.auto_awesome_rounded,
-                    onTap: () => context.go('/discover'),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _HomeHeader(plannerSlots: planner),
+              const SizedBox(height: 16),
+              const _HomeThreeDayOutlook(),
+              const SizedBox(height: 16),
+              const _HomeGrocerySnippet(),
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  void _showTodayMealsPreview(
-    BuildContext context, {
-    required List<MealPlanSlot> allPlannerSlots,
-    required List<MealPlanSlot> filledTodaySlots,
-    required List<Recipe> recipes,
-  }) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return BrandedSheetScaffold(
-          title: 'Today\'s Meals',
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 4),
-              ...filledTodaySlots.map((slot) {
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.45),
+class _HomeThreeDayOutlook extends ConsumerWidget {
+  const _HomeThreeDayOutlook();
+
+  static const double _loadingMinHeight = 96;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final outlook = ref.watch(plannerThreeDayOutlookSlotsProvider);
+    final recipesAsync = ref.watch(recipesProvider);
+    final dates = plannerOutlookDates(DateTime.now());
+
+    return SectionCard(
+      title: '3-Day Outlook',
+      subtitle: 'Your curated culinary schedule',
+      titleTrailing: TextButton(
+        onPressed: () => context.go('/planner'),
+        style: TextButton.styleFrom(
+          foregroundColor: Theme.of(context).colorScheme.primary,
+          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+        ),
+        child: const Text('VIEW FULL PLAN'),
+      ),
+      child: outlook.when(
+        skipLoadingOnReload: true,
+        loading: () => const SizedBox(
+          height: _loadingMinHeight,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+        error: (e, _) => Text(
+          'Could not load outlook: $e',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        data: (slots) {
+          return recipesAsync.when(
+            skipLoadingOnReload: true,
+            loading: () => const SizedBox(
+              height: _loadingMinHeight,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (e, _) => Text(
+              'Could not load recipes: $e',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            data: (recipes) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < dates.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 12),
+                    HomeOutlookDayCard(
+                      date: dates[i],
+                      outlookIndex: i,
+                      daySlots: slots
+                          .where((s) =>
+                              plannerDateOnly(calendarDateForSlot(s)) ==
+                              plannerDateOnly(dates[i]))
+                          .sorted(
+                              (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                          .toList(),
+                      recipes: recipes,
+                      onTap: () {
+                        focusPlannerOnCalendarDate(ref, dates[i]);
+                        context.go('/planner');
+                      },
+                    ),
+                  ],
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+Future<void> _toggleGroceryItemStatus(WidgetRef ref, GroceryItem item) async {
+  final next =
+      item.isDone ? GroceryItemStatus.open : GroceryItemStatus.done;
+  try {
+    await ref.read(groceryRepositoryProvider).updateItemStatus(item.id, next);
+    invalidateActiveGroceryStreams(ref);
+  } catch (_) {
+    // Realtime / next fetch reconciles; avoid noisy toasts for transient failures.
+  }
+}
+
+Future<void> _promptClearPurchasedFromHome(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final items = ref.read(groceryItemsProvider).valueOrNull;
+  final purchasedCount = items?.where((i) => i.isDone).length ?? 0;
+  if (purchasedCount == 0) return;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Clear purchased items?'),
+      content: Text(
+        'Remove $purchasedCount purchased '
+        '${purchasedCount == 1 ? 'item' : 'items'} from your list? '
+        'This cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Clear'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  final lists = ref.read(listsProvider).valueOrNull ?? [];
+  final selectedListId = ref.read(selectedListIdProvider);
+  final hasSharedHousehold =
+      ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+  final profileOrder =
+      ref.read(profileProvider).valueOrNull?.groceryListOrder ??
+          GroceryListOrder.empty;
+  final effectiveId = effectiveGroceryListId(
+    lists: lists,
+    selectedListId: selectedListId,
+    hasSharedHousehold: hasSharedHousehold,
+    profileOrder: profileOrder,
+  );
+  if (effectiveId == null || effectiveId.isEmpty) return;
+  try {
+    await ref
+        .read(groceryRepositoryProvider)
+        .removeDoneItemsForList(effectiveId);
+    invalidateActiveGroceryStreams(ref);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Removed $purchasedCount purchased '
+          '${purchasedCount == 1 ? 'item' : 'items'}.',
+        ),
+      ),
+    );
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not clear purchased items.')),
+    );
+  }
+}
+
+/// Warm cream card in light mode; surface container in dark mode.
+class _HomeGrocerySnippet extends ConsumerWidget {
+  const _HomeGrocerySnippet();
+
+  static const Color _lightCream = Color(0xFFF5F0E8);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final async = ref.watch(groceryItemsProvider);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? scheme.surfaceContainerHigh : _lightCream,
+        borderRadius: AppRadius.md,
+        boxShadow: AppShadows.soft,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Grocery Snippet',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.restaurant_menu_rounded),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                IconButton(
+                  tooltip: 'Open grocery list',
+                  onPressed: () => context.go('/grocery'),
+                  icon: Icon(
+                    Icons.shopping_basket_rounded,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            async.when(
+              skipLoadingOnReload: true,
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, _) => Text(
+                'Could not load groceries: $e',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              data: (items) {
+                if (items.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'No items on your list yet.',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          child: FilledButton.tonal(
+                            onPressed: () => context.go('/grocery'),
+                            child: const Text('ADD ITEMS'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                final open =
+                    items.where((i) => !i.isDone).toList(growable: false);
+                final done = items.where((i) => i.isDone).toList(growable: false);
+                final preview = [...open, ...done].take(4).toList();
+                final purchasedCount = done.length;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (purchasedCount > 0) ...[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              _promptClearPurchasedFromHome(context, ref),
+                          icon: const Icon(Icons.done_all_outlined, size: 20),
+                          label: Text('Clear $purchasedCount purchased'),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    for (final item in preview)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            Text(
-                              plannerSlotDisplayLabelForWeek(
-                                  allPlannerSlots, slot),
+                            SizedBox(
+                              width: 40,
+                              height: 40,
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                alignment: Alignment.center,
+                                tooltip: item.isDone
+                                    ? 'Mark as not purchased'
+                                    : 'Mark as purchased',
+                                onPressed: () =>
+                                    _toggleGroceryItemStatus(ref, item),
+                                icon: Icon(
+                                  item.isDone
+                                      ? Icons.check_circle_rounded
+                                      : Icons.circle_outlined,
+                                  size: 22,
+                                  color: item.isDone
+                                      ? scheme.primary
+                                      : scheme.onSurfaceVariant
+                                          .withValues(alpha: 0.55),
+                                ),
+                              ),
                             ),
-                            Text(
-                              _plannedMealDescription(slot, recipes),
-                              style: Theme.of(context).textTheme.bodySmall,
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: InkWell(
+                                onTap: () => context.go('/grocery'),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  child: Text(
+                                    _formatGrocerySnippetLine(item),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: scheme.onSurface.withValues(
+                                            alpha: item.isDone ? 0.5 : 0.88,
+                                          ),
+                                          decoration: item.isDone
+                                              ? TextDecoration.lineThrough
+                                              : null,
+                                          decorationColor: scheme.onSurface
+                                              .withValues(alpha: 0.45),
+                                        ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: FilledButton.tonal(
+                        onPressed: () => context.go('/grocery'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                          shape: const StadiumBorder(),
+                        ),
+                        child: Text(
+                          'VIEW FULL CHECKLIST (${items.length})',
+                          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
+                              ),
+                        ),
+                      ),
+                    ),
+                  ],
                 );
-              }),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.tonal(
-                  onPressed: () => context.go('/planner'),
-                  child: const Text('Open Planner'),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -287,45 +488,6 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.title,
-    required this.icon,
-    required this.value,
-    this.onTap,
-  });
-
-  final String title;
-  final IconData icon;
-  final String value;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SectionCard(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon),
-            const SizedBox(height: 8),
-            Text(title, style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// True when [slot] falls on today's calendar date (matches planner mapping).
 bool _isSlotOnToday(MealPlanSlot slot) {
   final today = plannerDateOnly(DateTime.now());
@@ -338,21 +500,26 @@ Iterable<MealPlanSlot> _todaySlots(Iterable<MealPlanSlot> slots) =>
 Iterable<MealPlanSlot> _filledTodaySlots(Iterable<MealPlanSlot> slots) =>
     _todaySlots(slots).where((s) => s.hasPlannedContent);
 
-String _todayMealsStatLabel(int filledCount) {
-  if (filledCount == 0) return 'No meals';
-  if (filledCount == 1) return '1 meal';
-  return '$filledCount meals';
+double _groceryParseQuantity(String? raw, {double fallback = 1}) {
+  final normalized = raw?.trim().replaceAll(',', '.');
+  final parsed = normalized == null ? null : double.tryParse(normalized);
+  if (parsed == null || parsed <= 0) return fallback;
+  return parsed;
 }
 
-String _plannedMealDescription(MealPlanSlot slot, List<Recipe> recipes) {
-  final main = recipes.firstWhereOrNull((r) => r.id == slot.recipeId);
-  if (main != null) return main.title;
-  final meal = slot.mealText?.trim();
-  if (meal != null && meal.isNotEmpty) return meal;
-  final sauceRecipe =
-      recipes.firstWhereOrNull((r) => r.id == slot.sauceRecipeId);
-  if (sauceRecipe != null) return sauceRecipe.title;
-  final sauce = slot.sauceText?.trim();
-  if (sauce != null && sauce.isNotEmpty) return sauce;
-  return 'Planned';
+String _groceryFormatQuantity(double value) {
+  if (value == value.roundToDouble()) {
+    return value.toInt().toString();
+  }
+  return value.toStringAsFixed(1);
+}
+
+String _formatGrocerySnippetLine(GroceryItem item) {
+  final q = item.quantity?.trim();
+  if (q == null || q.isEmpty) return item.name;
+  final qtyVal = _groceryParseQuantity(q, fallback: 1);
+  final qtyStr = item.unit == null || item.unit!.trim().isEmpty
+      ? _groceryFormatQuantity(qtyVal)
+      : '${_groceryFormatQuantity(qtyVal)} ${item.unit!.trim()}';
+  return '${item.name} ($qtyStr)';
 }

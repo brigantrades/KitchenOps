@@ -7,12 +7,14 @@ class SectionCard extends StatelessWidget {
     required this.child,
     this.title,
     this.subtitle,
+    this.titleTrailing,
     this.padding = const EdgeInsets.all(14),
   });
 
   final Widget child;
   final String? title;
   final String? subtitle;
+  final Widget? titleTrailing;
   final EdgeInsets padding;
 
   @override
@@ -31,10 +33,18 @@ class SectionCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (title != null) ...[
-              Text(
-                title!,
-                style: textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      title!,
+                      style: textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (titleTrailing != null) titleTrailing!,
+                ],
               ),
               if (subtitle != null) ...[
                 const SizedBox(height: AppSpacing.xs),

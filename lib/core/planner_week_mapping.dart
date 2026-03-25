@@ -1,3 +1,4 @@
+import 'package:intl/intl.dart';
 import 'package:plateplan/core/models/app_models.dart';
 
 DateTime plannerDateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -72,6 +73,17 @@ Set<DateTime> weekStartMondaysForWindow(
   return set;
 }
 
+/// Local date-only: today, tomorrow, and the day after (for home outlook).
+List<DateTime> plannerOutlookDates(DateTime now) {
+  final t = plannerDateOnly(now);
+  return [t, t.add(const Duration(days: 1)), t.add(const Duration(days: 2))];
+}
+
+/// Unique ISO Mondays for `week_start` rows covering [dateOnlyDays].
+Set<DateTime> weekStartMondaysForDates(Iterable<DateTime> dateOnlyDays) {
+  return dateOnlyDays.map(weekStartMondayForDate).toSet();
+}
+
 DateTime calendarDateForPlannerUiDay(
   DateTime anchor,
   int uiDayIndex,
@@ -126,4 +138,50 @@ String plannerWindowRangeLabel(int startDay, int dayCount) {
   if (dayCount == 1) return abbrev[startDay];
   final endIdx = (startDay + dayCount - 1) % 7;
   return '${abbrev[startDay]}–${abbrev[endIdx]}';
+}
+
+/// Normalized first day of the calendar month containing [anyDateInMonth].
+DateTime firstDayOfPlannerMonth(DateTime anyDateInMonth) {
+  final d = plannerDateOnly(anyDateInMonth);
+  return DateTime(d.year, d.month, 1);
+}
+
+/// Unique ISO Mondays for `week_start` rows that can cover any day in that month.
+Set<DateTime> weekStartMondaysForCalendarMonth(DateTime monthStart) {
+  final first = firstDayOfPlannerMonth(monthStart);
+  final last = DateTime(first.year, first.month + 1, 0);
+  final set = <DateTime>{};
+  for (var d = first; !d.isAfter(last); d = d.add(const Duration(days: 1))) {
+    set.add(weekStartMondayForDate(d));
+  }
+  return set;
+}
+
+/// Each calendar date in the month (local), date-only.
+Set<DateTime> plannerCalendarDatesInMonth(DateTime monthStart) {
+  final first = firstDayOfPlannerMonth(monthStart);
+  final last = DateTime(first.year, first.month + 1, 0);
+  final set = <DateTime>{};
+  for (var d = first; !d.isAfter(last); d = d.add(const Duration(days: 1))) {
+    set.add(plannerDateOnly(d));
+  }
+  return set;
+}
+
+/// Uppercase magazine-style range, e.g. `OCTOBER 14 — 20` or `OCT 31 — NOV 2`.
+String plannerMagazineWindowTitle(
+  DateTime anchor,
+  PlannerWindowPreference pref,
+) {
+  final dates = calendarDatesForPlannerWindow(anchor, pref);
+  if (dates.isEmpty) return '';
+  final first = dates.first;
+  final last = dates.last;
+  if (first.year == last.year && first.month == last.month) {
+    final month = DateFormat('MMMM').format(first).toUpperCase();
+    return '$month ${first.day} — ${last.day}';
+  }
+  final a = DateFormat('MMM d').format(first).toUpperCase();
+  final b = DateFormat('MMM d').format(last).toUpperCase();
+  return '$a — $b';
 }

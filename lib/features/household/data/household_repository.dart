@@ -94,6 +94,27 @@ class HouseholdRepository {
     return Household.fromJson(household);
   }
 
+  /// Emits the current household, then re-fetches when this row changes in Realtime.
+  Stream<Household?> streamActiveHousehold(String userId) async* {
+    final initial = await fetchActiveHousehold(userId);
+    yield initial;
+    final hid = initial?.id;
+    if (hid == null || hid.isEmpty) {
+      return;
+    }
+
+    yield* _client
+        .from('households')
+        .stream(primaryKey: ['id'])
+        .asyncExpand((rawRows) async* {
+          final rows = rawRows.whereType<Map<String, dynamic>>();
+          final touched = rows.any((r) => r['id']?.toString() == hid);
+          if (touched) {
+            yield await fetchActiveHousehold(userId);
+          }
+        });
+  }
+
   Future<List<HouseholdMember>> listMembers(String householdId) async {
     final rows = await _client
         .from('household_members')

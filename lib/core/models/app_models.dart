@@ -587,6 +587,22 @@ class MealPlanSlot {
       );
 }
 
+/// Matches `list_items.status` in Postgres (`open` | `done`).
+enum GroceryItemStatus {
+  open,
+  done;
+
+  static GroceryItemStatus fromDb(String? raw) {
+    if (raw == null) return GroceryItemStatus.open;
+    return GroceryItemStatus.values.firstWhereOrNull(
+          (e) => e.name == raw,
+        ) ??
+        GroceryItemStatus.open;
+  }
+
+  String get dbValue => name;
+}
+
 class GroceryItem {
   const GroceryItem({
     required this.id,
@@ -598,6 +614,7 @@ class GroceryItem {
     this.listId,
     this.sourceSlotId,
     this.addedByUserId,
+    this.status = GroceryItemStatus.open,
   });
 
   final String id;
@@ -612,7 +629,38 @@ class GroceryItem {
   /// Profile id of the member who added this row (list_items.user_id).
   final String? addedByUserId;
 
+  /// `list_items.status`: open = still to buy, done = purchased / checked off.
+  final GroceryItemStatus status;
+
   bool get fromPlanner => fromRecipeId != null;
+
+  bool get isDone => status == GroceryItemStatus.done;
+
+  GroceryItem copyWith({
+    String? id,
+    String? name,
+    GroceryCategory? category,
+    String? quantity,
+    String? unit,
+    String? fromRecipeId,
+    String? listId,
+    String? sourceSlotId,
+    String? addedByUserId,
+    GroceryItemStatus? status,
+  }) {
+    return GroceryItem(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      category: category ?? this.category,
+      quantity: quantity ?? this.quantity,
+      unit: unit ?? this.unit,
+      fromRecipeId: fromRecipeId ?? this.fromRecipeId,
+      listId: listId ?? this.listId,
+      sourceSlotId: sourceSlotId ?? this.sourceSlotId,
+      addedByUserId: addedByUserId ?? this.addedByUserId,
+      status: status ?? this.status,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -623,6 +671,7 @@ class GroceryItem {
         'from_recipe_id': fromRecipeId,
         'list_id': listId,
         'source_slot_id': sourceSlotId,
+        'status': status.dbValue,
         if (addedByUserId != null) 'user_id': addedByUserId,
       };
 
@@ -639,6 +688,7 @@ class GroceryItem {
         listId: json['list_id']?.toString(),
         sourceSlotId: json['source_slot_id']?.toString(),
         addedByUserId: json['user_id']?.toString(),
+        status: GroceryItemStatus.fromDb(json['status']?.toString()),
       );
 }
 

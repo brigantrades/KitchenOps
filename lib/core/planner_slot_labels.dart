@@ -57,6 +57,17 @@ String plannerSlotDisplayLabel(
   return 'Meal';
 }
 
+/// Short tag for condensed planner UI, e.g. `Meal 1` → `M1`, `Snack 2` → `S2`.
+String plannerSlotShortLabel(String displayLabel) {
+  final t = displayLabel.trim();
+  final meal = RegExp(r'^Meal\s+(\d+)$', caseSensitive: false).firstMatch(t);
+  if (meal != null) return 'M${meal.group(1)}';
+  final snack = RegExp(r'^Snack\s+(\d+)$', caseSensitive: false).firstMatch(t);
+  if (snack != null) return 'S${snack.group(1)}';
+  if (t.length <= 5) return t;
+  return '${t.substring(0, 4)}…';
+}
+
 /// Groups by same week row and weekday, then applies [plannerSlotDisplayLabel].
 String plannerSlotDisplayLabelForWeek(
   List<MealPlanSlot> allWeekSlots,

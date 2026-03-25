@@ -49,6 +49,7 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
       _resetPlannerIfViewingOtherWeek();
       invalidateActiveGroceryStreams(ref);
       ref.invalidate(recipesProvider);
+      ref.invalidate(plannerThreeDayOutlookSlotsProvider);
     }
   }
 

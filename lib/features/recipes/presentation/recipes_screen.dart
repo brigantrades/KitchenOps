@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -1102,6 +1103,9 @@ class _IngredientInput {
   String qualitativePreset = 'to taste';
 
   final FocusNode nameFocusNode = FocusNode();
+  final FocusNode amountFocusNode = FocusNode();
+  final FocusNode qualitativeCustomFocusNode = FocusNode();
+  final FocusNode customUnitFocusNode = FocusNode();
 
   /// True after the user chose a name from the grocery suggestion grid.
   bool namePickedFromSuggestions = false;
@@ -1118,6 +1122,9 @@ class _IngredientInput {
 
   void dispose() {
     nameFocusNode.dispose();
+    amountFocusNode.dispose();
+    qualitativeCustomFocusNode.dispose();
+    customUnitFocusNode.dispose();
     nameCtrl.dispose();
     amountCtrl.dispose();
     customUnitCtrl.dispose();
@@ -1144,16 +1151,16 @@ class _DirectionDraft {
   }
 }
 
-/// Scrolls the expanded ingredient card into view when the name field is focused
+/// Scrolls the expanded ingredient card into view when any of its fields focus
 /// so the full card stays above the keyboard.
 class _IngredientCardScrollIntoView extends StatefulWidget {
   const _IngredientCardScrollIntoView({
-    required this.nameFocusNode,
+    required this.focusNodes,
     required this.cardKey,
     required this.child,
   });
 
-  final FocusNode nameFocusNode;
+  final List<FocusNode> focusNodes;
   final GlobalKey cardKey;
   final Widget child;
 
@@ -1164,10 +1171,11 @@ class _IngredientCardScrollIntoView extends StatefulWidget {
 
 class _IngredientCardScrollIntoViewState
     extends State<_IngredientCardScrollIntoView> {
-  void _onNameFocus() {
-    if (!widget.nameFocusNode.hasFocus) return;
+  void _onAnyFocusNodeChanged() {
+    if (!widget.focusNodes.any((n) => n.hasFocus)) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (!widget.focusNodes.any((n) => n.hasFocus)) return;
       final ctx = widget.cardKey.currentContext;
       if (ctx != null) {
         Scrollable.ensureVisible(
@@ -1183,21 +1191,28 @@ class _IngredientCardScrollIntoViewState
   @override
   void initState() {
     super.initState();
-    widget.nameFocusNode.addListener(_onNameFocus);
+    for (final n in widget.focusNodes) {
+      n.addListener(_onAnyFocusNodeChanged);
+    }
   }
 
   @override
   void dispose() {
-    widget.nameFocusNode.removeListener(_onNameFocus);
+    for (final n in widget.focusNodes) {
+      n.removeListener(_onAnyFocusNodeChanged);
+    }
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant _IngredientCardScrollIntoView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.nameFocusNode != widget.nameFocusNode) {
-      oldWidget.nameFocusNode.removeListener(_onNameFocus);
-      widget.nameFocusNode.addListener(_onNameFocus);
+    if (listEquals(oldWidget.focusNodes, widget.focusNodes)) return;
+    for (final n in oldWidget.focusNodes) {
+      n.removeListener(_onAnyFocusNodeChanged);
+    }
+    for (final n in widget.focusNodes) {
+      n.addListener(_onAnyFocusNodeChanged);
     }
   }
 
@@ -1220,21 +1235,15 @@ class _RecipeBuilderSheet extends ConsumerStatefulWidget {
       _RecipeBuilderSheetState();
 }
 
-class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
-    with WidgetsBindingObserver {
+class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   final _formKey = GlobalKey<FormState>();
   final _stepCtrl = PageController();
   final _titleCtrl = TextEditingController();
   final _servingsCtrl = TextEditingController(text: '2');
   final _tagCtrl = TextEditingController();
   final _titleFocusNode = FocusNode();
-  final ScrollController _ingredientScrollController = ScrollController();
-  final List<String> _liftedIngredientReorderIds = [];
-  final GlobalKey _ingredientListTopKey = GlobalKey();
   final GlobalKey _ingredientExpandedCardKey = GlobalKey();
   String? _lastAddedIngredientReorderId;
-  bool _cancelIngredientLiftRestore = false;
-  double _prevKeyboardInset = 0;
   final List<String> _cuisineTags = [];
   final List<String> _presetCuisines = const [
     'Italian',
@@ -1278,7 +1287,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _hydrateFromInitialRecipe();
     if (widget.initialRecipe != null) {
       _titleCtrl.addListener(_onEditFormControllerChanged);
@@ -1288,7 +1296,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
     unawaited(ref.read(groceryRepositoryProvider).ensureCatalogLoaded());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _prevKeyboardInset = _viewInsetsBottomLogical();
       ref.read(recipeCreationGuardProvider.notifier).open();
       ref.read(recipeCreationGuardProvider.notifier).setStep(_step);
       _titleFocusNode.requestFocus();
@@ -1297,8 +1304,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _ingredientScrollController.dispose();
     if (widget.initialRecipe != null) {
       _titleCtrl.removeListener(_onEditFormControllerChanged);
       _servingsCtrl.removeListener(_onEditFormControllerChanged);
@@ -1366,7 +1371,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
     }
     _selectedIngredientIndex = _ingredients.isEmpty ? null : 0;
     _lastAddedIngredientReorderId = null;
-    _liftedIngredientReorderIds.clear();
     _estimatedNutrition = initial.nutrition;
     _nutritionEstimateSource = initial.nutritionSource;
     _nutritionBreakdown = const [];
@@ -1492,34 +1496,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
     );
   }
 
-  double _viewInsetsBottomLogical() {
-    final views = WidgetsBinding.instance.platformDispatcher.views;
-    if (views.isEmpty) return 0;
-    final v = views.first;
-    return v.viewInsets.bottom / v.devicePixelRatio;
-  }
-
-  @override
-  void didChangeMetrics() {
-    super.didChangeMetrics();
-    if (!mounted) return;
-    final bottom = _viewInsetsBottomLogical();
-    final wasKeyboardOpen = _prevKeyboardInset > 0;
-    final wasKeyboardClosed = _prevKeyboardInset == 0;
-    if (wasKeyboardOpen && bottom == 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _restoreLiftedIngredientsToEnd();
-      });
-    }
-    if (wasKeyboardClosed && bottom > 0) {
-      _cancelIngredientLiftRestore = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _maybeLiftPendingIngredientToTop();
-      });
-    }
-    _prevKeyboardInset = bottom;
+  /// Rebuilds the recipe sheet and, when open, the ingredients dialog overlay.
+  void _notifyIngredientUi(StateSetter? dialogSetState, VoidCallback fn) {
+    setState(fn);
+    dialogSetState?.call(() {});
   }
 
   bool _isIngredientRowComplete(_IngredientInput row) {
@@ -1527,98 +1507,19 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
     if (row.qualitative) {
       return row.resolvedQualitativePhrase().isNotEmpty;
     }
-    return _parseIngredientAmount(row.amountCtrl.text) != null;
-  }
-
-  void _scrollIngredientListToTop() {
-    if (_ingredientScrollController.hasClients) {
-      _ingredientScrollController.jumpTo(0);
+    if (row.amountCtrl.text.trim().isEmpty) return false;
+    if (_parseIngredientAmount(row.amountCtrl.text) == null) return false;
+    if (row.selectedUnit.trim().isEmpty) return false;
+    if (row.selectedUnit == 'custom' &&
+        row.customUnitCtrl.text.trim().isEmpty) {
+      return false;
     }
+    return true;
   }
 
-  void _ensureIngredientListTopVisible() {
-    final ctx = _ingredientListTopKey.currentContext;
-    if (ctx != null) {
-      Scrollable.ensureVisible(
-        ctx,
-        alignment: 0,
-        duration: Duration.zero,
-      );
-    }
-  }
-
-  void _maybeLiftPendingIngredientToTop() {
-    if (_cancelIngredientLiftRestore) return;
-    if (_viewInsetsBottomLogical() <= 0) return;
-    final rid = _lastAddedIngredientReorderId;
-    if (rid == null) return;
-    final idx = _ingredients.indexWhere((e) => e.reorderId == rid);
-    if (idx < 0) return;
-    if (idx == 0) {
-      if (!_liftedIngredientReorderIds.contains(rid)) {
-        setState(() {
-          _liftedIngredientReorderIds.add(rid);
-        });
-      }
-      _scrollIngredientListToTop();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _ensureIngredientListTopVisible();
-      });
-      return;
-    }
-    setState(() {
-      final item = _ingredients.removeAt(idx);
-      if (!_liftedIngredientReorderIds.contains(item.reorderId)) {
-        _liftedIngredientReorderIds.add(item.reorderId);
-      }
-      _ingredients.insert(0, item);
-      _selectedIngredientIndex = 0;
-    });
-    _scrollIngredientListToTop();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final idx2 = _ingredients.indexWhere((e) => e.reorderId == rid);
-      if (idx2 >= 0) {
-        _ingredients[idx2].nameFocusNode.requestFocus();
-      }
-      _ensureIngredientListTopVisible();
-    });
-  }
-
-  void _restoreLiftedIngredientsToEnd() {
-    if (_liftedIngredientReorderIds.isEmpty) return;
-    if (_cancelIngredientLiftRestore) {
-      _liftedIngredientReorderIds.clear();
-      _cancelIngredientLiftRestore = false;
-      return;
-    }
-    final ids = List<String>.from(_liftedIngredientReorderIds);
-    _liftedIngredientReorderIds.clear();
-    final selectedRid = _selectedIngredientIndex != null
-        ? _ingredients[_selectedIngredientIndex!].reorderId
-        : null;
-    setState(() {
-      final toAppend = <_IngredientInput>[];
-      for (final id in ids) {
-        final idx = _ingredients.indexWhere((e) => e.reorderId == id);
-        if (idx >= 0) {
-          toAppend.add(_ingredients.removeAt(idx));
-        }
-      }
-      _ingredients.addAll(toAppend);
-      if (selectedRid != null) {
-        final newIdx =
-            _ingredients.indexWhere((e) => e.reorderId == selectedRid);
-        _selectedIngredientIndex = newIdx >= 0 ? newIdx : null;
-      }
-    });
-  }
-
-  void _removeIngredientAt(int idx) {
+  void _removeIngredientAt(int idx, [StateSetter? dialogSetState]) {
     setState(() {
       final removed = _ingredients.removeAt(idx);
-      _liftedIngredientReorderIds.remove(removed.reorderId);
       if (_lastAddedIngredientReorderId == removed.reorderId) {
         _lastAddedIngredientReorderId = null;
       }
@@ -1635,44 +1536,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
         }
       }
     });
-  }
-
-  void _addBlankIngredient() {
-    if (!_canAddAnotherIngredient) return;
-    final profile = _detectUnitProfile('');
-    final row = _IngredientInput(
-      name: '',
-      unitOptions: profile.options,
-      selectedUnit: profile.defaultUnit,
-    );
-    setState(() {
-      _ingredients.add(row);
-      _lastAddedIngredientReorderId = row.reorderId;
-      _selectedIngredientIndex = _ingredients.length - 1;
-      _validationMessage = null;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _maybeLiftPendingIngredientToTop();
-    });
-  }
-
-  void _onReorderIngredients(int oldIndex, int newIndex) {
-    setState(() {
-      _liftedIngredientReorderIds.clear();
-      _cancelIngredientLiftRestore = true;
-      if (newIndex > oldIndex) newIndex--;
-      final selId = _selectedIngredientIndex != null
-          ? _ingredients[_selectedIngredientIndex!].reorderId
-          : null;
-      final item = _ingredients.removeAt(oldIndex);
-      _ingredients.insert(newIndex, item);
-      if (selId != null) {
-        _selectedIngredientIndex =
-            _ingredients.indexWhere((e) => e.reorderId == selId);
-      }
-      _validationMessage = null;
-    });
+    dialogSetState?.call(() {});
   }
 
   /// First ingredient can always be added; further rows require the row last
@@ -1706,60 +1570,66 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
     return '$name · $amt $unitStr';
   }
 
-  Widget _buildCondensedIngredientRow(
-    BuildContext context,
-    int idx,
-    _IngredientInput row,
-  ) {
+  /// Pill-shaped rose chip for saved ingredients on the wizard step (matches prior condensed style).
+  Widget _buildIngredientSavedChip(BuildContext context, int i) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final row = _ingredients[i];
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.xs),
       child: Material(
-        color: scheme.surfaceContainerHigh.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(999),
+        color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
-          onTap: () => setState(() => _selectedIngredientIndex = idx),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                row.namePickedFromSuggestions && row.name.isNotEmpty
-                    ? _ingredientPickedFoodIcon(context, row, size: 20)
-                    : Icon(
-                        Icons.restaurant_rounded,
-                        size: 18,
-                        color: scheme.onSurfaceVariant,
+          onTap: () => _editIngredientAt(i),
+          child: Ink(
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFE8EE),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: const Color(0xFFE8A8B8),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 10, right: 4, top: 8, bottom: 8),
+              child: Row(
+                children: [
+                  row.namePickedFromSuggestions && row.name.isNotEmpty
+                      ? _ingredientPickedFoodIcon(context, row, size: 22)
+                      : Icon(
+                          Icons.restaurant_rounded,
+                          size: 20,
+                          color: scheme.primary,
+                        ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      _ingredientSummary(row),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
                       ),
-                const SizedBox(width: AppSpacing.xs),
-                Expanded(
-                  child: Text(
-                    _ingredientSummary(row),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                ),
-                Icon(
-                  Icons.edit_outlined,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
-                IconButton(
-                  onPressed: () => _removeIngredientAt(idx),
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                  tooltip: 'Remove',
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
+                  Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
                   ),
-                ),
-              ],
+                  IconButton(
+                    onPressed: () => _removeIngredientAt(i),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    tooltip: 'Remove',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 36,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1770,19 +1640,35 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
   Widget _buildExpandedIngredientRow(
     BuildContext context,
     int idx,
-    _IngredientInput row,
-  ) {
+    _IngredientInput row, {
+    StateSetter? dialogSetState,
+    VoidCallback? onRemovePressed,
+    EdgeInsetsGeometry cardMargin =
+        const EdgeInsets.only(bottom: AppSpacing.sm),
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final qualitativeDropdownValue =
         _kQualitativePresets.contains(row.qualitativePreset)
             ? row.qualitativePreset
             : 'custom';
     final keyboardBottom = MediaQuery.viewInsetsOf(context).bottom;
+    final suggestionGridMaxHeight = keyboardBottom > 0 ? 130.0 : 230.0;
+    final fieldScrollPadding = EdgeInsets.fromLTRB(
+      20,
+      20,
+      20,
+      keyboardBottom + 80,
+    );
     return _IngredientCardScrollIntoView(
-      nameFocusNode: row.nameFocusNode,
+      focusNodes: [
+        row.nameFocusNode,
+        row.amountFocusNode,
+        row.qualitativeCustomFocusNode,
+        row.customUnitFocusNode,
+      ],
       cardKey: _ingredientExpandedCardKey,
       child: Container(
-        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        margin: cardMargin,
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.sm,
           AppSpacing.sm,
@@ -1811,12 +1697,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                         controller: row.nameCtrl,
                         focusNode: row.nameFocusNode,
                         textCapitalization: TextCapitalization.sentences,
-                        scrollPadding: EdgeInsets.fromLTRB(
-                          20,
-                          20,
-                          20,
-                          keyboardBottom + 80,
-                        ),
+                        scrollPadding: fieldScrollPadding,
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                         style: Theme.of(context).textTheme.bodyLarge,
                         decoration: _ingredientInputDecoration(
@@ -1844,7 +1725,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                                 )
                               : null,
                         ),
-                        onChanged: (_) => setState(() {
+                        onChanged: (_) => _notifyIngredientUi(dialogSetState, () {
                           row.namePickedFromSuggestions = false;
                         }),
                       ),
@@ -1855,8 +1736,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                             repo: ref.read(groceryRepositoryProvider),
                             typedValue: row.nameCtrl.text,
                             recentItems: const [],
+                            maxHeight: suggestionGridMaxHeight,
                             onPick: (suggestion) {
-                              setState(() {
+                              _notifyIngredientUi(dialogSetState, () {
                                 row.nameCtrl.text = suggestion;
                                 row.namePickedFromSuggestions = true;
                               });
@@ -1868,7 +1750,14 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                   ),
                 ),
                 IconButton(
-                  onPressed: () => _removeIngredientAt(idx),
+                  onPressed: () {
+                    FocusScope.of(context).unfocus();
+                    if (onRemovePressed != null) {
+                      onRemovePressed();
+                    } else {
+                      _removeIngredientAt(idx, dialogSetState);
+                    }
+                  },
                   icon: const Icon(Icons.delete_outline_rounded),
                   tooltip: 'Remove ingredient',
                   visualDensity: VisualDensity.compact,
@@ -1893,7 +1782,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
               ],
               selected: {row.qualitative},
               onSelectionChanged: (next) {
-                setState(() {
+                _notifyIngredientUi(dialogSetState, () {
                   row.qualitative = next.first;
                 });
               },
@@ -1926,21 +1815,26 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                 ],
                 onChanged: (value) {
                   if (value == null) return;
-                  setState(() => row.qualitativePreset = value);
+                  _notifyIngredientUi(dialogSetState, () {
+                    row.qualitativePreset = value;
+                  });
                 },
               ),
               if (row.qualitativePreset == 'custom') ...[
                 const SizedBox(height: AppSpacing.xs),
                 TextField(
                   controller: row.qualitativeCustomCtrl,
+                  focusNode: row.qualitativeCustomFocusNode,
                   textCapitalization: TextCapitalization.sentences,
+                  scrollPadding: fieldScrollPadding,
                   onTapOutside: (_) => FocusScope.of(context).unfocus(),
                   decoration: _ingredientInputDecoration(
                     context,
                     hintText: 'e.g. 1½ tsp',
                     borderOpacity: 0.2,
                   ),
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) =>
+                      _notifyIngredientUi(dialogSetState, () {}),
                 ),
               ],
             ] else ...[
@@ -1980,7 +1874,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
                           onSelected: (selected) {
-                            setState(() {
+                            _notifyIngredientUi(dialogSetState, () {
                               if (selected) {
                                 row.amountCtrl.text = preset.canonicalText;
                               }
@@ -1999,9 +1893,11 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                     width: 132,
                     child: TextField(
                       controller: row.amountCtrl,
+                      focusNode: row.amountFocusNode,
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
+                      scrollPadding: fieldScrollPadding,
                       onTapOutside: (_) => FocusScope.of(context).unfocus(),
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                             fontWeight: FontWeight.w600,
@@ -2022,7 +1918,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                         ),
                         borderOpacity: 0.2,
                       ),
-                      onChanged: (_) => setState(() {}),
+                      onChanged: (_) =>
+                          _notifyIngredientUi(dialogSetState, () {}),
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
@@ -2052,7 +1949,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                           .toList(),
                       onChanged: (value) {
                         if (value == null) return;
-                        setState(() => row.selectedUnit = value);
+                        _notifyIngredientUi(dialogSetState, () {
+                          row.selectedUnit = value;
+                        });
                       },
                     ),
                   ),
@@ -2062,7 +1961,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                 const SizedBox(height: AppSpacing.xs),
                 TextField(
                   controller: row.customUnitCtrl,
+                  focusNode: row.customUnitFocusNode,
                   textCapitalization: TextCapitalization.sentences,
+                  scrollPadding: fieldScrollPadding,
                   onTapOutside: (_) => FocusScope.of(context).unfocus(),
                   decoration: _ingredientInputDecoration(
                     context,
@@ -2070,7 +1971,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                     hintText: 'e.g. clove, pinch, can',
                     borderOpacity: 0.2,
                   ),
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) =>
+                      _notifyIngredientUi(dialogSetState, () {}),
                 ),
               ],
             ],
@@ -3066,111 +2968,243 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
     );
   }
 
-  /// Ingredients step: scrollable list with "Add ingredient" pinned below (always visible).
-  Widget _buildIngredientStepPage() {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            controller: _ingredientScrollController,
-            child: SectionCard(
-              title: 'Add ingredients',
-              subtitle:
-                  'Drag to reorder. Use To taste for seasonings and small amounts. '
-                  'While the keyboard is open, the row you are editing moves to the top '
-                  'so you can see the ingredients above; when you dismiss the keyboard, '
-                  'order returns to normal.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_ingredients.isEmpty)
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'No ingredients yet. Tap Add ingredient to start.',
-                      ),
-                    ),
-                  if (_ingredients.isNotEmpty)
-                    Padding(
-                      key: _ingredientListTopKey,
-                      padding: EdgeInsets.zero,
-                      child: ReorderableListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        buildDefaultDragHandles: false,
-                        itemCount: _ingredients.length,
-                        onReorder: _onReorderIngredients,
-                        itemBuilder: (context, i) {
-                          final row = _ingredients[i];
-                          return KeyedSubtree(
-                            key: ValueKey(row.reorderId),
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.only(bottom: AppSpacing.xs),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  ReorderableDragStartListener(
-                                    index: i,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        top: 10,
-                                        right: 4,
-                                      ),
-                                      child: Icon(
-                                        Icons.drag_handle,
-                                        color: scheme.onSurfaceVariant,
+  ThemeData _themeForIngredientModal(BuildContext sheetContext) {
+    return Theme.of(sheetContext).copyWith(
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: const Color(0xFFEFF6FF),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(
+            color: Theme.of(sheetContext).colorScheme.primary,
+            width: 1.2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addIngredientAndOpenModal() async {
+    if (!_canAddAnotherIngredient) return;
+    FocusScope.of(context).unfocus();
+    final profile = _detectUnitProfile('');
+    final row = _IngredientInput(
+      name: '',
+      unitOptions: profile.options,
+      selectedUnit: profile.defaultUnit,
+    );
+    final draftRid = row.reorderId;
+    setState(() {
+      _ingredients.add(row);
+      _lastAddedIngredientReorderId = draftRid;
+      _selectedIngredientIndex = _ingredients.length - 1;
+      _validationMessage = null;
+    });
+    await _showIngredientEditorModal(
+      index: _ingredients.length - 1,
+      isNewDraft: true,
+      draftReorderId: draftRid,
+    );
+  }
+
+  Future<void> _editIngredientAt(int i) async {
+    if (i < 0 || i >= _ingredients.length) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _selectedIngredientIndex = i);
+    await _showIngredientEditorModal(
+      index: i,
+      isNewDraft: false,
+    );
+  }
+
+  Future<void> _showIngredientEditorModal({
+    required int index,
+    required bool isNewDraft,
+    String? draftReorderId,
+  }) async {
+    if (!mounted) return;
+    FocusScope.of(context).unfocus();
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            if (index < 0 || index >= _ingredients.length) {
+              return const SizedBox.shrink();
+            }
+            final row = _ingredients[index];
+            final rid = row.reorderId;
+            final topPad = MediaQuery.paddingOf(dialogCtx).top + 8;
+            final maxH = MediaQuery.sizeOf(dialogCtx).height - topPad - 16;
+            final width = MediaQuery.sizeOf(dialogCtx).width;
+            void popDialog() {
+              FocusScope.of(dialogCtx).unfocus();
+              Navigator.of(dialogCtx).pop();
+            }
+
+            void onCancel() {
+              popDialog();
+            }
+
+            void onSave() {
+              FocusScope.of(dialogCtx).unfocus();
+              if (!_isIngredientRowComplete(row)) return;
+              popDialog();
+            }
+
+            void removeThenClose() {
+              popDialog();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                final i = _ingredients.indexWhere((e) => e.reorderId == rid);
+                if (i >= 0) _removeIngredientAt(i);
+              });
+            }
+
+            return Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: EdgeInsets.only(top: topPad, left: 12, right: 12),
+                child: Material(
+                  elevation: 8,
+                  shadowColor: Colors.black45,
+                  borderRadius: BorderRadius.circular(20),
+                  clipBehavior: Clip.antiAlias,
+                  color: Theme.of(dialogCtx).colorScheme.surface,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: 560, maxHeight: maxH),
+                    child: SizedBox(
+                      width: width - 24,
+                      child: Theme(
+                        data: _themeForIngredientModal(this.context),
+                        child: Scaffold(
+                          resizeToAvoidBottomInset: false,
+                          appBar: AppBar(
+                            title: Text(
+                              isNewDraft ? 'Add ingredient' : 'Ingredient',
+                            ),
+                            leading: IconButton(
+                              icon: const Icon(Icons.close_rounded),
+                              tooltip: 'Cancel',
+                              onPressed: onCancel,
+                            ),
+                          ),
+                          body: SingleChildScrollView(
+                            padding: EdgeInsets.fromLTRB(
+                              16,
+                              8,
+                              16,
+                              16 +
+                                  MediaQuery.viewInsetsOf(dialogCtx).bottom,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildExpandedIngredientRow(
+                                  dialogCtx,
+                                  index,
+                                  row,
+                                  dialogSetState: setModalState,
+                                  onRemovePressed: removeThenClose,
+                                  cardMargin: EdgeInsets.zero,
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: onCancel,
+                                        child: const Text('Cancel'),
                                       ),
                                     ),
-                                  ),
-                                  Expanded(
-                                    child: _selectedIngredientIndex == i
-                                        ? _buildExpandedIngredientRow(
-                                            context,
-                                            i,
-                                            row,
-                                          )
-                                        : _buildCondensedIngredientRow(
-                                            context,
-                                            i,
-                                            row,
-                                          ),
-                                  ),
-                                ],
-                              ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: FilledButton(
+                                        onPressed:
+                                            _isIngredientRowComplete(row)
+                                                ? onSave
+                                                : null,
+                                        child: const Text('Save'),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                          );
-                        },
+                          ),
+                        ),
                       ),
                     ),
-                ],
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: AppSpacing.xs),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: _canAddAnotherIngredient ? _addBlankIngredient : null,
-              icon: const Icon(
-                Icons.add_circle_outline_rounded,
-                size: 20,
+            );
+          },
+        );
+      },
+    );
+    if (!mounted) return;
+    if (isNewDraft && draftReorderId != null) {
+      final i =
+          _ingredients.indexWhere((e) => e.reorderId == draftReorderId);
+      if (i >= 0 && !_isIngredientRowComplete(_ingredients[i])) {
+        _removeIngredientAt(i);
+      }
+    }
+    setState(() {});
+  }
+
+  /// Summary on the wizard step; one ingredient at a time in a top modal.
+  Widget _buildIngredientStepPage() {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return SingleChildScrollView(
+      child: SectionCard(
+        title: 'Ingredients',
+        subtitle:
+            'Tap a chip to edit, or Add ingredient. Use Save in the editor '
+            'when you are finished.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_ingredients.isEmpty)
+              Text(
+                'No ingredients yet.',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              )
+            else
+              ...List.generate(
+                _ingredients.length,
+                (i) => _buildIngredientSavedChip(context, i),
               ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed:
+                  _canAddAnotherIngredient ? _addIngredientAndOpenModal : null,
+              icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
               label: const Text('Add ingredient'),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final scheme = Theme.of(context).colorScheme;
     final stepTitle = switch (_step) {
       0 => 'Step 1: Name your recipe',
@@ -3180,14 +3214,11 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
       4 => 'Step 5: Nutrition',
       _ => 'Step 6: Final touches',
     };
-    final compactIngredientsHeader = bottomInset > 0 && _step == 2;
 
     return WillPopScope(
       onWillPop: () async => false,
       child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: Form(
+        child: Form(
             key: _formKey,
             child: Theme(
               data: Theme.of(context).copyWith(
@@ -3215,9 +3246,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                   children: [
                     Container(
                       width: double.infinity,
-                      padding: EdgeInsets.all(
-                        compactIngredientsHeader ? 10 : 16,
-                      ),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
                         gradient: const LinearGradient(
@@ -3239,37 +3268,35 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
                                 : 'Edit Recipe',
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
-                          SizedBox(height: compactIngredientsHeader ? 4 : 6),
+                          const SizedBox(height: 6),
                           Text(stepTitle),
-                          SizedBox(height: compactIngredientsHeader ? 6 : 10),
+                          const SizedBox(height: 10),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: LinearProgressIndicator(
-                              minHeight: compactIngredientsHeader ? 6 : 8,
+                              minHeight: 8,
                               value: (_step + 1) / 6,
                             ),
                           ),
-                          if (!compactIngredientsHeader) ...[
-                            const SizedBox(height: 10),
-                            Row(
-                              children: List.generate(
-                                6,
-                                (index) => Expanded(
-                                  child: Container(
-                                    margin: EdgeInsets.only(
-                                        right: index == 5 ? 0 : 6),
-                                    height: 6,
-                                    decoration: BoxDecoration(
-                                      color: index <= _step
-                                          ? Colors.white
-                                          : Colors.white.withOpacity(0.45),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: List.generate(
+                              6,
+                              (index) => Expanded(
+                                child: Container(
+                                  margin:
+                                      EdgeInsets.only(right: index == 5 ? 0 : 6),
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: index <= _step
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.45),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                 ),
                               ),
                             ),
-                          ],
+                          ),
                         ],
                       ),
                     ),
@@ -3656,7 +3683,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet>
             ),
           ),
         ),
-      ),
     );
   }
 }

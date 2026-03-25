@@ -10,6 +10,8 @@ class LocalCache {
   static const _discoverBox = 'discover_cache';
   static const _homePinnedListIdKey = 'home_pinned_list_id';
   static const _householdCtaHiddenUntilKey = 'home_household_cta_hidden_until';
+  static const _plannerLayoutModeKey = 'planner_layout_mode';
+  static const _plannerSlotsKeyPrefix = 'planner_slots_json_';
 
   static Future<void> init() async {
     await Hive.initFlutter();
@@ -100,6 +102,37 @@ class LocalCache {
     final raw = box.get(_householdCtaHiddenUntilKey);
     if (raw == null || raw.isEmpty) return null;
     return DateTime.tryParse(raw);
+  }
+
+  /// Stored enum name: `list` or `calendar`.
+  Future<void> savePlannerLayoutMode(String modeName) async {
+    final box = Hive.box<String>(_discoverBox);
+    await box.put(_plannerLayoutModeKey, modeName);
+  }
+
+  String? loadPlannerLayoutMode() {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get(_plannerLayoutModeKey);
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
+  }
+
+  /// Last known planner slot rows for a cache key (see [planner_repository] keys).
+  Future<void> savePlannerSlotList(
+    String cacheKey,
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final box = Hive.box<String>(_discoverBox);
+    await box.put('$_plannerSlotsKeyPrefix$cacheKey', jsonEncode(rows));
+  }
+
+  List<Map<String, dynamic>>? loadPlannerSlotList(String cacheKey) {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get('$_plannerSlotsKeyPrefix$cacheKey');
+    if (raw == null || raw.isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return null;
+    return decoded.whereType<Map<String, dynamic>>().toList();
   }
 }
 
