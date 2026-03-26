@@ -410,10 +410,17 @@ class _HomeGrocerySnippet extends ConsumerWidget {
                   );
                 }
 
+                const openPreviewLimit = 5;
+                const purchasedPreviewLimit = 2;
                 final open =
                     items.where((i) => !i.isDone).toList(growable: false);
                 final done = items.where((i) => i.isDone).toList(growable: false);
-                final preview = [...open, ...done].take(4).toList();
+                final openPreview =
+                    open.take(openPreviewLimit).toList(growable: false);
+                final purchasedPreview =
+                    done.take(purchasedPreviewLimit).toList(growable: false);
+                final remainingPurchasedCount =
+                    done.length - purchasedPreview.length;
                 final purchasedCount = done.length;
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -430,66 +437,166 @@ class _HomeGrocerySnippet extends ConsumerWidget {
                       ),
                       const SizedBox(height: 6),
                     ],
-                    for (final item in preview)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 40,
-                              height: 40,
-                              child: IconButton(
-                                padding: EdgeInsets.zero,
-                                alignment: Alignment.center,
-                                tooltip: item.isDone
-                                    ? 'Mark as not purchased'
-                                    : 'Mark as purchased',
-                                onPressed: () =>
-                                    _toggleGroceryItemStatus(ref, item),
-                                icon: Icon(
-                                  item.isDone
-                                      ? Icons.check_circle_rounded
-                                      : Icons.circle_outlined,
-                                  size: 22,
-                                  color: item.isDone
-                                      ? scheme.primary
-                                      : scheme.onSurfaceVariant
-                                          .withValues(alpha: 0.55),
+                    if (openPreview.isNotEmpty) ...[
+                      if (purchasedCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            'To buy',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelMedium
+                                ?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      for (final item in openPreview)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  alignment: Alignment.center,
+                                  tooltip: item.isDone
+                                      ? 'Mark as not purchased'
+                                      : 'Mark as purchased',
+                                  onPressed: () =>
+                                      _toggleGroceryItemStatus(ref, item),
+                                  icon: Icon(
+                                    item.isDone
+                                        ? Icons.check_circle_rounded
+                                        : Icons.circle_outlined,
+                                    size: 22,
+                                    color: item.isDone
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant
+                                            .withValues(alpha: 0.55),
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: InkWell(
-                                onTap: () => context.go('/grocery'),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  child: Text(
-                                    _formatGrocerySnippetLine(item),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: scheme.onSurface.withValues(
-                                            alpha: item.isDone ? 0.5 : 0.88,
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () => context.go('/grocery'),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    child: Text(
+                                      _formatGrocerySnippetLine(item),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: scheme.onSurface.withValues(
+                                              alpha: item.isDone ? 0.5 : 0.88,
+                                            ),
+                                            decoration: item.isDone
+                                                ? TextDecoration.lineThrough
+                                                : null,
+                                            decorationColor: scheme.onSurface
+                                                .withValues(alpha: 0.45),
                                           ),
-                                          decoration: item.isDone
-                                              ? TextDecoration.lineThrough
-                                              : null,
-                                          decorationColor: scheme.onSurface
-                                              .withValues(alpha: 0.45),
-                                        ),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
+                        ),
+                    ],
+                    if (purchasedPreview.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 4),
+                        child: Text(
+                          'Purchased',
+                          style:
+                              Theme.of(context).textTheme.labelMedium?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                         ),
                       ),
+                      for (final item in purchasedPreview)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  alignment: Alignment.center,
+                                  tooltip: item.isDone
+                                      ? 'Mark as not purchased'
+                                      : 'Mark as purchased',
+                                  onPressed: () =>
+                                      _toggleGroceryItemStatus(ref, item),
+                                  icon: Icon(
+                                    item.isDone
+                                        ? Icons.check_circle_rounded
+                                        : Icons.circle_outlined,
+                                    size: 22,
+                                    color: item.isDone
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant
+                                            .withValues(alpha: 0.55),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () => context.go('/grocery'),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    child: Text(
+                                      _formatGrocerySnippetLine(item),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: scheme.onSurface.withValues(
+                                              alpha: item.isDone ? 0.5 : 0.88,
+                                            ),
+                                            decoration: item.isDone
+                                                ? TextDecoration.lineThrough
+                                                : null,
+                                            decorationColor: scheme.onSurface
+                                                .withValues(alpha: 0.45),
+                                          ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (remainingPurchasedCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(46, 2, 0, 0),
+                          child: Text(
+                            '+$remainingPurchasedCount more purchased',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                    ],
                     const SizedBox(height: 8),
                     Center(
                       child: FilledButton.tonal(
