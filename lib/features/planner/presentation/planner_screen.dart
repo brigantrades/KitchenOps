@@ -296,7 +296,7 @@ Future<void> showPlannerWindowSettingsSheet(
   );
 }
 
-enum _SlotCardAction { clearMeal, deleteSlot }
+enum _SlotCardAction { editMeal, clearMeal, deleteSlot }
 
 class _GroceryEditDraft {
   _GroceryEditDraft({
@@ -461,6 +461,7 @@ Widget buildPlannerDaySlotCard({
   required PlannerEditSlotGroceryFn onEditSlotGroceryItems,
   required VoidCallback onInvalidatePlanner,
   required PlannerRemoveMealSlotFn onRemoveMealSlot,
+  bool openRecipeOnTap = false,
 }) {
   final recipe = slot.recipeId == null
       ? null
@@ -523,6 +524,49 @@ Widget buildPlannerDaySlotCard({
       ? 'Assigned: All'
       : (assignedNames.isEmpty ? 'Assigned: Unknown' : 'Assigned: ${assignedNames.join(', ')}');
   final scheme = Theme.of(context).colorScheme;
+  Future<void> editSlotPlan() async {
+    final draft = await onEditSlotPlan(
+      context,
+      slot: slot,
+      slotDisplayLabel: plannerSlotDisplayLabel(displaySlots, slot),
+    );
+    if (draft == null) return;
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    try {
+      if (draft.clearAll) {
+        await ref.read(plannerRepositoryProvider).unassignSlot(slotId: slot.id);
+        onInvalidatePlanner();
+        return;
+      }
+      await ref.read(plannerRepositoryProvider).assignSlot(
+            userId: user.id,
+            weekStart: storageWeek,
+            dayOfWeek: storageDow,
+            mealLabel: slot.mealLabel,
+            slotOrder: slot.slotOrder,
+            slotId: slot.id,
+            recipeId: draft.mealRecipeId,
+            mealText: draft.mealText,
+            sideItems: draft.sideItems,
+            sauceRecipeId: draft.sauceRecipeId,
+            sauceText: draft.sauceText,
+            assignedUserIds: draft.assignedUserIds,
+          );
+      onInvalidatePlanner();
+    } on PostgrestException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not assign recipe: ${error.message}')),
+      );
+    }
+  }
+
+  Future<void> openRecipeIfLinked() async {
+    final recipeId = slot.recipeId?.trim();
+    if (recipeId == null || recipeId.isEmpty) return;
+    await context.push('/cooking/$recipeId');
+  }
   Future<void> addToGrocery() async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
@@ -631,43 +675,11 @@ Widget buildPlannerDaySlotCard({
       children: [
         InkWell(
           borderRadius: BorderRadius.circular(24),
-          onTap: () async {
-            final draft = await onEditSlotPlan(
-              context,
-              slot: slot,
-              slotDisplayLabel: plannerSlotDisplayLabel(displaySlots, slot),
-            );
-            if (draft == null) return;
-            final user = ref.read(currentUserProvider);
-            if (user == null) return;
-            try {
-              if (draft.clearAll) {
-                await ref.read(plannerRepositoryProvider).unassignSlot(slotId: slot.id);
-                onInvalidatePlanner();
-                return;
-              }
-              await ref.read(plannerRepositoryProvider).assignSlot(
-                    userId: user.id,
-                    weekStart: storageWeek,
-                    dayOfWeek: storageDow,
-                    mealLabel: slot.mealLabel,
-                    slotOrder: slot.slotOrder,
-                    slotId: slot.id,
-                    recipeId: draft.mealRecipeId,
-                    mealText: draft.mealText,
-                    sideItems: draft.sideItems,
-                    sauceRecipeId: draft.sauceRecipeId,
-                    sauceText: draft.sauceText,
-                    assignedUserIds: draft.assignedUserIds,
-                  );
-              onInvalidatePlanner();
-            } on PostgrestException catch (error) {
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Could not assign recipe: ${error.message}')),
-              );
-            }
-          },
+          onTap: openRecipeOnTap
+              ? ((slot.recipeId?.trim().isNotEmpty ?? false)
+                  ? openRecipeIfLinked
+                  : null)
+              : editSlotPlan,
           child: Stack(
             children: [
               Padding(
@@ -720,6 +732,13 @@ Widget buildPlannerDaySlotCard({
                                     color: scheme.onSurfaceVariant,
                                   ),
                             ),
+                          if (openRecipeOnTap && recipe == null)
+                            Text(
+                              'No recipe linked. Use edit to choose one.',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                            ),
                           if (slot.hasPlannedContent)
                             Text(
                               assignmentLabel,
@@ -758,6 +777,10 @@ Widget buildPlannerDaySlotCard({
                   splashRadius: 18,
                   icon: const Icon(Icons.more_vert_rounded),
                   onSelected: (action) async {
+                    if (action == _SlotCardAction.editMeal) {
+                      await editSlotPlan();
+                      return;
+                    }
                     if (action == _SlotCardAction.clearMeal) {
                       try {
                         await ref.read(plannerRepositoryProvider).unassignSlot(slotId: slot.id);
@@ -775,6 +798,10 @@ Widget buildPlannerDaySlotCard({
                     await onRemoveMealSlot(slot, displaySlots);
                   },
                   itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: _SlotCardAction.editMeal,
+                      child: Text('Change selected meal'),
+                    ),
                     if (slot.hasPlannedContent)
                       const PopupMenuItem(
                         value: _SlotCardAction.clearMeal,
@@ -984,6 +1011,7 @@ Future<void> showPlannerDayDetailSheet(
                         onInvalidatePlanner: () =>
                             invalidatePlannerSlotCaches(ref, dayOnly),
                         onRemoveMealSlot: removeMealSlot,
+                        openRecipeOnTap: true,
                       ),
                     ),
                     const SizedBox(height: 8),
