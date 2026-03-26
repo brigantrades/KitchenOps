@@ -181,16 +181,40 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                                   }
                                   setState(() => _busy = true);
                                   try {
-                                    await authRepo.signInWithEmail(
+                                    final typedEmail =
+                                        _emailCtrl.text.trim().toLowerCase();
+                                    final existingUser =
+                                        ref.read(currentUserProvider);
+                                    final existingEmail =
+                                        existingUser?.email?.toLowerCase();
+                                    if (existingUser != null &&
+                                        existingEmail != typedEmail) {
+                                      await authRepo.signOut();
+                                    }
+                                    final signedInUser =
+                                        await authRepo.signInWithEmail(
                                       _emailCtrl.text.trim(),
                                       _passwordCtrl.text.trim(),
                                     );
                                     if (!context.mounted) return;
-                                    final signedInUser =
-                                        ref.read(currentUserProvider);
-                                    if (signedInUser != null) {
-                                      await _routeForUser(signedInUser);
+                                    if (signedInUser == null) {
+                                      _showMessage(
+                                        'Sign in failed. Please try again.',
+                                      );
+                                      return;
                                     }
+                                    final signedInEmail =
+                                        signedInUser.email?.toLowerCase();
+                                    if (signedInEmail != null &&
+                                        signedInEmail != typedEmail) {
+                                      await authRepo.signOut();
+                                      if (!context.mounted) return;
+                                      _showMessage(
+                                        'Signed into a different account than requested. Please try again.',
+                                      );
+                                      return;
+                                    }
+                                    await _routeForUser(signedInUser);
                                   } on AuthException catch (error) {
                                     _showMessage(error.message);
                                   } catch (_) {

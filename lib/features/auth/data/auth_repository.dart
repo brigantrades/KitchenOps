@@ -17,8 +17,12 @@ class AuthRepository {
 
   Stream<AuthState> authChanges() => _client.auth.onAuthStateChange;
 
-  Future<void> signInWithEmail(String email, String password) {
-    return _client.auth.signInWithPassword(email: email, password: password);
+  Future<User?> signInWithEmail(String email, String password) async {
+    final response = await _client.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+    return response.user;
   }
 
   Future<void> signUpWithEmail(String email, String password) {

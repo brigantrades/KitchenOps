@@ -20,6 +20,16 @@ int startDayToDartWeekday(int startDay) {
   return startDay + 1;
 }
 
+/// True when [anchor] starts on the weekday required by [pref.startDay].
+bool plannerAnchorMatchesPreference(
+  DateTime anchor,
+  PlannerWindowPreference pref,
+) {
+  final normalizedAnchor = plannerDateOnly(anchor);
+  final expectedWeekday = startDayToDartWeekday(pref.startDay);
+  return normalizedAnchor.weekday == expectedWeekday;
+}
+
 /// Calendar date of a slot row (`week_start` Monday + `day_of_week` 0..6).
 DateTime calendarDateForSlot(MealPlanSlot slot) {
   return plannerDateOnly(slot.weekStart).add(Duration(days: slot.dayOfWeek));

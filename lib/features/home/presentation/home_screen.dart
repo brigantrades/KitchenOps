@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:collection/collection.dart';
+import 'package:intl/intl.dart';
 import 'package:plateplan/core/ui/app_surface.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
@@ -11,6 +12,8 @@ import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
+import 'package:plateplan/core/planner_slot_labels.dart';
+import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
 
@@ -121,8 +124,20 @@ class _HomeThreeDayOutlook extends ConsumerWidget {
                           .toList(),
                       recipes: recipes,
                       onTap: () {
-                        focusPlannerOnCalendarDate(ref, dates[i]);
-                        context.go('/planner');
+                        final daySlots = slots
+                            .where((s) =>
+                                plannerDateOnly(calendarDateForSlot(s)) ==
+                                plannerDateOnly(dates[i]))
+                            .sorted(
+                                (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                            .toList();
+                        _showHomeOutlookDaySheet(
+                          context: context,
+                          ref: ref,
+                          date: dates[i],
+                          daySlots: daySlots,
+                          recipes: recipes,
+                        );
                       },
                     ),
                   ],
@@ -134,6 +149,109 @@ class _HomeThreeDayOutlook extends ConsumerWidget {
       ),
     );
   }
+}
+
+Future<void> _showHomeOutlookDaySheet({
+  required BuildContext context,
+  required WidgetRef ref,
+  required DateTime date,
+  required List<MealPlanSlot> daySlots,
+  required List<Recipe> recipes,
+}) async {
+  final sortedSlots = [...daySlots]..sort((a, b) => a.slotOrder.compareTo(b.slotOrder));
+  final header = DateFormat('EEEE, MMM d').format(date);
+
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheetContext) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 8, 4, 6),
+                child: Text(
+                  header,
+                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+              if (sortedSlots.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
+                  child: Text(
+                    'Nothing planned for this day.',
+                    style: Theme.of(sheetContext).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: sortedSlots.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 4),
+                    itemBuilder: (ctx, index) {
+                      final slot = sortedSlots[index];
+                      final line = plannerSlotPrimarySummaryLine(slot, recipes);
+                      final hasRecipe = (slot.recipeId?.trim().isNotEmpty ?? false);
+                      return ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        tileColor: Theme.of(ctx)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.45),
+                        title: Text(plannerSlotDisplayLabel(sortedSlots, slot)),
+                        subtitle: Text(
+                          line,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Icon(
+                          hasRecipe
+                              ? Icons.chevron_right_rounded
+                              : Icons.horizontal_rule_rounded,
+                        ),
+                        enabled: hasRecipe,
+                        onTap: hasRecipe
+                            ? () {
+                                final recipeId = slot.recipeId!.trim();
+                                Navigator.of(sheetContext).pop();
+                                context.push('/cooking/$recipeId');
+                              }
+                            : null,
+                      );
+                    },
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    focusPlannerOnCalendarDate(ref, date);
+                    context.go('/planner');
+                  },
+                  icon: const Icon(Icons.calendar_view_week_rounded),
+                  label: const Text('View in planner'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 Future<void> _toggleGroceryItemStatus(WidgetRef ref, GroceryItem item) async {

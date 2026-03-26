@@ -7,6 +7,22 @@ import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 const double kGroceryCardGridSpacing = 8;
 const double kGroceryCardAspectRatio = 1.15;
 
+/// Hides non-create suggestion chips whose label equals the typed query; always
+/// keeps the create-new row (same label as query). Used by [GroceryItemSuggestionsGrid]
+/// and tests.
+List<({String label, bool isCreate})> filterGrocerySuggestionOptionsForDisplay({
+  required List<({String label, bool isCreate})> suggestionOptions,
+  required String normalizedTypedQuery,
+}) {
+  return suggestionOptions
+      .where(
+        (o) =>
+            o.isCreate ||
+            normalizeGroceryItemName(o.label) != normalizedTypedQuery,
+      )
+      .toList();
+}
+
 class GroceryItemSuggestionsGrid extends StatelessWidget {
   const GroceryItemSuggestionsGrid({
     super.key,
@@ -66,14 +82,10 @@ class GroceryItemSuggestionsGrid extends StatelessWidget {
         (label: typedQuery, isCreate: true),
       ...suggestions.map((entry) => (label: entry, isCreate: false)),
     ].take(limit).toList();
-    // Hide the card that matches the current field text (e.g. after picking
-    // "chicken wings", only the text is needed — no duplicate chip).
-    final filteredOptions = suggestionOptions
-        .where(
-          (o) =>
-              normalizeGroceryItemName(o.label) != normalizedTypedQuery,
-        )
-        .toList();
+    final filteredOptions = filterGrocerySuggestionOptionsForDisplay(
+      suggestionOptions: suggestionOptions,
+      normalizedTypedQuery: normalizedTypedQuery,
+    );
     if (filteredOptions.isEmpty) return const SizedBox.shrink();
 
     return ConstrainedBox(

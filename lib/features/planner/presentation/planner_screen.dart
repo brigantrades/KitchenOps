@@ -44,6 +44,16 @@ void _syncSelectedPlannerDayToTodayOrFirst(WidgetRef ref) {
   }
 }
 
+void _ensurePlannerAnchorMatchesPreference(WidgetRef ref) {
+  final pref = ref.read(effectivePlannerWindowProvider);
+  final anchor = ref.read(weekStartProvider);
+  if (!plannerAnchorMatchesPreference(anchor, pref)) {
+    final now = DateTime.now();
+    ref.read(weekStartProvider.notifier).state =
+        anchorDateForWindowContaining(now, pref);
+  }
+}
+
 /// Syncs selected day when [weekStartProvider] changes; initial sync on first frame.
 class _PlannerDaySyncListener extends ConsumerStatefulWidget {
   const _PlannerDaySyncListener();
@@ -59,6 +69,7 @@ class _PlannerDaySyncListenerState extends ConsumerState<_PlannerDaySyncListener
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _ensurePlannerAnchorMatchesPreference(ref);
       _syncSelectedPlannerDayToTodayOrFirst(ref);
     });
   }
@@ -2242,9 +2253,12 @@ class PlannerScreen extends ConsumerWidget {
       if (current > max) {
         ref.read(selectedPlannerDayProvider.notifier).state = max;
       }
-      if (prev != null &&
-          (prev.startDay != next.startDay || prev.dayCount != next.dayCount)) {
-        final now = DateTime.now();
+      final now = DateTime.now();
+      final anchor = ref.read(weekStartProvider);
+      final prefChanged = prev != null &&
+          (prev.startDay != next.startDay || prev.dayCount != next.dayCount);
+      final anchorMismatched = !plannerAnchorMatchesPreference(anchor, next);
+      if (prefChanged || anchorMismatched) {
         ref.read(weekStartProvider.notifier).state =
             anchorDateForWindowContaining(now, next);
         _syncSelectedPlannerDayToTodayOrFirst(ref);
