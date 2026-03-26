@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/theme/theme_extensions.dart';
+import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/food_icon_resolver.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/measurement_system_toggle.dart';
@@ -353,145 +354,126 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     final hasSharedHousehold =
         ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
     final query = _searchCtrl.text.trim().toLowerCase();
-    final colors =
-        Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
     final effectiveLibraryIndex = hasSharedHousehold ? _libraryIndex : 0;
     final libraryLabels = hasSharedHousehold
         ? const ['Household Recipes', 'My Recipes']
         : const ['My Recipes'];
 
-    final gradient = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [colors.surfaceBase, colors.surfaceAlt, colors.surfaceBase],
-    );
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Recipes'),
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        shadowColor: Colors.black26,
-        surfaceTintColor: Colors.transparent,
-        backgroundColor: colors.surfaceBase,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.auto_awesome_outlined),
-            tooltip: 'Test Instagram import',
-            onPressed: () => context.push('/instagram-import-test'),
-          ),
-        ],
-      ),
+    return DiscoverShellScaffold(
+      title: 'Recipes',
+      onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
+      trailingActions: [
+        IconButton(
+          icon: const Icon(Icons.auto_awesome_outlined),
+          tooltip: 'Test Instagram import',
+          onPressed: () => context.push('/instagram-import-test'),
+        ),
+      ],
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _createRecipeManually,
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add Recipe'),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      body: DecoratedBox(
-        decoration: BoxDecoration(gradient: gradient),
-        child: recipesAsync.when(
-          data: (recipes) {
-            bool matches(Recipe recipe) {
-              if (query.isEmpty) return true;
-              final title = recipe.title.toLowerCase();
-              final cuisines = recipe.cuisineTags.join(' ').toLowerCase();
-              final meal = _mealTypeLabel(recipe.mealType).toLowerCase();
-              return title.contains(query) ||
-                  cuisines.contains(query) ||
-                  meal.contains(query);
-            }
+      body: recipesAsync.when(
+        data: (recipes) {
+          bool matches(Recipe recipe) {
+            if (query.isEmpty) return true;
+            final title = recipe.title.toLowerCase();
+            final cuisines = recipe.cuisineTags.join(' ').toLowerCase();
+            final meal = _mealTypeLabel(recipe.mealType).toLowerCase();
+            return title.contains(query) ||
+                cuisines.contains(query) ||
+                meal.contains(query);
+          }
 
-            final filtered = recipes.where(matches).toList();
-            final isHouseholdLibrary =
-                hasSharedHousehold && effectiveLibraryIndex == 0;
-            final List<Recipe> visible;
-            if (isHouseholdLibrary) {
-              // All shared household rows — not only favorites. New "Save to Household"
-              // copies often have is_favorite false until the user favorites them.
-              visible = filtered
-                  .where((r) => r.visibility == RecipeVisibility.household)
-                  .toList();
-            } else {
-              final personal = filtered
-                  .where((r) => r.visibility != RecipeVisibility.household)
-                  .toList();
-              final favorites = personal.where((r) => r.isFavorite).toList();
-              final toTry = personal.where((r) => r.isToTry).toList();
-              // My Recipes lists personal copies only. Favorites / To Try are your
-              // personal rows; household copies live under Household Recipes.
-              visible = switch (_segmentIndex) {
-                1 => favorites,
-                2 => toTry,
-                _ => personal,
-              };
+          final filtered = recipes.where(matches).toList();
+          final isHouseholdLibrary =
+              hasSharedHousehold && effectiveLibraryIndex == 0;
+          final List<Recipe> visible;
+          if (isHouseholdLibrary) {
+            // All shared household rows — not only favorites. New "Save to Household"
+            // copies often have is_favorite false until the user favorites them.
+            visible = filtered
+                .where((r) => r.visibility == RecipeVisibility.household)
+                .toList();
+          } else {
+            final personal = filtered
+                .where((r) => r.visibility != RecipeVisibility.household)
+                .toList();
+            final favorites = personal.where((r) => r.isFavorite).toList();
+            final toTry = personal.where((r) => r.isToTry).toList();
+            // My Recipes lists personal copies only. Favorites / To Try are your
+            // personal rows; household copies live under Household Recipes.
+            visible = switch (_segmentIndex) {
+              1 => favorites,
+              2 => toTry,
+              _ => personal,
+            };
+          }
+          final displayed = visible.where(_recipePassesMealFilter).toList();
+          displayed.sort((a, b) {
+            switch (_sortOption) {
+              case _RecipeSortOption.name:
+                return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+              case _RecipeSortOption.dateAdded:
+                final aTime = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                final bTime = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                return bTime.compareTo(aTime);
             }
-            final displayed = visible.where(_recipePassesMealFilter).toList();
-            displayed.sort((a, b) {
-              switch (_sortOption) {
-                case _RecipeSortOption.name:
-                  return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-                case _RecipeSortOption.dateAdded:
-                  final aTime =
-                      a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                  final bTime =
-                      b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                  return bTime.compareTo(aTime);
-              }
-            });
+          });
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-                  child: _buildRecipesFilterHeader(
-                    context: context,
-                    hasSharedHousehold: hasSharedHousehold,
-                    effectiveLibraryIndex: effectiveLibraryIndex,
-                    libraryLabels: libraryLabels,
-                  ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                child: _buildRecipesFilterHeader(
+                  context: context,
+                  hasSharedHousehold: hasSharedHousehold,
+                  effectiveLibraryIndex: effectiveLibraryIndex,
+                  libraryLabels: libraryLabels,
                 ),
-                Expanded(
-                  child: displayed.isEmpty
-                      ? Center(
-                          child: Text(
-                            isHouseholdLibrary
-                                ? 'No recipes yet. Add one in Discover or Planner.'
-                                : switch (_segmentIndex) {
-                                    1 =>
-                                      'No favorites yet. Open a personal recipe and turn on My Favorites.',
-                                    2 =>
-                                      'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
-                                    _ =>
-                                      'No recipes yet. Add one in Discover or Planner.',
-                                  },
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(
-                            10,
-                            0,
-                            10,
-                            88,
-                          ),
-                          itemCount: displayed.length,
-                          itemBuilder: (context, index) {
-                            return _RecipeRow(
-                              recipe: displayed[index],
-                              hasSharedHousehold: hasSharedHousehold,
-                              isHouseholdLibrary: isHouseholdLibrary,
-                              onEditRecipe: _editRecipe,
-                            );
-                          },
+              ),
+              Expanded(
+                child: displayed.isEmpty
+                    ? Center(
+                        child: Text(
+                          isHouseholdLibrary
+                              ? 'No recipes yet. Add one in Discover or Planner.'
+                              : switch (_segmentIndex) {
+                                  1 =>
+                                    'No favorites yet. Open a personal recipe and turn on My Favorites.',
+                                  2 =>
+                                    'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
+                                  _ =>
+                                    'No recipes yet. Add one in Discover or Planner.',
+                                },
                         ),
-                ),
-              ],
-            );
-          },
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, stack) => Center(child: Text('Error: $error')),
-        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(
+                          10,
+                          0,
+                          10,
+                          88,
+                        ),
+                        itemCount: displayed.length,
+                        itemBuilder: (context, index) {
+                          return _RecipeRow(
+                            recipe: displayed[index],
+                            hasSharedHousehold: hasSharedHousehold,
+                            isHouseholdLibrary: isHouseholdLibrary,
+                            onEditRecipe: _editRecipe,
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(child: Text('Error: $error')),
       ),
     );
   }

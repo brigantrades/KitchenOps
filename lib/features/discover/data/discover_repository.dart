@@ -9,9 +9,10 @@ import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum DiscoverMealType {
-  entree('Entree'),
-  side('Side'),
-  sauce('Sauce');
+  entree('Breakfast'),
+  side('Lunch'),
+  sauce('Dinner'),
+  snack('Snack');
 
   const DiscoverMealType(this.label);
   final String label;
@@ -29,6 +30,96 @@ class DiscoverFilterChip {
   final List<String> keywords;
 
   bool get isAll => id == 'all';
+}
+
+enum DiscoverPrepTimeBucket {
+  any('Any'),
+  under15('Under 15 min'),
+  from15To30('15-30 min'),
+  over30('30+ min');
+
+  const DiscoverPrepTimeBucket(this.label);
+  final String label;
+}
+
+enum DiscoverRatingBucket {
+  any('Any'),
+  threePlus('3 Stars +'),
+  fourPlus('4 Stars +');
+
+  const DiscoverRatingBucket(this.label);
+  final String label;
+}
+
+class DiscoverCuisineTile {
+  const DiscoverCuisineTile({
+    required this.id,
+    required this.label,
+    required this.recipeCount,
+  });
+
+  final String id;
+  final String label;
+  final int recipeCount;
+}
+
+class DiscoverFilters {
+  const DiscoverFilters({
+    this.query = '',
+    this.cuisineIds = const <String>{},
+    this.dietaryIds = const <String>{},
+    this.prepTime = DiscoverPrepTimeBucket.any,
+    this.rating = DiscoverRatingBucket.any,
+    this.mealTypes = const <DiscoverMealType>{},
+  });
+
+  final String query;
+  final Set<String> cuisineIds;
+  final Set<String> dietaryIds;
+  final DiscoverPrepTimeBucket prepTime;
+  final DiscoverRatingBucket rating;
+  final Set<DiscoverMealType> mealTypes;
+
+  bool get isDefault =>
+      query.trim().isEmpty &&
+      cuisineIds.isEmpty &&
+      dietaryIds.isEmpty &&
+      prepTime == DiscoverPrepTimeBucket.any &&
+      rating == DiscoverRatingBucket.any &&
+      mealTypes.isEmpty;
+
+  DiscoverFilters copyWith({
+    String? query,
+    Set<String>? cuisineIds,
+    Set<String>? dietaryIds,
+    DiscoverPrepTimeBucket? prepTime,
+    DiscoverRatingBucket? rating,
+    Set<DiscoverMealType>? mealTypes,
+  }) {
+    return DiscoverFilters(
+      query: query ?? this.query,
+      cuisineIds: cuisineIds ?? this.cuisineIds,
+      dietaryIds: dietaryIds ?? this.dietaryIds,
+      prepTime: prepTime ?? this.prepTime,
+      rating: rating ?? this.rating,
+      mealTypes: mealTypes ?? this.mealTypes,
+    );
+  }
+}
+
+extension DiscoverMealTypeX on DiscoverMealType {
+  MealType get recipeMealType {
+    switch (this) {
+      case DiscoverMealType.entree:
+        return MealType.entree;
+      case DiscoverMealType.side:
+        return MealType.side;
+      case DiscoverMealType.sauce:
+        return MealType.sauce;
+      case DiscoverMealType.snack:
+        return MealType.snack;
+    }
+  }
 }
 
 const _breakfastChips = <DiscoverFilterChip>[
@@ -92,6 +183,25 @@ List<DiscoverFilterChip> discoverChipsForMeal(DiscoverMealType meal) {
       return _lunchChips;
     case DiscoverMealType.sauce:
       return _dinnerChips;
+    case DiscoverMealType.snack:
+      return const <DiscoverFilterChip>[
+        DiscoverFilterChip(id: 'all', label: 'All', keywords: <String>[]),
+        DiscoverFilterChip(
+          id: 'quick',
+          label: 'Quick',
+          keywords: <String>['quick', 'easy'],
+        ),
+        DiscoverFilterChip(
+          id: 'protein',
+          label: 'Protein',
+          keywords: <String>['protein', 'nuts', 'yogurt'],
+        ),
+        DiscoverFilterChip(
+          id: 'sweet',
+          label: 'Sweet',
+          keywords: <String>['sweet', 'fruit', 'chocolate'],
+        ),
+      ];
   }
 }
 
@@ -480,6 +590,7 @@ class DiscoverRepository {
       ..remove('user_id')
       ..remove('household_id')
       ..remove('visibility')
+      ..remove('api_id')
       ..remove('is_favorite')
       ..remove('is_to_try')
       ..remove('source');
@@ -492,6 +603,59 @@ class DiscoverRepository {
       'is_to_try': toTry ?? false,
       ...payload,
     });
+  }
+
+  Future<String> saveDiscoverRecipeForUserAndReturnId({
+    required String userId,
+    required Recipe recipe,
+    bool? favorite,
+    bool? toTry,
+  }) async {
+    await _ensureProfileRow(userId);
+
+    final existing = await _client
+        .from('recipes')
+        .select('id,is_favorite,is_to_try')
+        .eq('user_id', userId)
+        .eq('visibility', 'personal')
+        .eq('source', 'saved_from_discover')
+        .eq('title', recipe.title)
+        .eq('meal_type', recipe.mealType.name)
+        .maybeSingle();
+
+    if (existing != null) {
+      final currentFavorite = existing['is_favorite'] == true;
+      final currentToTry = existing['is_to_try'] == true;
+      await _client.from('recipes').update({
+        'is_favorite': favorite ?? currentFavorite,
+        'is_to_try': toTry ?? currentToTry,
+      }).eq('id', existing['id']);
+      return existing['id'].toString();
+    }
+
+    final payload = recipe.toJson()
+      ..remove('id')
+      ..remove('user_id')
+      ..remove('household_id')
+      ..remove('visibility')
+      ..remove('api_id')
+      ..remove('is_favorite')
+      ..remove('is_to_try')
+      ..remove('source');
+
+    final inserted = await _client
+        .from('recipes')
+        .insert({
+          'user_id': userId,
+          'visibility': 'personal',
+          'source': 'saved_from_discover',
+          'is_favorite': favorite ?? false,
+          'is_to_try': toTry ?? false,
+          ...payload,
+        })
+        .select('id')
+        .single();
+    return inserted['id'].toString();
   }
 }
 
@@ -516,6 +680,23 @@ final discoverMealTypeProvider =
 
 final discoverChipIdProvider = StateProvider<String>((ref) => 'all');
 
+final discoverSearchQueryProvider = StateProvider<String>((ref) => '');
+
+final discoverSelectedCuisineIdsProvider =
+    StateProvider<Set<String>>((ref) => <String>{});
+
+final discoverSelectedDietaryTagsProvider =
+    StateProvider<Set<String>>((ref) => <String>{});
+
+final discoverPrepTimeBucketProvider =
+    StateProvider<DiscoverPrepTimeBucket>((ref) => DiscoverPrepTimeBucket.any);
+
+final discoverRatingBucketProvider =
+    StateProvider<DiscoverRatingBucket>((ref) => DiscoverRatingBucket.any);
+
+final discoverSelectedMealTypesProvider =
+    StateProvider<Set<DiscoverMealType>>((ref) => <DiscoverMealType>{});
+
 final discoverAvailableChipsProvider =
     Provider<List<DiscoverFilterChip>>((ref) {
   final meal = ref.watch(discoverMealTypeProvider);
@@ -536,13 +717,219 @@ final discoverPublicRecipesProvider = FutureProvider<List<Recipe>>((ref) async {
   return ref.watch(discoverRepositoryProvider).listPublicRecipesForMeal(meal);
 });
 
+final discoverAllPublicRecipesProvider =
+    FutureProvider<List<Recipe>>((ref) async {
+  final repository = ref.watch(discoverRepositoryProvider);
+  final rows = await repository._client
+      .from('recipes')
+      .select()
+      .eq('visibility', RecipeVisibility.public.name)
+      .order('created_at', ascending: false);
+  return (rows as List)
+      .whereType<Map<String, dynamic>>()
+      .map(Recipe.fromJson)
+      .toList();
+});
+
+final discoverFiltersProvider = Provider<DiscoverFilters>((ref) {
+  return DiscoverFilters(
+    query: ref.watch(discoverSearchQueryProvider),
+    cuisineIds: ref.watch(discoverSelectedCuisineIdsProvider),
+    dietaryIds: ref.watch(discoverSelectedDietaryTagsProvider),
+    prepTime: ref.watch(discoverPrepTimeBucketProvider),
+    rating: ref.watch(discoverRatingBucketProvider),
+    mealTypes: ref.watch(discoverSelectedMealTypesProvider),
+  );
+});
+
+final discoverActiveFilterCountProvider = Provider<int>((ref) {
+  final filters = ref.watch(discoverFiltersProvider);
+  var count = 0;
+  if (filters.query.trim().isNotEmpty) count++;
+  if (filters.cuisineIds.isNotEmpty) count++;
+  if (filters.dietaryIds.isNotEmpty) count++;
+  if (filters.prepTime != DiscoverPrepTimeBucket.any) count++;
+  if (filters.rating != DiscoverRatingBucket.any) count++;
+  if (filters.mealTypes.isNotEmpty) count++;
+  return count;
+});
+
+final discoverCuisineTilesProvider =
+    Provider<AsyncValue<List<DiscoverCuisineTile>>>(
+  (ref) {
+    final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+    return recipesAsync.whenData((recipes) {
+      int matchesAny(Recipe recipe, List<String> keywords) {
+        final haystack =
+            '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
+        return keywords.any(haystack.contains) ? 1 : 0;
+      }
+
+      int countFor(List<String> keywords) => recipes.fold<int>(
+            0,
+            (sum, recipe) => sum + matchesAny(recipe, keywords),
+          );
+
+      return <DiscoverCuisineTile>[
+        DiscoverCuisineTile(
+          id: 'pasta',
+          label: 'Pasta',
+          recipeCount: countFor(<String>['pasta', 'spaghetti', 'italian']),
+        ),
+        DiscoverCuisineTile(
+          id: 'mexican-fiesta',
+          label: 'Mexican Fiesta',
+          recipeCount:
+              countFor(<String>['mexican', 'taco', 'fajita', 'burrito']),
+        ),
+        DiscoverCuisineTile(
+          id: 'asian',
+          label: 'Asian',
+          recipeCount:
+              countFor(<String>['asian', 'ramen', 'stir-fry', 'noodle']),
+        ),
+        DiscoverCuisineTile(
+          id: 'plant-based-power',
+          label: 'Plant-Based Power',
+          recipeCount: countFor(<String>['plant', 'vegetarian', 'veggie']),
+        ),
+        DiscoverCuisineTile(
+          id: 'comfort-classics',
+          label: 'Comfort Classics',
+          recipeCount:
+              countFor(<String>['comfort', 'classic', 'casserole', 'stew']),
+        ),
+        DiscoverCuisineTile(
+          id: 'vegan-delights',
+          label: 'Vegan Delights',
+          recipeCount: countFor(<String>['vegan']),
+        ),
+        DiscoverCuisineTile(
+          id: 'mediterranean-flavors',
+          label: 'Mediterranean',
+          recipeCount: countFor(<String>['mediterranean', 'greek', 'hummus']),
+        ),
+      ];
+    });
+  },
+);
+
+final discoverTrendingRecipesProvider =
+    Provider<AsyncValue<List<Recipe>>>((ref) {
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  return recipesAsync.whenData((recipes) => recipes.take(8).toList());
+});
+
+const _discoverQuickEasyApiIds = <String>{
+  'pinch_of_yum:salmon-tacos',
+  'pinch_of_yum:lo-mein',
+  'pinch_of_yum:black-pepper-stir-fried-noodles',
+  'pinch_of_yum:sheet-pan-chicken-pitas',
+  'pinch_of_yum:greek-baked-orzo',
+  'pinch_of_yum:creamy-garlic-sun-dried-tomato-pasta',
+  'pinch_of_yum:coconut-curry-salmon',
+  'pinch_of_yum:butter-chicken-meatballs',
+  'pinch_of_yum:garlic-butter-baked-penne',
+  'pinch_of_yum:vegan-sheet-pan-fajitas-with-chipotle-queso',
+};
+
+final discoverQuickEasyRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  return recipesAsync.whenData(
+    (recipes) => recipes
+        .where((recipe) => _discoverQuickEasyApiIds.contains(recipe.apiId))
+        .toList(),
+  );
+});
+
 final discoverFilteredRecipesProvider =
     Provider<AsyncValue<List<Recipe>>>((ref) {
   final selectedChip = ref.watch(discoverSelectedChipProvider);
-  final recipesAsync = ref.watch(discoverPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final filters = ref.watch(discoverFiltersProvider);
+  final repository = ref.watch(discoverRepositoryProvider);
   return recipesAsync.whenData((recipes) {
-    return ref
-        .watch(discoverRepositoryProvider)
-        .filterRecipesByChip(recipes, selectedChip);
+    var output = recipes;
+    output = repository.filterRecipesByChip(output, selectedChip);
+    output = _applyFilters(output, filters);
+    return output;
   });
 });
+
+List<Recipe> _applyFilters(List<Recipe> recipes, DiscoverFilters filters) {
+  final query = filters.query.trim().toLowerCase();
+  return recipes.where((recipe) {
+    if (query.isNotEmpty) {
+      final inTitle = recipe.title.toLowerCase().contains(query);
+      final inTags = recipe.cuisineTags.any(
+        (tag) => tag.toLowerCase().contains(query),
+      );
+      if (!inTitle && !inTags) return false;
+    }
+
+    if (filters.cuisineIds.isNotEmpty) {
+      final recipeTags = recipe.cuisineTags.map((tag) => tag.toLowerCase());
+      final hasCuisine = recipeTags.any(filters.cuisineIds.contains);
+      if (!hasCuisine) return false;
+    }
+
+    if (filters.dietaryIds.isNotEmpty) {
+      final haystack =
+          '${recipe.title.toLowerCase()} ${recipe.cuisineTags.join(' ').toLowerCase()}';
+      final hasAllDietary = filters.dietaryIds.every(haystack.contains);
+      if (!hasAllDietary) return false;
+    }
+
+    if (!_matchesPrepTime(recipe, filters.prepTime)) return false;
+    if (!_matchesRating(recipe, filters.rating)) return false;
+
+    if (filters.mealTypes.isNotEmpty &&
+        !filters.mealTypes
+            .map((meal) => meal.recipeMealType)
+            .contains(recipe.mealType)) {
+      return false;
+    }
+
+    return true;
+  }).toList();
+}
+
+bool _matchesPrepTime(Recipe recipe, DiscoverPrepTimeBucket bucket) {
+  if (bucket == DiscoverPrepTimeBucket.any) return true;
+  final totalTime = (recipe.prepTime ?? 0) + (recipe.cookTime ?? 0);
+  if (totalTime <= 0) return false;
+  switch (bucket) {
+    case DiscoverPrepTimeBucket.any:
+      return true;
+    case DiscoverPrepTimeBucket.under15:
+      return totalTime < 15;
+    case DiscoverPrepTimeBucket.from15To30:
+      return totalTime >= 15 && totalTime <= 30;
+    case DiscoverPrepTimeBucket.over30:
+      return totalTime > 30;
+  }
+}
+
+bool _matchesRating(Recipe recipe, DiscoverRatingBucket rating) {
+  if (rating == DiscoverRatingBucket.any) return true;
+  final value = _derivedRating(recipe);
+  switch (rating) {
+    case DiscoverRatingBucket.any:
+      return true;
+    case DiscoverRatingBucket.threePlus:
+      return value >= 3.0;
+    case DiscoverRatingBucket.fourPlus:
+      return value >= 4.0;
+  }
+}
+
+double _derivedRating(Recipe recipe) {
+  final base = recipe.nutrition.protein > 20 ? 4.2 : 3.6;
+  final totalTime = (recipe.prepTime ?? 0) + (recipe.cookTime ?? 0);
+  final timeBonus = totalTime > 0 && totalTime <= 30 ? 0.3 : 0.0;
+  final varietyBonus = recipe.cuisineTags.length >= 2 ? 0.2 : 0.0;
+  final jitter = (recipe.title.length % 5) * 0.1;
+  final score = base + timeBonus + varietyBonus + jitter;
+  return score.clamp(2.8, 4.9);
+}
+

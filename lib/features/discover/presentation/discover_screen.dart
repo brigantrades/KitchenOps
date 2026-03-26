@@ -1,233 +1,1190 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:plateplan/core/models/app_models.dart';
+import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/measurement/ingredient_display_units.dart';
 import 'package:plateplan/core/measurement/measurement_system_provider.dart';
+import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/measurement_system_toggle.dart';
-import 'package:plateplan/core/ui/app_surface.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
+import 'package:plateplan/features/planner/data/planner_repository.dart';
+import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
-class DiscoverScreen extends ConsumerWidget {
+class DiscoverScreen extends ConsumerStatefulWidget {
   const DiscoverScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final selectedMeal = ref.watch(discoverMealTypeProvider);
-    final availableChips = ref.watch(discoverAvailableChipsProvider);
-    final selectedChip = ref.watch(discoverSelectedChipProvider);
-    final recipesAsync = ref.watch(discoverFilteredRecipesProvider);
+  ConsumerState<DiscoverScreen> createState() => _DiscoverScreenState();
+}
+
+class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(
+      text: ref.read(discoverSearchQueryProvider),
+    );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final quickRecipesAsync = ref.watch(discoverQuickEasyRecipesProvider);
+    final trendingAsync = ref.watch(discoverTrendingRecipesProvider);
+    final cuisinesAsync = ref.watch(discoverCuisineTilesProvider);
+    final activeFilterCount = ref.watch(discoverActiveFilterCountProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Discover')),
-      body: AppSurface(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
-        child: Column(
-          children: [
-            _buildDiscoverHero(),
-            const SizedBox(height: 12),
-            _buildMealSelector(ref, selectedMeal),
-            const SizedBox(height: 10),
-            _buildMealFilters(ref, availableChips, selectedChip),
-            const SizedBox(height: 12),
-            recipesAsync.when(
-              data: (recipes) =>
-                  _buildRecipeList(context, ref, selectedMeal, recipes),
-              loading: () => const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator()),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: Color(0xFFC4CFBC),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: Column(
+                  children: [
+                    _buildHeader(context),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildSearchAndFilter(activeFilterCount),
+                    const SizedBox(height: AppSpacing.md),
+                  ],
+                ),
               ),
-              error: (error, _) => SectionCard(
-                title: 'Could not load discover recipes',
-                subtitle: 'Please retry in a moment.',
-                child: Text(error.toString()),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF3F2E8),
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionTitle(context, 'Trending This Week'),
+                          const SizedBox(height: AppSpacing.xs),
+                          _buildTrendingStrip(trendingAsync),
+                          const SizedBox(height: AppSpacing.md),
+                          _sectionTitle(context, 'Quick & Easy Dinners'),
+                          const SizedBox(height: AppSpacing.xs),
+                          _buildQuickDinnerGrid(quickRecipesAsync),
+                          const SizedBox(height: AppSpacing.md),
+                          // New From Users intentionally hidden for now.
+                          _sectionTitle(context, 'Explore Cuisines'),
+                          const SizedBox(height: AppSpacing.xs),
+                          _buildCuisineGrid(cuisinesAsync),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildMealSelector(WidgetRef ref, DiscoverMealType selectedMeal) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: DiscoverMealType.values
-            .map(
-              (meal) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  label: Text(meal.label),
-                  selected: selectedMeal == meal,
-                  onSelected: (_) {
-                    ref.read(discoverMealTypeProvider.notifier).state = meal;
-                    ref.read(discoverChipIdProvider.notifier).state = 'all';
-                  },
-                ),
+  Widget _buildHeader(BuildContext context) {
+    return Row(
+      children: [
+        const Spacer(),
+        Text(
+          'Discover',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
-            )
-            .toList(),
-      ),
+        ),
+        const Spacer(),
+        InkWell(
+          onTap: () => context.push('/profile'),
+          borderRadius: BorderRadius.circular(14),
+          child: const CircleAvatar(
+            radius: 12,
+            backgroundColor: Color(0xFFE7DED1),
+            child: Icon(Icons.person_rounded, size: 14, color: Color(0xFF6C6C66)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        InkWell(
+          onTap: _showNotificationsDropdown,
+          borderRadius: BorderRadius.circular(14),
+          child: const Icon(
+            Icons.notifications_none_rounded,
+            size: 18,
+            color: Color(0xFF5E665E),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildDiscoverHero() {
-    return Builder(
-      builder: (context) {
-        final scheme = Theme.of(context).colorScheme;
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: scheme.outlineVariant),
+  Widget _buildSearchAndFilter(int activeFilterCount) {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) {
+              ref.read(discoverSearchQueryProvider.notifier).state = value;
+            },
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search_rounded),
+              hintText: 'Search recipes',
+              isDense: true,
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
+        ),
+        const SizedBox(width: 8),
+        TextButton.icon(
+          onPressed: _showFilterSheet,
+          icon: const Icon(Icons.tune_rounded),
+          label: Text(activeFilterCount > 0
+              ? 'Filters ($activeFilterCount)'
+              : 'Filters'),
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFF2D342F),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            minimumSize: const Size(84, 44),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(BuildContext context, String title) {
+    return Text(
+      title,
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+    );
+  }
+
+  Widget _buildTrendingStrip(AsyncValue<List<Recipe>> trendingAsync) {
+    return trendingAsync.when(
+      data: (recipes) => SizedBox(
+        height: 52,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemBuilder: (context, index) {
+            final recipe = recipes[index];
+            return GestureDetector(
+              onTap: () => _showPublicRecipeDetail(recipe),
+              child: CircleAvatar(
+                radius: 24,
+                backgroundImage: NetworkImage(_fallbackFoodImage(index)),
+                backgroundColor:
+                    Theme.of(context).colorScheme.primaryContainer,
+                onBackgroundImageError: (_, __) {},
+                child: ClipOval(
+                  child: FoodMedia(
+                    imageUrl: recipe.imageUrl?.isNotEmpty == true
+                        ? recipe.imageUrl
+                        : _fallbackFoodImage(index),
+                    width: 48,
+                    height: 48,
+                  ),
+                ),
+              ),
+            );
+          },
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemCount: recipes.length.clamp(0, 8),
+        ),
+      ),
+      loading: () => const SizedBox(
+        height: 52,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildQuickDinnerGrid(AsyncValue<List<Recipe>> recipesAsync) {
+    final savedRecipes = ref.watch(recipesProvider).valueOrNull ?? const <Recipe>[];
+    return recipesAsync.when(
+      data: (recipes) {
+        final quickRecipes = recipes.take(8).toList();
+        if (quickRecipes.isEmpty) return const SizedBox.shrink();
+        return SizedBox(
+          height: 212,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: quickRecipes.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final recipe = quickRecipes[index];
+              final isSaved = _isRecipeSaved(recipe, savedRecipes);
+              final imageUrl = recipe.imageUrl?.isNotEmpty == true
+                  ? recipe.imageUrl!
+                  : _fallbackFoodImage(index + 10);
+              return GestureDetector(
+                onTap: () => _showPublicRecipeDetail(recipe),
+                child: SizedBox(
+                  width: 180,
+                  child: Container(
                     decoration: BoxDecoration(
-                      color: scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: AppShadows.soft,
+                      image: DecorationImage(
+                        image: NetworkImage(imageUrl),
+                        fit: BoxFit.cover,
+                      ),
                     ),
-                    child: Icon(
-                      Icons.restaurant_menu_rounded,
-                      color: scheme.onPrimaryContainer,
-                      size: 18,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    'Discover',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: 0.08),
+                            Colors.black.withValues(alpha: 0.65),
+                          ],
                         ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Browse recipes with nutrition insights and save favorites for later.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                      ),
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFC8D3C2)
+                                      .withValues(alpha: 0.9),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: InkWell(
+                                  onTap: () => _showSaveDestinationModal(recipe),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Icon(
+                                    isSaved
+                                        ? Icons.bookmark_rounded
+                                        : Icons.bookmark_border_rounded,
+                                    size: 18,
+                                    color: isSaved
+                                        ? const Color(0xFF2F6B46)
+                                        : const Color(0xFF2D342F),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+                          Align(
+                            alignment: Alignment.bottomLeft,
+                            child: Text(
+                              recipe.title.toUpperCase(),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                height: 1.05,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-              ),
-            ],
+                  ),
+                ),
+              );
+            },
           ),
         );
       },
-    );
-  }
-
-  Widget _buildMealFilters(
-    WidgetRef ref,
-    List<DiscoverFilterChip> chips,
-    DiscoverFilterChip selected,
-  ) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: chips
-            .map(
-              (chip) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  label: Text(chip.label),
-                  selected: selected.id == chip.id,
-                  onSelected: (_) {
-                    ref.read(discoverChipIdProvider.notifier).state = chip.id;
-                  },
-                ),
-              ),
-            )
-            .toList(),
+      loading: () => const SizedBox(
+        height: 220,
+        child: Center(child: CircularProgressIndicator()),
       ),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 
-  Widget _buildRecipeList(
-    BuildContext context,
-    WidgetRef ref,
-    DiscoverMealType meal,
-    List<Recipe> recipes,
-  ) {
-    if (recipes.isEmpty) {
-      return SectionCard(
-        title: 'No ${meal.label.toLowerCase()} recipes yet',
-        subtitle: 'Run the Spoonacular seeding script to populate this meal.',
-        child:
-            const Text('Try another filter or seed new recipes to continue.'),
-      );
-    }
-
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: recipes.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final recipe = recipes[index];
-        return RecipeListCard(
-          title: recipe.title,
-          meta: _recipeMeta(recipe),
-          tags: recipe.cuisineTags,
-          trailing: _nutritionChip(recipe),
-          onTap: () => _showPublicRecipeDetail(context, ref, recipe),
+  Widget _buildNewFromUsers(AsyncValue<List<Recipe>> trendingAsync) {
+    return trendingAsync.when(
+      data: (recipes) {
+        final count = recipes.isEmpty ? 4 : recipes.length.clamp(4, 8);
+        return SizedBox(
+          height: 42,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: count,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) => const CircleAvatar(
+              radius: 18,
+              backgroundColor: Color(0xFFE8ECEB),
+              child: Icon(Icons.person_rounded,
+                  color: Color(0xFF5F6A68), size: 18),
+            ),
+          ),
         );
       },
-    );
-  }
-
-  String _recipeMeta(Recipe recipe) {
-    final totalTime = (recipe.prepTime ?? 0) + (recipe.cookTime ?? 0);
-    final timeText = totalTime > 0 ? '${totalTime}m' : 'Time n/a';
-    final calories = recipe.nutrition.calories;
-    final protein = recipe.nutrition.protein;
-    final nutritionText = calories > 0 || protein > 0
-        ? '${calories > 0 ? '$calories cal' : ''}${calories > 0 && protein > 0 ? ' • ' : ''}${protein > 0 ? '${protein.toStringAsFixed(0)}g protein' : ''}'
-        : 'Data loading soon';
-    return '${_mealLabel(recipe.mealType)} • $timeText • Serves ${recipe.servings} • $nutritionText';
-  }
-
-  String _mealLabel(MealType mealType) {
-    final raw = mealType.name;
-    return '${raw[0].toUpperCase()}${raw.substring(1)}';
-  }
-
-  Widget _nutritionChip(Recipe recipe) {
-    final hasNutrition =
-        recipe.nutrition.calories > 0 || recipe.nutrition.protein > 0;
-    return Chip(
-      visualDensity: VisualDensity.compact,
-      label: Text(
-        hasNutrition
-            ? recipe.nutrition.calories > 0
-                ? '${recipe.nutrition.calories} cal'
-                : '${recipe.nutrition.protein.toStringAsFixed(0)}g P'
-            : 'Data loading soon',
+      loading: () => const SizedBox(
+        height: 42,
+        child: Center(child: CircularProgressIndicator()),
       ),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 
-  Future<void> _showPublicRecipeDetail(
-    BuildContext context,
-    WidgetRef ref,
-    Recipe recipe,
-  ) async {
+  Widget _buildCuisineGrid(
+      AsyncValue<List<DiscoverCuisineTile>> cuisinesAsync) {
+    final colors = <Color>[
+      const Color(0xFFB7D0BC),
+      const Color(0xFFF9B77D),
+      const Color(0xFFC7B7E8),
+      const Color(0xFFFFD06E),
+      const Color(0xFF9ED5B5),
+      const Color(0xFFF2C1B7),
+    ];
+    final icons = <IconData>[
+      Icons.ramen_dining_rounded,
+      Icons.local_dining_rounded,
+      Icons.rice_bowl_rounded,
+      Icons.emoji_food_beverage_rounded,
+      Icons.set_meal_rounded,
+      Icons.breakfast_dining_rounded,
+    ];
+
+    return cuisinesAsync.when(
+      data: (tiles) => GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: tiles.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 1.45,
+        ),
+        itemBuilder: (context, index) {
+          final tile = tiles[index];
+          return DiscoverCuisineCard(
+            title: tile.label,
+            subtitle: '${tile.recipeCount} recipes',
+            color: colors[index % colors.length],
+            icon: icons[index % icons.length],
+            graphicUrl: _cuisineGraphicForLabel(tile.label),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => _DiscoverCuisineRecipesPage(
+                    cuisineId: tile.id,
+                    title: tile.label,
+                    onOpenRecipe: _showPublicRecipeDetail,
+                    onSaveRecipe: _showSaveDestinationModal,
+                    onShowNotifications: _showNotificationsDropdown,
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+      loading: () => const SizedBox(
+        height: 120,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+
+  Future<void> _showPublicRecipeDetail(Recipe recipe) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => _DiscoverRecipeDetailPage(recipe: recipe),
       ),
     );
   }
+
+  Future<void> _showNotificationsDropdown() async {
+    String? actioningHouseholdId;
+    var isAccepting = false;
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.12),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Consumer(
+          builder: (context, ref, _) {
+            final invitesAsync = ref.watch(pendingHouseholdInvitesProvider);
+
+            Future<void> rejectInvite(HouseholdInvite invite) async {
+              setModalState(() {
+                actioningHouseholdId = invite.householdId;
+                isAccepting = false;
+              });
+              try {
+                await ref
+                    .read(householdRepositoryProvider)
+                    .rejectInvite(invite.householdId);
+                ref.invalidate(pendingHouseholdInvitesProvider);
+                ref.invalidate(householdMembersProvider);
+                if (!mounted) return;
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  const SnackBar(content: Text('Invite declined.')),
+                );
+              } catch (error) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(content: Text('Could not decline invite: $error')),
+                );
+              } finally {
+                if (mounted) {
+                  setModalState(() {
+                    actioningHouseholdId = null;
+                  });
+                }
+              }
+            }
+
+            Future<void> acceptInvite(HouseholdInvite invite) async {
+              setModalState(() {
+                actioningHouseholdId = invite.householdId;
+                isAccepting = true;
+              });
+              try {
+                await ref
+                    .read(householdRepositoryProvider)
+                    .acceptInvite(invite.householdId);
+                ref.invalidate(profileProvider);
+                ref.invalidate(activeHouseholdProvider);
+                ref.invalidate(activeHouseholdIdProvider);
+                ref.invalidate(householdMembersProvider);
+                ref.invalidate(pendingHouseholdInvitesProvider);
+                ref.invalidate(plannerSlotsProvider);
+                invalidateActiveGroceryStreams(ref);
+                ref.invalidate(listsProvider);
+                ref.invalidate(recipesProvider);
+                if (!mounted) return;
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  const SnackBar(content: Text('Joined household.')),
+                );
+              } catch (error) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(content: Text('Could not accept invite: $error')),
+                );
+              } finally {
+                if (mounted) {
+                  setModalState(() {
+                    actioningHouseholdId = null;
+                    isAccepting = false;
+                  });
+                }
+              }
+            }
+
+            return SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Container(
+                  width: 360,
+                  margin: const EdgeInsets.only(top: 56, right: 12, left: 12),
+                  constraints: const BoxConstraints(maxHeight: 460),
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F2E8),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: AppShadows.soft,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Notifications',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 10),
+                      invitesAsync.when(
+                        loading: () => const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                        error: (error, _) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text('Could not load notifications: $error'),
+                        ),
+                        data: (invites) {
+                          if (invites.isEmpty) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12),
+                              child: Text('No notifications yet.'),
+                            );
+                          }
+                          return Flexible(
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: invites.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 10),
+                              itemBuilder: (context, index) {
+                                final invite = invites[index];
+                                final isBusy =
+                                    actioningHouseholdId == invite.householdId;
+                                return Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: AppShadows.soft,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Household invite: ${invite.householdName}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Role: ${invite.role.name}${invite.invitedEmail != null ? '  •  ${invite.invitedEmail}' : ''}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: OutlinedButton(
+                                              onPressed: isBusy
+                                                  ? null
+                                                  : () => rejectInvite(invite),
+                                              child: isBusy && !isAccepting
+                                                  ? const SizedBox(
+                                                      width: 16,
+                                                      height: 16,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                    )
+                                                  : const Text('Reject'),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: FilledButton(
+                                              onPressed: isBusy
+                                                  ? null
+                                                  : () => acceptInvite(invite),
+                                              child: isBusy && isAccepting
+                                                  ? const SizedBox(
+                                                      width: 16,
+                                                      height: 16,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                    )
+                                                  : const Text('Accept'),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSaveDestinationModal(Recipe recipe) async {
+    var saveToFavorites = false;
+    var saveToTry = false;
+    var saveToHousehold = false;
+
+    final shouldSave = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Save Recipe',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.favorite_border_rounded),
+                  title: const Text('My Favorites'),
+                  value: saveToFavorites,
+                  onChanged: (value) {
+                    setModalState(() => saveToFavorites = value);
+                  },
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.bookmark_border_rounded),
+                  title: const Text('To Try'),
+                  value: saveToTry,
+                  onChanged: (value) {
+                    setModalState(() => saveToTry = value);
+                  },
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.home_outlined),
+                  title: const Text('Household'),
+                  value: saveToHousehold,
+                  onChanged: (value) {
+                    setModalState(() => saveToHousehold = value);
+                  },
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (shouldSave != true) return;
+    await _saveRecipeToDestinations(
+      recipe,
+      saveToFavorites: saveToFavorites,
+      saveToTry: saveToTry,
+      saveToHousehold: saveToHousehold,
+    );
+  }
+
+  Future<void> _saveRecipeToDestinations(
+    Recipe recipe, {
+    required bool saveToFavorites,
+    required bool saveToTry,
+    required bool saveToHousehold,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Sign in required.')),
+      );
+      return;
+    }
+    if (!saveToFavorites && !saveToTry && !saveToHousehold) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Select at least one place to save.')),
+      );
+      return;
+    }
+
+    try {
+      final discoverRepository = ref.read(discoverRepositoryProvider);
+      final personalId = await discoverRepository.saveDiscoverRecipeForUserAndReturnId(
+        userId: user.id,
+        recipe: recipe,
+        favorite: saveToFavorites,
+        toTry: saveToTry,
+      );
+      if (saveToHousehold) {
+        await ref.read(recipesRepositoryProvider).copyPersonalRecipeToHousehold(
+              userId: user.id,
+              recipeId: personalId,
+            );
+      }
+
+      ref.invalidate(recipesProvider);
+      messenger.showSnackBar(const SnackBar(content: Text('Saved.')));
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not save recipe: $error')),
+      );
+    }
+  }
+
+  Future<void> _showFilterSheet() async {
+    final initialCuisines = ref.read(discoverSelectedCuisineIdsProvider);
+    final initialDietary = ref.read(discoverSelectedDietaryTagsProvider);
+    final initialPrep = ref.read(discoverPrepTimeBucketProvider);
+    final initialRating = ref.read(discoverRatingBucketProvider);
+    final initialMeals = ref.read(discoverSelectedMealTypesProvider);
+
+    final draftCuisines = {...initialCuisines};
+    final draftDietary = {...initialDietary};
+    var draftPrep = initialPrep;
+    var draftRating = initialRating;
+    final draftMeals = {...initialMeals};
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Widget sectionTitle(String label) => Padding(
+                  padding: const EdgeInsets.only(top: 12, bottom: 8),
+                  child: Text(
+                    label,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                );
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'Filter & Sort',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() {
+                                draftCuisines.clear();
+                                draftDietary.clear();
+                                draftPrep = DiscoverPrepTimeBucket.any;
+                                draftRating = DiscoverRatingBucket.any;
+                                draftMeals.clear();
+                              });
+                            },
+                            child: const Text('Clear all'),
+                          ),
+                        ],
+                      ),
+                      sectionTitle('Dietary Preferences'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: ['vegetarian', 'gluten-free', 'vegan', 'keto']
+                            .map(
+                              (tag) => FilterChip(
+                                label: Text(_titleCase(tag)),
+                                selected: draftDietary.contains(tag),
+                                onSelected: (selected) {
+                                  setModalState(() {
+                                    if (selected) {
+                                      draftDietary.add(tag);
+                                    } else {
+                                      draftDietary.remove(tag);
+                                    }
+                                  });
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      sectionTitle('Meal Type'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: DiscoverMealType.values
+                            .map(
+                              (meal) => FilterChip(
+                                label: Text(meal.label),
+                                selected: draftMeals.contains(meal),
+                                onSelected: (selected) {
+                                  setModalState(() {
+                                    if (selected) {
+                                      draftMeals.add(meal);
+                                    } else {
+                                      draftMeals.remove(meal);
+                                    }
+                                  });
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      sectionTitle('Prep Time'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: DiscoverPrepTimeBucket.values
+                            .map(
+                              (bucket) => ChoiceChip(
+                                label: Text(bucket.label),
+                                selected: draftPrep == bucket,
+                                onSelected: (_) =>
+                                    setModalState(() => draftPrep = bucket),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      sectionTitle('User Rating'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: DiscoverRatingBucket.values
+                            .map(
+                              (bucket) => ChoiceChip(
+                                label: Text(bucket.label),
+                                selected: draftRating == bucket,
+                                onSelected: (_) =>
+                                    setModalState(() => draftRating = bucket),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () {
+                                ref
+                                    .read(discoverSelectedCuisineIdsProvider
+                                        .notifier)
+                                    .state = draftCuisines;
+                                ref
+                                    .read(discoverSelectedDietaryTagsProvider
+                                        .notifier)
+                                    .state = draftDietary;
+                                ref
+                                    .read(
+                                        discoverPrepTimeBucketProvider.notifier)
+                                    .state = draftPrep;
+                                ref
+                                    .read(discoverRatingBucketProvider.notifier)
+                                    .state = draftRating;
+                                ref
+                                    .read(discoverSelectedMealTypesProvider
+                                        .notifier)
+                                    .state = draftMeals;
+                                Navigator.pop(context);
+                              },
+                              child: const Text('Apply Filters'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _DiscoverCuisineRecipesPage extends ConsumerWidget {
+  const _DiscoverCuisineRecipesPage({
+    required this.cuisineId,
+    required this.title,
+    required this.onOpenRecipe,
+    required this.onSaveRecipe,
+    required this.onShowNotifications,
+  });
+
+  final String cuisineId;
+  final String title;
+  final Future<void> Function(Recipe recipe) onOpenRecipe;
+  final Future<void> Function(Recipe recipe) onSaveRecipe;
+  final Future<void> Function() onShowNotifications;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+    return Scaffold(
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: Color(0xFFC4CFBC),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                    ),
+                    Expanded(
+                      child: Text(
+                        title,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => context.push('/profile'),
+                      borderRadius: BorderRadius.circular(18),
+                      child: const CircleAvatar(
+                        radius: 15,
+                        backgroundColor: Color(0xFFE7DED1),
+                        child: Icon(Icons.person_rounded,
+                            color: Color(0xFF4F5B52), size: 16),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: onShowNotifications,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFE7DED1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.notifications_none_rounded,
+                            color: Color(0xFF4F5B52), size: 18),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF3F2E8),
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  child: recipesAsync.when(
+                    data: (recipes) {
+                      final savedRecipes =
+                          ref.watch(recipesProvider).valueOrNull ??
+                              const <Recipe>[];
+                      final filtered = recipes
+                          .where((recipe) => _matchesCuisine(recipe, cuisineId))
+                          .toList();
+                      if (filtered.isEmpty) {
+                        return const Center(
+                          child: Text('No recipes found yet.'),
+                        );
+                      }
+                      return GridView.builder(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        itemCount: filtered.length,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.84,
+                        ),
+                        itemBuilder: (context, index) {
+                          final recipe = filtered[index];
+                          final isSaved = _isRecipeSaved(recipe, savedRecipes);
+                          final imageUrl = recipe.imageUrl?.isNotEmpty == true
+                              ? recipe.imageUrl!
+                              : 'https://images.unsplash.com/photo-1516100882582-96c3a05fe590?auto=format&fit=crop&w=1200&q=80';
+                          return GestureDetector(
+                            onTap: () => onOpenRecipe(recipe),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: AppShadows.soft,
+                                image: DecorationImage(
+                                  image: NetworkImage(imageUrl),
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.black.withValues(alpha: 0.08),
+                                      Colors.black.withValues(alpha: 0.65),
+                                    ],
+                                  ),
+                                ),
+                                padding: const EdgeInsets.all(8),
+                                child: Column(
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Spacer(),
+                                        Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFC8D3C2)
+                                                .withValues(alpha: 0.9),
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: InkWell(
+                                            onTap: () => onSaveRecipe(recipe),
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            child: Icon(
+                                              isSaved
+                                                  ? Icons.bookmark_rounded
+                                                  : Icons.bookmark_border_rounded,
+                                              size: 18,
+                                              color: isSaved
+                                                  ? const Color(0xFF2F6B46)
+                                                  : const Color(0xFF2D342F),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const Spacer(),
+                                    Align(
+                                      alignment: Alignment.bottomLeft,
+                                      child: Text(
+                                        recipe.title.toUpperCase(),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14,
+                                          height: 1.05,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    loading: () => const Center(child: CircularProgressIndicator()),
+                    error: (_, __) => const Center(
+                      child: Text('Could not load recipes right now.'),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+bool _matchesCuisine(Recipe recipe, String cuisineId) {
+  final haystack = '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
+  switch (cuisineId) {
+    case 'pasta':
+      return _hasAny(haystack, const <String>['pasta', 'spaghetti', 'italian']);
+    case 'mexican-fiesta':
+      return _hasAny(haystack, const <String>['mexican', 'taco', 'fajita', 'burrito']);
+    case 'asian':
+      return _hasAny(haystack, const <String>['asian', 'ramen', 'stir-fry', 'noodle']);
+    case 'plant-based-power':
+      return _hasAny(haystack, const <String>['plant', 'vegetarian', 'veggie']);
+    case 'comfort-classics':
+      return _hasAny(haystack, const <String>['comfort', 'classic', 'baked', 'creamy']);
+    case 'vegan-delights':
+      return _hasAny(haystack, const <String>['vegan']);
+    case 'mediterranean-flavors':
+      return _hasAny(haystack, const <String>['mediterranean', 'greek', 'orzo']);
+    default:
+      return false;
+  }
+}
+
+bool _hasAny(String haystack, List<String> needles) {
+  for (final keyword in needles) {
+    if (haystack.contains(keyword)) return true;
+  }
+  return false;
+}
+
+bool _isRecipeSaved(Recipe discoverRecipe, List<Recipe> savedRecipes) {
+  final discoverSourceUrl = (discoverRecipe.sourceUrl ?? '').trim();
+  final discoverApiId = (discoverRecipe.apiId ?? '').trim();
+  final discoverTitle = discoverRecipe.title.trim().toLowerCase();
+  final discoverMealType = discoverRecipe.mealType.name;
+
+  for (final saved in savedRecipes) {
+    final savedSourceUrl = (saved.sourceUrl ?? '').trim();
+    final savedApiId = (saved.apiId ?? '').trim();
+    if (discoverSourceUrl.isNotEmpty && discoverSourceUrl == savedSourceUrl) {
+      return true;
+    }
+    if (discoverApiId.isNotEmpty && discoverApiId == savedApiId) {
+      return true;
+    }
+    if (saved.title.trim().toLowerCase() == discoverTitle &&
+        saved.mealType.name == discoverMealType) {
+      return true;
+    }
+  }
+  return false;
 }
 
 class _DiscoverRecipeDetailPage extends ConsumerStatefulWidget {
@@ -250,26 +1207,103 @@ class _DiscoverRecipeDetailPageState
   Widget build(BuildContext context) {
     final recipe = widget.recipe;
     return Scaffold(
-      appBar: AppBar(title: const Text('Recipe')),
-      body: AppSurface(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              recipe.title,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    height: 1.15,
+      body: CustomScrollView(
+        slivers: [
+          const SliverAppBar(
+            pinned: true,
+            centerTitle: true,
+            title: Text('Discover'),
+            actions: [
+              CircleAvatar(
+                radius: 12,
+                backgroundColor: Color(0xFFE7DED1),
+                child: Icon(Icons.person_rounded,
+                    size: 14, color: Color(0xFF6C6C66)),
+              ),
+              SizedBox(width: 8),
+              Icon(
+                Icons.notifications_none_rounded,
+                size: 18,
+                color: Color(0xFF5E665E),
+              ),
+              SizedBox(width: 8),
+            ],
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 120),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 124,
+                          height: 124,
+                          color: const Color(0xFFE8E1D4),
+                          child: FoodMedia(
+                            imageUrl: recipe.imageUrl,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            _summaryStatTile(
+                              context,
+                              icon: Icons.timer_outlined,
+                              label: 'Cook Time',
+                              value: _totalTimeLabel(recipe),
+                            ),
+                            const SizedBox(height: 8),
+                            _summaryStatTile(
+                              context,
+                              icon: Icons.people_outline_rounded,
+                              label: 'Servings',
+                              value: '${recipe.servings}',
+                            ),
+                            const SizedBox(height: 8),
+                            _summaryStatTile(
+                              context,
+                              icon: Icons.local_fire_department_outlined,
+                              label: 'Calories',
+                              value: recipe.nutrition.calories > 0
+                                  ? '${recipe.nutrition.calories}'
+                                  : 'N/A',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 12),
+                  Text(
+                    recipe.title,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          height: 1.15,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildDetailSectionChips(),
+                  const SizedBox(height: 12),
+                  _buildDetailSectionContent(context, recipe),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            _buildDetailSectionChips(),
-            const SizedBox(height: 12),
-            _buildDetailSectionContent(context, recipe),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
+          ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        child: Row(
+          children: [
+            Expanded(
               child: FilledButton.icon(
                 onPressed: () => _setRecipeFlag(favorite: !_isFavorite),
                 icon: Icon(
@@ -277,12 +1311,11 @@ class _DiscoverRecipeDetailPageState
                       ? Icons.favorite_rounded
                       : Icons.favorite_border_rounded,
                 ),
-                label: Text(_isFavorite ? 'Favorited' : 'Add to Favorites'),
+                label: Text(_isFavorite ? 'Favorited' : 'Favorite'),
               ),
             ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
+            const SizedBox(width: 8),
+            Expanded(
               child: FilledButton.tonalIcon(
                 onPressed: () => _setRecipeFlag(toTry: !_isToTry),
                 icon: const Icon(Icons.bookmark_add_outlined),
@@ -291,6 +1324,43 @@ class _DiscoverRecipeDetailPageState
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _summaryStatTile(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1EEE6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF4F5D52)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: const Color(0xFF5B645D),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
       ),
     );
   }
@@ -334,7 +1404,7 @@ class _DiscoverRecipeDetailPageState
                     .map(
                       (step) => Padding(
                         padding: const EdgeInsets.only(bottom: 6),
-                        child: Text(step),
+                        child: Text(_decodeHtmlEntities(step)),
                       ),
                     )
                     .toList(),
@@ -525,6 +1595,11 @@ class _DiscoverRecipeDetailPageState
       );
     }
   }
+
+  String _totalTimeLabel(Recipe recipe) {
+    final minutes = (recipe.prepTime ?? 0) + (recipe.cookTime ?? 0);
+    return minutes > 0 ? '$minutes min' : 'Quick';
+  }
 }
 
 enum _DiscoverDetailSection {
@@ -565,4 +1640,80 @@ class _IngredientTableCell extends StatelessWidget {
       ),
     );
   }
+}
+
+String _titleCase(String input) {
+  if (input.isEmpty) return input;
+  return input
+      .split('-')
+      .where((part) => part.isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+}
+
+String _fallbackFoodImage(int index) {
+  const images = <String>[
+    'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=900&q=80',
+    'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=900&q=80',
+    'https://images.unsplash.com/photo-1512058564366-18510be2db19?w=900&q=80',
+    'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=900&q=80',
+    'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?w=900&q=80',
+    'https://images.unsplash.com/photo-1482049016688-2d3e1b311543?w=900&q=80',
+  ];
+  return images[index % images.length];
+}
+
+String _decodeHtmlEntities(String input) {
+  return input
+      .replaceAll('&#215;', '×')
+      .replaceAll('&times;', '×')
+      .replaceAll('&#8217;', "'")
+      .replaceAll('&#8216;', "'")
+      .replaceAll('&#8220;', '"')
+      .replaceAll('&#8221;', '"')
+      .replaceAll('&#8211;', '-')
+      .replaceAll('&#8212;', '-')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&apos;', "'")
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>');
+}
+
+
+String _cuisineGraphicForLabel(String label) {
+  final key = label.toLowerCase();
+  if (key.contains('mexican') || key.contains('taco')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f32e.png';
+  }
+  if (key.contains('italian') ||
+      key.contains('pasta') ||
+      key.contains('spaghetti')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35d.png';
+  }
+  if (key.contains('asian') || key.contains('stir') || key.contains('noodle')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35c.png';
+  }
+  if (key.contains('plant') ||
+      key.contains('vegan') ||
+      key.contains('vegetarian')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f331.png';
+  }
+  if (key.contains('comfort') || key.contains('classic')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f372.png';
+  }
+  if (key.contains('mediterranean') || key.contains('greek')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9c6.png';
+  }
+  if (key.contains('american') || key.contains('burger')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f354.png';
+  }
+  if (key.contains('japanese') || key.contains('ramen')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35c.png';
+  }
+  if (key.contains('breakfast') || key.contains('pancake')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f95e.png';
+  }
+  return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f372.png';
 }

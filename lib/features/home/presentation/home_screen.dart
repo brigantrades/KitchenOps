@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:collection/collection.dart';
 import 'package:intl/intl.dart';
-import 'package:plateplan/core/ui/app_surface.dart';
+import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
@@ -23,37 +23,20 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final planner = ref.watch(plannerSlotsProvider);
-    final pendingInvites = ref.watch(pendingHouseholdInvitesProvider);
-    final pendingInviteCount = pendingInvites.valueOrNull?.length ?? 0;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Leckerly'),
-        actions: [
-          IconButton(
-            tooltip: 'Profile',
-            onPressed: () => context.go('/profile'),
-            icon: pendingInviteCount > 0
-                ? Badge(
-                    label: Text('$pendingInviteCount'),
-                    child: const Icon(Icons.person_outline),
-                  )
-                : const Icon(Icons.person_outline),
-          ),
-        ],
-      ),
-      body: AppSurface(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _HomeHeader(plannerSlots: planner),
-              const SizedBox(height: 16),
-              const _HomeThreeDayOutlook(),
-              const SizedBox(height: 16),
-              const _HomeGrocerySnippet(),
-            ],
-          ),
+    return DiscoverShellScaffold(
+      title: 'Home',
+      onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(0, 2, 0, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _HomeHeader(plannerSlots: planner),
+            const SizedBox(height: 16),
+            const _HomeThreeDayOutlook(),
+            const SizedBox(height: 16),
+            const _HomeGrocerySnippet(),
+          ],
         ),
       ),
     );

@@ -13,6 +13,7 @@ import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/core/services/meal_reminder_notification_service.dart';
 import 'package:plateplan/core/ui/action_pill.dart';
+import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -1074,6 +1075,7 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
     required this.onShowLoadingShell,
     required this.onEditSlotGroceryItems,
     required this.onPickNewMealLabel,
+    required this.onOpenPlannerWindowSettings,
   });
 
   final PlannerWindowPreference pref;
@@ -1082,6 +1084,7 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
   final Widget Function() onShowLoadingShell;
   final PlannerEditSlotGroceryFn onEditSlotGroceryItems;
   final Future<String?> Function(BuildContext context) onPickNewMealLabel;
+  final VoidCallback onOpenPlannerWindowSettings;
 
   static const int _maxLinesPerDay = 5;
   static const int _gridCrossAxisCount = 2;
@@ -1139,12 +1142,25 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'Tap a day for full details and editing.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Text(
+                        'Tap a day for full details and editing.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: IconButton(
+                          tooltip: 'Planner window',
+                          onPressed: onOpenPlannerWindowSettings,
+                          icon: const Icon(Icons.tune_rounded),
                         ),
+                      ),
+                    ],
                   ),
                 ),
                 SectionCard(
@@ -2305,60 +2321,11 @@ class PlannerScreen extends ConsumerWidget {
     final currentUser = ref.watch(currentUserProvider);
     final groceryItems =
         ref.watch(groceryItemsProvider).valueOrNull ?? const [];
-    final layoutMode = ref.watch(plannerLayoutModeProvider);
-    final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Weekly Planner'),
-        actions: [
-          IconButton(
-            tooltip: 'Planner window',
-            onPressed: () => showPlannerWindowSettingsSheet(context, ref),
-            icon: const Icon(Icons.tune_rounded),
-            color: scheme.onSurface,
-          ),
-          PopupMenuButton<PlannerLayoutMode>(
-            padding: EdgeInsets.zero,
-            offset: const Offset(0, 8),
-            tooltip: 'Planner layout',
-            onSelected: (mode) {
-              ref.read(plannerLayoutModeProvider.notifier).setMode(mode);
-            },
-            itemBuilder: (context) {
-              final other = layoutMode == PlannerLayoutMode.list
-                  ? PlannerLayoutMode.calendar
-                  : PlannerLayoutMode.list;
-              final toList = other == PlannerLayoutMode.list;
-              return [
-                PopupMenuItem<PlannerLayoutMode>(
-                  value: other,
-                  child: Row(
-                    children: [
-                      Icon(
-                        toList
-                            ? Icons.view_list_rounded
-                            : Icons.calendar_view_month_rounded,
-                        size: 22,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(toList ? 'List view' : 'Grid view'),
-                    ],
-                  ),
-                ),
-              ];
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Icon(
-                layoutMode == PlannerLayoutMode.list
-                    ? Icons.view_list_rounded
-                    : Icons.calendar_view_month_rounded,
-                color: scheme.onSurface,
-              ),
-            ),
-          ),
-        ],
-      ),
+    const layoutMode = PlannerLayoutMode.calendar;
+    return DiscoverShellScaffold(
+      title: 'Weekly Planner',
+      onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
+      trailingActions: const [],
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2385,6 +2352,8 @@ class PlannerScreen extends ConsumerWidget {
                       groceryItems: groceryItems,
                     ),
                     onPickNewMealLabel: _pickNewMealLabel,
+                    onOpenPlannerWindowSettings: () =>
+                        showPlannerWindowSettingsSheet(context, ref),
                   )
                 : slotsAsync.when(
         skipLoadingOnReload: true,

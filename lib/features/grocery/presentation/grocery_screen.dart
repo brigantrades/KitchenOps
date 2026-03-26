@@ -4,6 +4,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/food_icon_resolver.dart';
 import 'package:plateplan/core/ui/hero_panel.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
@@ -789,43 +790,42 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
     final profileAsync = ref.watch(profileProvider);
 
-    return Scaffold(
+    return DiscoverShellScaffold(
+      title: 'Lists',
+      onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
       resizeToAvoidBottomInset: false,
-      appBar: AppBar(
-        title: const Text('Lists'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              final async = ref.read(groceryItemsProvider);
-              final List<GroceryItem> items;
-              if (async.hasValue) {
-                items = async.requireValue;
+      trailingActions: [
+        IconButton(
+          icon: const Icon(Icons.share_outlined),
+          onPressed: () async {
+            final messenger = ScaffoldMessenger.of(context);
+            final async = ref.read(groceryItemsProvider);
+            final List<GroceryItem> items;
+            if (async.hasValue) {
+              items = async.requireValue;
+            } else {
+              final sid = ref.read(selectedListIdProvider);
+              if (sid != null && sid.isNotEmpty) {
+                items = await ref.read(groceryListItemsFamily(sid).future);
               } else {
-                final sid = ref.read(selectedListIdProvider);
-                if (sid != null && sid.isNotEmpty) {
-                  items = await ref.read(groceryListItemsFamily(sid).future);
-                } else {
-                  items = await ref
-                      .read(groceryItemsDefaultListStreamProvider.future);
-                }
+                items =
+                    await ref.read(groceryItemsDefaultListStreamProvider.future);
               }
-              await ref.read(groceryRepositoryProvider).shareText(items);
-              if (!mounted) {
-                return;
-              }
-              messenger.showSnackBar(
-                const SnackBar(content: Text('Copied list to clipboard')),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined),
-            onPressed: _clearAll,
-          ),
-        ],
-      ),
+            }
+            await ref.read(groceryRepositoryProvider).shareText(items);
+            if (!mounted) {
+              return;
+            }
+            messenger.showSnackBar(
+              const SnackBar(content: Text('Copied list to clipboard')),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete_sweep_outlined),
+          onPressed: _clearAll,
+        ),
+      ],
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openAddItemSheet(itemsAsync.valueOrNull ?? const []),
