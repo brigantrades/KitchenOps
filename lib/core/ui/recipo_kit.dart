@@ -153,6 +153,15 @@ class SegmentedPills extends StatelessWidget {
   }
 }
 
+/// How secondary info under the title is shown on [RecipeListCard].
+enum RecipeListSummaryStyle {
+  /// One or more Material [Chip]s (up to three tags).
+  chips,
+
+  /// Single muted line(s) for [tags] (e.g. cuisines); no chips.
+  plain,
+}
+
 class RecipeListCard extends StatelessWidget {
   const RecipeListCard({
     super.key,
@@ -161,6 +170,7 @@ class RecipeListCard extends StatelessWidget {
     required this.onTap,
     this.tags = const <String>[],
     this.trailing,
+    this.summaryStyle = RecipeListSummaryStyle.chips,
   });
 
   final String title;
@@ -168,11 +178,16 @@ class RecipeListCard extends StatelessWidget {
   final VoidCallback onTap;
   final List<String> tags;
   final Widget? trailing;
+  final RecipeListSummaryStyle summaryStyle;
 
   @override
   Widget build(BuildContext context) {
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
+    final scheme = Theme.of(context).colorScheme;
+    final mutedSmall = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        );
     return InkWell(
       borderRadius: AppRadius.md,
       onTap: onTap,
@@ -201,21 +216,33 @@ class RecipeListCard extends StatelessWidget {
                           ),
                     ),
                     const SizedBox(height: AppSpacing.xs),
-                    Text(meta, style: Theme.of(context).textTheme.bodySmall),
+                    Text(meta, style: mutedSmall),
                     if (tags.isNotEmpty) ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: tags.take(3).map((tag) {
-                          return Chip(
-                            label: Text(tag),
-                            visualDensity: VisualDensity.compact,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          );
-                        }).toList(),
+                      SizedBox(
+                        height: summaryStyle == RecipeListSummaryStyle.plain
+                            ? 4
+                            : AppSpacing.sm,
                       ),
+                      if (summaryStyle == RecipeListSummaryStyle.plain)
+                        Text(
+                          tags.take(4).join(' · '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: mutedSmall,
+                        )
+                      else
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: tags.take(3).map((tag) {
+                            return Chip(
+                              label: Text(tag),
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            );
+                          }).toList(),
+                        ),
                     ],
                   ],
                 ),

@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
-import 'package:plateplan/core/theme/theme_extensions.dart';
 import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/food_icon_resolver.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
@@ -202,15 +201,223 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     });
   }
 
+  void _openRecipeFiltersSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final scheme = Theme.of(context).colorScheme;
+            final titleStyle = Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                );
+            final mealChips = Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: BrandedSheetScaffold(
+                title: 'Filters',
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Sort', style: titleStyle),
+                    const SizedBox(height: 8),
+                    SegmentedButton<_RecipeSortOption>(
+                      segments: [
+                        ButtonSegment<_RecipeSortOption>(
+                          value: _RecipeSortOption.dateAdded,
+                          label: Text(_recipeSortOptionLabel(
+                            _RecipeSortOption.dateAdded,
+                          )),
+                        ),
+                        ButtonSegment<_RecipeSortOption>(
+                          value: _RecipeSortOption.name,
+                          label: Text(_recipeSortOptionLabel(
+                            _RecipeSortOption.name,
+                          )),
+                        ),
+                      ],
+                      selected: {_sortOption},
+                      onSelectionChanged: (next) {
+                        if (next.isEmpty) return;
+                        setState(() => _sortOption = next.first);
+                        setModalState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Text('Meal type', style: titleStyle),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 44,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          for (final type in MealType.values)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: FilterChip(
+                                label: Text(_mealTypeLabel(type)),
+                                selected: _mealTypeFilters.contains(type),
+                                showCheckmark: true,
+                                selectedColor: scheme.secondaryContainer,
+                                checkmarkColor: scheme.onSecondaryContainer,
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                onSelected: (value) {
+                                  _toggleMealTypeFilter(type, value);
+                                  setModalState(() {});
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (_mealTypeFilters.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _mealTypeFilters.clear();
+                            });
+                            setModalState(() {});
+                          },
+                          child: const Text('Clear meal filters'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+            return mealChips;
+          },
+        );
+      },
+    );
+  }
+
+  bool get _recipeFiltersActive {
+    return _mealTypeFilters.isNotEmpty &&
+        _mealTypeFilters.length < MealType.values.length;
+  }
+
+  void _showInstagramImportHelp(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final scheme = theme.colorScheme;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            8,
+            20,
+            MediaQuery.paddingOf(ctx).bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.auto_awesome_rounded,
+                      color: scheme.primary,
+                      size: 28,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Import from Instagram',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Save a recipe from Instagram using your phone\'s Share menu. '
+                  'We read the post\'s caption and link, then open a preview you can edit before saving to your library.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'How to import',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _instagramImportHelpStep(
+                  ctx,
+                  '1',
+                  'Open Instagram and go to the post or Reel that has the recipe.',
+                ),
+                _instagramImportHelpStep(
+                  ctx,
+                  '2',
+                  'Tap Share (paper airplane on Android, or the standard share icon on iOS).',
+                ),
+                _instagramImportHelpStep(
+                  ctx,
+                  '3',
+                  'Pick this app from the list. If it\'s not there, tap More, Edit actions, or similar on your device and add it.',
+                ),
+                _instagramImportHelpStep(
+                  ctx,
+                  '4',
+                  'We\'ll open an import preview—check ingredients and steps, then save the recipe.',
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Tip: Captions that spell out the recipe usually import more reliably than video-only posts.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Got it'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    context.push('/instagram-import-test');
+                  },
+                  child: const Text('Paste an Instagram link instead'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildRecipesFilterHeader({
     required BuildContext context,
     required bool hasSharedHousehold,
     required int effectiveLibraryIndex,
     required List<String> libraryLabels,
   }) {
-    final colors =
-        Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
-    final scheme = Theme.of(context).colorScheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -224,7 +431,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
               : 'Search my recipes',
           onChanged: (_) => setState(() {}),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         SegmentedPills(
           labels: libraryLabels,
           selectedIndex: effectiveLibraryIndex,
@@ -234,7 +441,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
           }),
         ),
         if (!(hasSharedHousehold && effectiveLibraryIndex == 0)) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           SegmentedPills(
             labels: const ['All', 'Favorites', 'To Try'],
             selectedIndex: _segmentIndex,
@@ -242,112 +449,18 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
           ),
         ],
         const SizedBox(height: 4),
-        Text(
-          'Meal type',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-        ),
-        const SizedBox(height: 2),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 5,
-              runSpacing: 4,
-              children: [
-                for (final type in [
-                  MealType.entree,
-                  MealType.side,
-                  MealType.sauce,
-                  MealType.snack,
-                ])
-                  FilterChip(
-                    label: Text(_mealTypeLabel(type)),
-                    selected: _mealTypeFilters.contains(type),
-                    visualDensity: VisualDensity.compact,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    onSelected: (value) => _toggleMealTypeFilter(type, value),
-                    selectedColor: const Color(0xFFD6EBFF),
-                  ),
-              ],
+        Align(
+          alignment: Alignment.centerRight,
+          child: Badge(
+            isLabelVisible: _recipeFiltersActive,
+            label: Text('${_mealTypeFilters.length}'),
+            child: IconButton(
+              icon: const Icon(Icons.tune_rounded),
+              tooltip:
+                  'Filters & sort · ${_recipeSortOptionLabel(_sortOption)}',
+              onPressed: _openRecipeFiltersSheet,
             ),
-            const SizedBox(height: 2),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                FilterChip(
-                  label: Text(_mealTypeLabel(MealType.dessert)),
-                  selected: _mealTypeFilters.contains(MealType.dessert),
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  onSelected: (value) =>
-                      _toggleMealTypeFilter(MealType.dessert, value),
-                  selectedColor: const Color(0xFFD6EBFF),
-                ),
-                const Spacer(),
-                PopupMenuButton<_RecipeSortOption>(
-                  padding: EdgeInsets.zero,
-                  offset: const Offset(0, 10),
-                  initialValue: _sortOption,
-                  color: colors.panel,
-                  surfaceTintColor: Colors.transparent,
-                  elevation: 6,
-                  shadowColor: Colors.black.withValues(alpha: 0.12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: AppRadius.sm,
-                    side: BorderSide(color: colors.pillBorder),
-                  ),
-                  tooltip: 'Sort · ${_recipeSortOptionLabel(_sortOption)}',
-                  onSelected: (value) => setState(() => _sortOption = value),
-                  itemBuilder: (context) => [
-                    PopupMenuItem<_RecipeSortOption>(
-                      value: _RecipeSortOption.dateAdded,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(_recipeSortOptionLabel(
-                                _RecipeSortOption.dateAdded)),
-                          ),
-                          if (_sortOption == _RecipeSortOption.dateAdded)
-                            Icon(
-                              Icons.check_rounded,
-                              size: 20,
-                              color: scheme.primary,
-                            ),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem<_RecipeSortOption>(
-                      value: _RecipeSortOption.name,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                                _recipeSortOptionLabel(_RecipeSortOption.name)),
-                          ),
-                          if (_sortOption == _RecipeSortOption.name)
-                            Icon(
-                              Icons.check_rounded,
-                              size: 20,
-                              color: scheme.primary,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(
-                      Icons.sort_rounded,
-                      size: 22,
-                      color: scheme.secondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ],
     );
@@ -370,8 +483,8 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       trailingActions: [
         IconButton(
           icon: const Icon(Icons.auto_awesome_outlined),
-          tooltip: 'Test Instagram import',
-          onPressed: () => context.push('/instagram-import-test'),
+          tooltip: 'Import from Instagram',
+          onPressed: () => _showInstagramImportHelp(context),
         ),
       ],
       floatingActionButton: FloatingActionButton.extended(
@@ -962,11 +1075,7 @@ class _RecipeRow extends ConsumerWidget {
       !isHouseholdLibrary || recipe.visibility == RecipeVisibility.household,
       'Household library lists only household recipes.',
     );
-    final tags = <String>[
-      _mealTypeLabel(recipe.mealType),
-      '${recipe.ingredients.length} ingredients',
-      '${recipe.instructions.length} steps',
-    ];
+    final cuisineTags = recipe.cuisineTags.take(2).toList();
 
     Future<void> onMenuSelected(String value) async {
       if (value == 'manage_collections') {
@@ -987,10 +1096,12 @@ class _RecipeRow extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: RecipeListCard(
         title: recipe.title,
-        meta: '${_mealTypeLabel(recipe.mealType)} • Serves ${recipe.servings}',
-        tags: recipe.cuisineTags.isEmpty
-            ? tags
-            : [recipe.cuisineTags.first, ...tags],
+        meta:
+            '${_mealTypeLabel(recipe.mealType)} · Serves ${recipe.servings} · '
+            '${recipe.ingredients.length} ingredients · '
+            '${recipe.instructions.length} steps',
+        tags: cuisineTags,
+        summaryStyle: RecipeListSummaryStyle.plain,
         onTap: () => context.push('/cooking/${recipe.id}'),
         trailing: PopupMenuButton<String>(
           tooltip: 'Recipe actions',
@@ -1034,6 +1145,38 @@ String _mealTypeLabel(MealType mealType) => switch (mealType) {
       MealType.snack => 'Snack',
       MealType.dessert => 'Dessert',
     };
+
+Widget _instagramImportHelpStep(
+  BuildContext context,
+  String number,
+  String body,
+) {
+  final theme = Theme.of(context);
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 26,
+          child: Text(
+            '$number.',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            body,
+            style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
 const double _kAmountEpsilon = 1e-9;
 
