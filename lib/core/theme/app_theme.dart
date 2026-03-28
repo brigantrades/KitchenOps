@@ -1,81 +1,74 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/theme/theme_extensions.dart';
 
 class AppTheme {
-  static const _seed = Color(0xFFFF6B6B);
-
-  static const _lightBackground = Color(0xFFFAFAFA);
-  static const _lightSurface = Colors.white;
-  static const _lightOnSurface = Color(0xFF2D3436);
-  static const _lightSurfaceVariant = Color(0xFFF5F5F5);
-  static const _lightOnSurfaceVariant = Color(0xFF636E72);
-
-  static TextTheme _poppinsTextTheme(TextTheme base, Color onSurface) {
-    final text = GoogleFonts.poppinsTextTheme(base).apply(
-      fontFamily: GoogleFonts.poppins().fontFamily,
-      bodyColor: onSurface,
-      displayColor: onSurface,
+  static ColorScheme _lightScheme() {
+    final base = ColorScheme.fromSeed(
+      seedColor: AppBrand.deepTeal,
+      brightness: Brightness.light,
     );
-    return text.copyWith(
-      headlineLarge: GoogleFonts.poppins(
-        fontSize: 32,
-        fontWeight: FontWeight.w700,
-        color: onSurface,
-        height: 1.1,
-      ),
-      headlineMedium: GoogleFonts.poppins(
-        fontSize: 24,
-        fontWeight: FontWeight.w600,
-        color: onSurface,
-        height: 1.15,
-      ),
-      titleLarge: GoogleFonts.poppins(
-        fontSize: 20,
-        fontWeight: FontWeight.w500,
-        color: onSurface,
-      ),
-      bodyLarge: GoogleFonts.poppins(
-        fontSize: 16,
-        fontWeight: FontWeight.w400,
-        color: onSurface,
-      ),
-      labelLarge: GoogleFonts.poppins(
-        fontSize: 14,
-        fontWeight: FontWeight.w500,
-        color: onSurface,
-      ),
+    return base.copyWith(
+      primary: AppBrand.deepTeal,
+      onPrimary: AppBrand.offWhite,
+      primaryContainer: AppBrand.paleMint,
+      onPrimaryContainer: AppBrand.black,
+      secondary: AppBrand.mutedAqua,
+      onSecondary: AppBrand.black,
+      secondaryContainer: AppBrand.mutedAqua,
+      onSecondaryContainer: AppBrand.black,
+      tertiary: AppBrand.tealVibrant,
+      surface: AppBrand.offWhite,
+      onSurface: AppBrand.black,
+      onSurfaceVariant: const Color(0xFF4A5F5C),
+      outline: AppBrand.mutedAqua,
+      outlineVariant: AppBrand.mutedAqua.withValues(alpha: 0.55),
     );
   }
 
-  static ColorScheme _lightScheme() {
-    return ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.light)
-        .copyWith(
-      primary: const Color(0xFFFF6B6B),
-      onPrimary: Colors.white,
-      primaryContainer: const Color(0xFFFFDAD6),
-      secondary: const Color(0xFF4ECDC4),
-      onSecondary: Colors.white,
-      tertiary: const Color(0xFFFFAB91),
-      surface: _lightSurface,
-      onSurface: _lightOnSurface,
-      surfaceContainerHighest: _lightSurfaceVariant,
-      onSurfaceVariant: _lightOnSurfaceVariant,
+  static ColorScheme _darkScheme() {
+    final base = ColorScheme.fromSeed(
+      seedColor: AppBrand.tealVibrant,
+      brightness: Brightness.dark,
+    );
+    return base.copyWith(
+      primary: AppBrand.tealVibrant,
+      onPrimary: AppBrand.black,
+      primaryContainer: const Color(0xFF1A3830),
+      onPrimaryContainer: AppBrand.offWhite,
+      secondary: AppBrand.mutedAqua,
+      onSecondary: AppBrand.black,
+      secondaryContainer: const Color(0xFF1F4A44),
+      onSecondaryContainer: AppBrand.offWhite,
+      tertiary: AppBrand.tealVibrant,
+      surface: AppBrand.darkSurface,
+      onSurface: AppBrand.offWhite,
+      onSurfaceVariant: AppBrand.darkOnSurfaceVariant,
+      outline: AppBrand.mutedAqua.withValues(alpha: 0.45),
+      outlineVariant: AppBrand.mutedAqua.withValues(alpha: 0.22),
+    );
+  }
+
+  static TextTheme _soraTextTheme(TextTheme base, Color onSurface) {
+    return GoogleFonts.soraTextTheme(base).apply(
+      bodyColor: onSurface,
+      displayColor: onSurface,
     );
   }
 
   static ThemeData light() {
     final scheme = _lightScheme();
     final textTheme =
-        _poppinsTextTheme(ThemeData.light().textTheme, scheme.onSurface);
+        _soraTextTheme(ThemeData.light().textTheme, scheme.onSurface);
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: _lightBackground,
+      scaffoldBackgroundColor: AppBrand.offWhite,
       extensions: const [AppThemeColors.light],
       appBarTheme: AppBarTheme(
-        backgroundColor: _lightSurface,
+        backgroundColor: AppBrand.offWhite,
         foregroundColor: scheme.onSurface,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -90,32 +83,32 @@ class AppTheme {
         elevation: 2.5,
         shadowColor: Colors.black.withValues(alpha: 0.1),
         margin: EdgeInsets.zero,
-        color: _lightSurface,
+        color: AppBrand.offWhite,
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: _lightSurface,
-        indicatorColor: scheme.primary.withValues(alpha: 0.12),
+        backgroundColor: AppBrand.offWhite,
+        indicatorColor: AppBrand.deepTeal.withValues(alpha: 0.15),
         elevation: 0,
         iconTheme: WidgetStateProperty.resolveWith(
           (states) => IconThemeData(
             color: states.contains(WidgetState.selected)
-                ? scheme.primary
+                ? AppBrand.deepTeal
                 : scheme.onSurfaceVariant,
           ),
         ),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => textTheme.labelMedium?.copyWith(
             color: states.contains(WidgetState.selected)
-                ? scheme.primary
+                ? AppBrand.deepTeal
                 : scheme.onSurfaceVariant,
           ),
         ),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        selectedItemColor: scheme.primary,
+        selectedItemColor: AppBrand.deepTeal,
         unselectedItemColor: scheme.onSurfaceVariant,
-        backgroundColor: _lightSurface,
+        backgroundColor: AppBrand.offWhite,
         selectedLabelStyle: textTheme.labelMedium,
         unselectedLabelStyle: textTheme.labelMedium,
         elevation: 0,
@@ -123,16 +116,36 @@ class AppTheme {
       chipTheme: ChipThemeData(
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.sm),
         side: BorderSide(color: scheme.outlineVariant),
-        backgroundColor: _lightSurfaceVariant,
-        selectedColor: scheme.secondary,
-        secondarySelectedColor: scheme.secondary,
+        backgroundColor: AppBrand.paleMint,
+        selectedColor: AppBrand.mutedAqua,
+        secondarySelectedColor: AppBrand.mutedAqua,
         labelStyle: textTheme.labelMedium?.copyWith(color: scheme.onSurface),
         secondaryLabelStyle:
-            textTheme.labelMedium?.copyWith(color: scheme.onSecondary),
+            textTheme.labelMedium?.copyWith(color: AppBrand.black),
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          backgroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.selected)
+                ? AppBrand.mutedAqua
+                : AppBrand.paleMint,
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.selected)
+                ? AppBrand.black
+                : scheme.onSurfaceVariant,
+          ),
+          side: WidgetStateProperty.all(
+            BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.7)),
+          ),
+          shape: WidgetStateProperty.all(
+            const RoundedRectangleBorder(borderRadius: AppRadius.sm),
+          ),
+        ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: _lightSurface,
+        fillColor: AppBrand.offWhite,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: const OutlineInputBorder(
@@ -146,17 +159,17 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: AppRadius.sm,
-          borderSide: BorderSide(color: scheme.primary, width: 1.4),
+          borderSide: BorderSide(color: AppBrand.deepTeal, width: 1.4),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: scheme.primary,
-          foregroundColor: scheme.onPrimary,
+          backgroundColor: AppBrand.mutedAqua,
+          foregroundColor: AppBrand.black,
           minimumSize: const Size(80, 50),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.sm),
-          textStyle: textTheme.labelLarge,
+          textStyle: textTheme.labelLarge?.copyWith(color: AppBrand.black),
           elevation: 0,
         ),
       ),
@@ -165,41 +178,40 @@ class AppTheme {
           minimumSize: const Size(80, 50),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.sm),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          textStyle: textTheme.labelLarge,
+          textStyle: textTheme.labelLarge?.copyWith(color: AppBrand.black),
+          backgroundColor: AppBrand.mutedAqua,
+          foregroundColor: AppBrand.black,
+          disabledBackgroundColor: AppBrand.mutedAqua.withValues(alpha: 0.45),
+          disabledForegroundColor: AppBrand.black.withValues(alpha: 0.45),
         ),
       ),
-      floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: scheme.primary,
-        foregroundColor: scheme.onPrimary,
-        shape: const RoundedRectangleBorder(borderRadius: AppRadius.hero),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: AppBrand.mutedAqua,
+        foregroundColor: AppBrand.black,
+        shape: RoundedRectangleBorder(borderRadius: AppRadius.hero),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: _lightSurface,
+        backgroundColor: AppBrand.offWhite,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
       ),
       dialogTheme: const DialogThemeData(
         shape: RoundedRectangleBorder(borderRadius: AppRadius.md),
-        backgroundColor: _lightSurface,
+        backgroundColor: AppBrand.offWhite,
       ),
     );
   }
 
   static ThemeData dark() {
-    final scheme =
-        ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.dark)
-            .copyWith(
-      primary: const Color(0xFFFF8A80),
-      secondary: const Color(0xFF4ECDC4),
-      tertiary: const Color(0xFFFFAB91),
-    );
+    final scheme = _darkScheme();
     final textTheme =
-        _poppinsTextTheme(ThemeData.dark().textTheme, scheme.onSurface);
+        _soraTextTheme(ThemeData.dark().textTheme, scheme.onSurface);
+    final fillBg = AppBrand.mutedAqua.withValues(alpha: 0.85);
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: AppThemeColors.dark.surfaceBase,
+      scaffoldBackgroundColor: AppBrand.darkSurface,
       extensions: const [AppThemeColors.dark],
       textTheme: textTheme,
       appBarTheme: AppBarTheme(
@@ -218,18 +230,41 @@ class AppTheme {
       chipTheme: ChipThemeData(
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.sm),
         backgroundColor: scheme.surfaceContainerHighest,
-        selectedColor: scheme.secondary,
-        secondarySelectedColor: scheme.secondary,
+        selectedColor: AppBrand.mutedAqua.withValues(alpha: 0.55),
+        secondarySelectedColor: AppBrand.mutedAqua.withValues(alpha: 0.55),
         labelStyle: textTheme.labelMedium,
         secondaryLabelStyle:
-            textTheme.labelMedium?.copyWith(color: scheme.onSecondary),
+            textTheme.labelMedium?.copyWith(color: AppBrand.offWhite),
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          backgroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.selected)
+                ? AppBrand.mutedAqua.withValues(alpha: 0.55)
+                : scheme.surfaceContainerHighest,
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.selected)
+                ? AppBrand.offWhite
+                : scheme.onSurfaceVariant,
+          ),
+          side: WidgetStateProperty.all(
+            BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.75)),
+          ),
+          shape: WidgetStateProperty.all(
+            const RoundedRectangleBorder(borderRadius: AppRadius.sm),
+          ),
+        ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
+          backgroundColor: fillBg,
+          foregroundColor: AppBrand.black,
           minimumSize: const Size(80, 50),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.sm),
-          textStyle: textTheme.labelLarge,
+          textStyle: textTheme.labelLarge?.copyWith(color: AppBrand.black),
+          elevation: 0,
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -237,11 +272,17 @@ class AppTheme {
           minimumSize: const Size(80, 50),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           shape: const RoundedRectangleBorder(borderRadius: AppRadius.sm),
-          textStyle: textTheme.labelLarge,
+          textStyle: textTheme.labelLarge?.copyWith(color: AppBrand.black),
+          backgroundColor: fillBg,
+          foregroundColor: AppBrand.black,
+          disabledBackgroundColor: fillBg.withValues(alpha: 0.45),
+          disabledForegroundColor: AppBrand.black.withValues(alpha: 0.45),
         ),
       ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        shape: RoundedRectangleBorder(borderRadius: AppRadius.hero),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: fillBg,
+        foregroundColor: AppBrand.black,
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.hero),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
         shape: RoundedRectangleBorder(

@@ -12,7 +12,8 @@ enum DiscoverMealType {
   entree('Breakfast'),
   side('Lunch'),
   sauce('Dinner'),
-  snack('Snack');
+  snack('Appetizers & Snacks'),
+  dessert('Desserts');
 
   const DiscoverMealType(this.label);
   final String label;
@@ -118,6 +119,8 @@ extension DiscoverMealTypeX on DiscoverMealType {
         return MealType.sauce;
       case DiscoverMealType.snack:
         return MealType.snack;
+      case DiscoverMealType.dessert:
+        return MealType.dessert;
     }
   }
 }
@@ -169,10 +172,95 @@ const _dinnerChips = <DiscoverFilterChip>[
   DiscoverFilterChip(
     id: 'vegetarian',
     label: 'Vegetarian',
-    keywords: <String>['vegetarian'],
+    keywords: <String>['vegetarian', 'plant-based'],
   ),
   DiscoverFilterChip(id: 'pasta', label: 'Pasta', keywords: <String>['pasta']),
   DiscoverFilterChip(id: 'pork', label: 'Pork', keywords: <String>['pork']),
+  DiscoverFilterChip(
+    id: 'seafood',
+    label: 'Seafood',
+    keywords: <String>['seafood', 'salmon', 'shrimp', 'fish'],
+  ),
+  DiscoverFilterChip(
+    id: 'one-pan',
+    label: 'One-Pan',
+    keywords: <String>['one-pan', 'one pan', 'sheet pan', 'sheet-pan'],
+  ),
+  DiscoverFilterChip(
+    id: 'southern',
+    label: 'Southern',
+    keywords: <String>['southern', 'comfort'],
+  ),
+  DiscoverFilterChip(
+    id: 'crockpot',
+    label: 'Crockpot',
+    keywords: <String>['crockpot', 'slow cooker', 'slow-cooker'],
+  ),
+  DiscoverFilterChip(
+    id: 'instant-pot',
+    label: 'Instant Pot',
+    keywords: <String>['instant pot', 'instant-pot', 'pressure cooker'],
+  ),
+  DiscoverFilterChip(
+    id: 'grill',
+    label: 'Grill',
+    keywords: <String>['grill', 'grilled', 'bbq'],
+  ),
+  DiscoverFilterChip(
+    id: 'soup',
+    label: 'Soup',
+    keywords: <String>['soup', 'stew', 'chowder', 'bisque'],
+  ),
+];
+
+const _dessertChips = <DiscoverFilterChip>[
+  DiscoverFilterChip(id: 'all', label: 'All', keywords: <String>[]),
+  DiscoverFilterChip(
+    id: 'dessert-chocolate',
+    label: 'Chocolate',
+    keywords: <String>['chocolate', 'brownie', 'mousse', 'cacao', 'fudge'],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-cookies-bars',
+    label: 'Cookies & Bars',
+    keywords: <String>[
+      'cookie',
+      'bars',
+      'shortbread',
+      'snickerdoodle',
+      'thumbprint',
+    ],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-cakes-cupcakes',
+    label: 'Cakes & Cupcakes',
+    keywords: <String>['cake', 'cupcake', 'layer cake', 'pound cake'],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-muffins-breads',
+    label: 'Muffins & Quick Breads',
+    keywords: <String>['muffin', 'banana bread', 'zucchini bread', 'quick bread'],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-pies-cobblers-crisps',
+    label: 'Pies, Cobblers & Crisps',
+    keywords: <String>['pie', 'cobbler', 'crisp', 'crumble', 'tart'],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-fruit',
+    label: 'Fruit Desserts',
+    keywords: <String>['fruit', 'berries', 'strawberry', 'peach', 'apple', 'cherry'],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-no-bake',
+    label: 'No-Bake',
+    keywords: <String>['no-bake', 'energy balls', 'protein balls', 'truffles'],
+  ),
+  DiscoverFilterChip(
+    id: 'dessert-frozen-creamy',
+    label: 'Frozen & Creamy',
+    keywords: <String>['ice cream', 'pudding', 'panna cotta', 'affogato', 'custard'],
+  ),
 ];
 
 List<DiscoverFilterChip> discoverChipsForMeal(DiscoverMealType meal) {
@@ -187,21 +275,105 @@ List<DiscoverFilterChip> discoverChipsForMeal(DiscoverMealType meal) {
       return const <DiscoverFilterChip>[
         DiscoverFilterChip(id: 'all', label: 'All', keywords: <String>[]),
         DiscoverFilterChip(
-          id: 'quick',
-          label: 'Quick',
-          keywords: <String>['quick', 'easy'],
+          id: 'dips-spreads',
+          label: 'Dips & Spreads',
+          keywords: <String>[
+            'dip',
+            'hummus',
+            'guacamole',
+            'salsa',
+            'tapenade',
+            'tzatziki',
+          ],
         ),
         DiscoverFilterChip(
-          id: 'protein',
-          label: 'Protein',
-          keywords: <String>['protein', 'nuts', 'yogurt'],
+          id: 'finger-foods',
+          label: 'Finger Foods',
+          keywords: <String>[
+            'finger food',
+            'bites',
+            'skewer',
+            'roll',
+            'taquito',
+            'dumpling',
+            'poppers',
+            'deviled',
+          ],
         ),
         DiscoverFilterChip(
-          id: 'sweet',
-          label: 'Sweet',
-          keywords: <String>['sweet', 'fruit', 'chocolate'],
+          id: 'boards-platters',
+          label: 'Boards & Platters',
+          keywords: <String>[
+            'board',
+            'platter',
+            'charcuterie',
+            'crudite',
+            'mezze',
+            'nachos',
+          ],
+        ),
+        DiscoverFilterChip(
+          id: 'cheesy-bakes',
+          label: 'Cheesy Bakes',
+          keywords: <String>[
+            'baked brie',
+            'cheese log',
+            'potato skins',
+            'spinach artichoke',
+            'cheese',
+          ],
+        ),
+        DiscoverFilterChip(
+          id: 'wings-meaty-bites',
+          label: 'Wings & Meaty Bites',
+          keywords: <String>[
+            'wings',
+            'meatballs',
+            'sausage',
+            'buffalo',
+            'chicken',
+            'bacon',
+          ],
+        ),
+        DiscoverFilterChip(
+          id: 'seafood-appetizers',
+          label: 'Seafood Appetizers',
+          keywords: <String>[
+            'shrimp',
+            'prawns',
+            'smoked salmon',
+            'ceviche',
+            'fish',
+          ],
+        ),
+        DiscoverFilterChip(
+          id: 'crispy-snacks',
+          label: 'Crispy Snacks',
+          keywords: <String>[
+            'fries',
+            'onion rings',
+            'fried pickles',
+            'zucchini fries',
+            'chips',
+            'popcorn',
+          ],
+        ),
+        DiscoverFilterChip(
+          id: 'healthy-veggie-snacks',
+          label: 'Healthy & Veggie',
+          keywords: <String>[
+            'cauliflower',
+            'mushroom',
+            'vegetarian',
+            'vegan',
+            'veggie',
+            'nuts',
+            'seeds',
+          ],
         ),
       ];
+    case DiscoverMealType.dessert:
+      return _dessertChips;
   }
 }
 
@@ -695,7 +867,9 @@ final discoverRatingBucketProvider =
     StateProvider<DiscoverRatingBucket>((ref) => DiscoverRatingBucket.any);
 
 final discoverSelectedMealTypesProvider =
-    StateProvider<Set<DiscoverMealType>>((ref) => <DiscoverMealType>{});
+    StateProvider<Set<DiscoverMealType>>(
+      (ref) => <DiscoverMealType>{DiscoverMealType.entree},
+    );
 
 final discoverAvailableChipsProvider =
     Provider<List<DiscoverFilterChip>>((ref) {
@@ -758,8 +932,16 @@ final discoverCuisineTilesProvider =
     Provider<AsyncValue<List<DiscoverCuisineTile>>>(
   (ref) {
     final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+    final selectedMeals = ref.watch(discoverSelectedMealTypesProvider);
     return recipesAsync.whenData((recipes) {
+      final selectedRecipeMealTypes = selectedMeals
+          .map((meal) => meal.recipeMealType)
+          .toSet();
       int matchesAny(Recipe recipe, List<String> keywords) {
+        if (selectedRecipeMealTypes.isNotEmpty &&
+            !selectedRecipeMealTypes.contains(recipe.mealType)) {
+          return 0;
+        }
         final haystack =
             '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
         return keywords.any(haystack.contains) ? 1 : 0;
@@ -770,44 +952,408 @@ final discoverCuisineTilesProvider =
             (sum, recipe) => sum + matchesAny(recipe, keywords),
           );
 
+      final isBreakfastSelectedOnly =
+          selectedMeals.length == 1 &&
+          selectedMeals.contains(DiscoverMealType.entree);
+      if (isBreakfastSelectedOnly) {
+        return <DiscoverCuisineTile>[
+          DiscoverCuisineTile(
+            id: 'high-protein',
+            label: 'High-Protein',
+            recipeCount:
+                countFor(<String>['high-protein', 'high protein', 'protein']),
+          ),
+          DiscoverCuisineTile(
+            id: 'healthy',
+            label: 'Healthy',
+            recipeCount: countFor(<String>[
+              'healthy',
+              'wellness',
+              'clean',
+              'nourishing',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'whole30',
+            label: 'Whole30',
+            recipeCount: countFor(<String>[
+              'whole30',
+              'whole 30',
+              'paleo',
+              'grain-free',
+              'dairy-free',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'pancakes',
+            label: 'Pancakes',
+            recipeCount: countFor(<String>[
+              'pancake',
+              'waffle',
+              'crepe',
+              'hotcake',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'breakfast-casserole',
+            label: 'Hearty Breakfasts',
+            recipeCount: countFor(<String>[
+              'breakfast casserole',
+              'breakfast',
+              'egg bake',
+              'scrambled',
+              'scramble',
+              'strata',
+              'frittata',
+              'hash',
+              'potato',
+            ]),
+          ),
+        ];
+      }
+      final isLunchSelectedOnly =
+          selectedMeals.length == 1 &&
+          selectedMeals.contains(DiscoverMealType.side);
+      if (isLunchSelectedOnly) {
+        return <DiscoverCuisineTile>[
+          DiscoverCuisineTile(
+            id: 'whole30',
+            label: 'Whole30',
+            recipeCount: countFor(<String>[
+              'whole30',
+              'whole 30',
+              'paleo',
+              'grain-free',
+              'dairy-free',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'healthy-lunch',
+            label: 'Healthy Lunch Ideas',
+            recipeCount: countFor(<String>[
+              'healthy lunch',
+              'lunch ideas',
+              'meal prep lunch',
+              'light lunch',
+              'nourishing',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'salads',
+            label: 'Salads',
+            recipeCount: countFor(<String>[
+              'salad',
+              'vinaigrette',
+              'greens',
+              'caesar',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'sandwiches-wraps',
+            label: 'Sandwiches & Wraps',
+            recipeCount: countFor(<String>[
+              'sandwich',
+              'wrap',
+              'panini',
+              'melt',
+              'hoagie',
+              'sub',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'vegetarian',
+            label: 'Vegetarian',
+            recipeCount: countFor(<String>[
+              'vegetarian',
+              'veggie',
+              'plant-based',
+              'meatless',
+            ]),
+          ),
+        ];
+      }
+      final isSnackSelectedOnly =
+          selectedMeals.length == 1 &&
+          selectedMeals.contains(DiscoverMealType.snack);
+      if (isSnackSelectedOnly) {
+        return <DiscoverCuisineTile>[
+          DiscoverCuisineTile(
+            id: 'snack-dips-spreads',
+            label: 'Dips & Spreads',
+            recipeCount: countFor(<String>[
+              'dip',
+              'hummus',
+              'guacamole',
+              'salsa',
+              'tapenade',
+              'tzatziki',
+              'muhammara',
+              'whipped feta',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-finger-foods',
+            label: 'Finger Foods',
+            recipeCount: countFor(<String>[
+              'finger food',
+              'bites',
+              'skewer',
+              'roll',
+              'taquito',
+              'dumpling',
+              'poppers',
+              'deviled eggs',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-boards-platters',
+            label: 'Boards & Platters',
+            recipeCount: countFor(<String>[
+              'board',
+              'platter',
+              'charcuterie',
+              'cheese board',
+              'crudite',
+              'mezze',
+              'nachos',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-cheesy-bakes',
+            label: 'Cheesy Bakes',
+            recipeCount: countFor(<String>[
+              'baked brie',
+              'cheese log',
+              'potato skins',
+              'spinach artichoke',
+              'cheese',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-wings-meaty-bites',
+            label: 'Wings & Meaty Bites',
+            recipeCount: countFor(<String>[
+              'wings',
+              'meatballs',
+              'sausage rolls',
+              'buffalo',
+              'chicken',
+              'bacon',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-seafood-appetizers',
+            label: 'Seafood Appetizers',
+            recipeCount: countFor(<String>[
+              'shrimp',
+              'prawns',
+              'smoked salmon',
+              'ceviche',
+              'fish',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-crispy-snacks',
+            label: 'Crispy Snacks',
+            recipeCount: countFor(<String>[
+              'fries',
+              'onion rings',
+              'fried pickles',
+              'zucchini fries',
+              'chips',
+              'popcorn',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'snack-healthy-veggie-snacks',
+            label: 'Healthy & Veggie',
+            recipeCount: countFor(<String>[
+              'cauliflower',
+              'mushrooms',
+              'vegetarian',
+              'vegan',
+              'veggie',
+              'nuts',
+              'seeds',
+            ]),
+          ),
+        ];
+      }
+      final isDessertSelectedOnly =
+          selectedMeals.length == 1 &&
+          selectedMeals.contains(DiscoverMealType.dessert);
+      if (isDessertSelectedOnly) {
+        return <DiscoverCuisineTile>[
+          DiscoverCuisineTile(
+            id: 'dessert-chocolate',
+            label: 'Chocolate',
+            recipeCount: countFor(<String>[
+              'chocolate',
+              'brownie',
+              'mousse',
+              'cacao',
+              'fudge',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-cookies-bars',
+            label: 'Cookies & Bars',
+            recipeCount: countFor(<String>[
+              'cookie',
+              'bars',
+              'shortbread',
+              'snickerdoodle',
+              'thumbprint',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-cakes-cupcakes',
+            label: 'Cakes & Cupcakes',
+            recipeCount: countFor(<String>[
+              'cake',
+              'cupcake',
+              'layer cake',
+              'pound cake',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-muffins-breads',
+            label: 'Muffins & Quick Breads',
+            recipeCount: countFor(<String>[
+              'muffin',
+              'banana bread',
+              'zucchini bread',
+              'quick bread',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-pies-cobblers-crisps',
+            label: 'Pies, Cobblers & Crisps',
+            recipeCount: countFor(<String>[
+              'pie',
+              'cobbler',
+              'crisp',
+              'crumble',
+              'tart',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-fruit',
+            label: 'Fruit Desserts',
+            recipeCount: countFor(<String>[
+              'fruit',
+              'berries',
+              'strawberry',
+              'peach',
+              'apple',
+              'cherry',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-no-bake',
+            label: 'No-Bake',
+            recipeCount: countFor(<String>[
+              'no-bake',
+              'energy balls',
+              'protein balls',
+              'truffles',
+            ]),
+          ),
+          DiscoverCuisineTile(
+            id: 'dessert-frozen-creamy',
+            label: 'Frozen & Creamy',
+            recipeCount: countFor(<String>[
+              'ice cream',
+              'pudding',
+              'panna cotta',
+              'affogato',
+              'custard',
+            ]),
+          ),
+        ];
+      }
+
       return <DiscoverCuisineTile>[
         DiscoverCuisineTile(
-          id: 'pasta',
+          id: 'dinner-chicken',
+          label: 'Chicken',
+          recipeCount: countFor(<String>['chicken']),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-beef',
+          label: 'Beef',
+          recipeCount: countFor(<String>['beef', 'steak', 'brisket']),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-pasta',
           label: 'Pasta',
-          recipeCount: countFor(<String>['pasta', 'spaghetti', 'italian']),
-        ),
-        DiscoverCuisineTile(
-          id: 'mexican-fiesta',
-          label: 'Mexican Fiesta',
           recipeCount:
-              countFor(<String>['mexican', 'taco', 'fajita', 'burrito']),
+              countFor(<String>['pasta', 'spaghetti', 'italian', 'penne']),
         ),
         DiscoverCuisineTile(
-          id: 'asian',
-          label: 'Asian',
+          id: 'dinner-pork',
+          label: 'Pork',
+          recipeCount: countFor(<String>['pork', 'bacon', 'sausage']),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-vegetarian',
+          label: 'Vegetarian',
           recipeCount:
-              countFor(<String>['asian', 'ramen', 'stir-fry', 'noodle']),
+              countFor(<String>['vegetarian', 'plant-based', 'veggie', 'plant']),
         ),
         DiscoverCuisineTile(
-          id: 'plant-based-power',
-          label: 'Plant-Based Power',
-          recipeCount: countFor(<String>['plant', 'vegetarian', 'veggie']),
-        ),
-        DiscoverCuisineTile(
-          id: 'comfort-classics',
-          label: 'Comfort Classics',
+          id: 'dinner-seafood',
+          label: 'Seafood',
           recipeCount:
-              countFor(<String>['comfort', 'classic', 'casserole', 'stew']),
+              countFor(<String>['seafood', 'salmon', 'shrimp', 'fish']),
         ),
         DiscoverCuisineTile(
-          id: 'vegan-delights',
-          label: 'Vegan Delights',
-          recipeCount: countFor(<String>['vegan']),
+          id: 'dinner-one-pan',
+          label: 'One-Pan & Sheet Pan',
+          recipeCount: countFor(<String>[
+            'one-pan',
+            'one pan',
+            'sheet pan',
+            'sheet-pan',
+            'skillet',
+          ]),
         ),
         DiscoverCuisineTile(
-          id: 'mediterranean-flavors',
-          label: 'Mediterranean',
-          recipeCount: countFor(<String>['mediterranean', 'greek', 'hummus']),
+          id: 'dinner-southern',
+          label: 'Southern Comfort',
+          recipeCount: countFor(<String>[
+            'southern',
+            'comfort',
+            'grits',
+            'biscuit',
+            'cajun',
+          ]),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-crockpot',
+          label: 'Crockpot',
+          recipeCount:
+              countFor(<String>['crockpot', 'slow cooker', 'slow-cooker']),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-instant-pot',
+          label: 'Instant Pot',
+          recipeCount: countFor(<String>[
+            'instant pot',
+            'instant-pot',
+            'pressure cooker',
+          ]),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-grill',
+          label: 'Grill',
+          recipeCount: countFor(<String>['grill', 'grilled', 'bbq', 'skewer']),
+        ),
+        DiscoverCuisineTile(
+          id: 'dinner-soup',
+          label: 'Soups',
+          recipeCount:
+              countFor(<String>['soup', 'stew', 'chowder', 'bisque', 'broth']),
         ),
       ];
     });
@@ -840,6 +1386,70 @@ final discoverQuickEasyRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref
         .where((recipe) => _discoverQuickEasyApiIds.contains(recipe.apiId))
         .toList(),
   );
+});
+
+final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  return recipesAsync.whenData((recipes) {
+    return recipes.where((recipe) {
+      final haystack =
+          '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
+      final isBreakfastMeal = recipe.mealType == MealType.entree;
+      final isLazyBreakfast = haystack.contains('breakfast') ||
+          haystack.contains('egg') ||
+          haystack.contains('overnight oats') ||
+          haystack.contains('pancake') ||
+          haystack.contains('frittata') ||
+          haystack.contains('casserole') ||
+          haystack.contains('whole30');
+      return isBreakfastMeal && isLazyBreakfast;
+    }).take(12).toList();
+  });
+});
+
+final discoverQuickLunchRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  return recipesAsync.whenData((recipes) {
+    return recipes.where((recipe) {
+      final haystack =
+          '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
+      final isLunchMeal = recipe.mealType == MealType.side;
+      final isQuickLunch = haystack.contains('lunch') ||
+          haystack.contains('salad') ||
+          haystack.contains('sandwich') ||
+          haystack.contains('wrap') ||
+          haystack.contains('bento') ||
+          haystack.contains('whole30');
+      return isLunchMeal && isQuickLunch;
+    }).take(12).toList();
+  });
+});
+
+final discoverSnackIdeasRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  return recipesAsync.whenData((recipes) {
+    final snackRecipes = recipes
+        .where((recipe) => recipe.mealType == MealType.snack)
+        .toList();
+    if (snackRecipes.isEmpty) return const <Recipe>[];
+
+    // Keep "random" picks stable between rebuilds for a smoother UI.
+    final shuffled = <Recipe>[...snackRecipes]..shuffle(Random(73));
+    return shuffled.take(7).toList();
+  });
+});
+
+final discoverDessertIdeasRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  return recipesAsync.whenData((recipes) {
+    final dessertRecipes = recipes
+        .where((recipe) => recipe.mealType == MealType.dessert)
+        .toList();
+    if (dessertRecipes.isEmpty) return const <Recipe>[];
+
+    final shuffled = <Recipe>[...dessertRecipes]..shuffle(Random(79));
+    return shuffled.take(7).toList();
+  });
 });
 
 final discoverFilteredRecipesProvider =

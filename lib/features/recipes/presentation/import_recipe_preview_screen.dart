@@ -91,6 +91,7 @@ class _ImportRecipePreviewScreenState
           map,
           imageUrl: imageUrl,
           sourceUrl: _recipe.sourceUrl,
+          sharedContent: payload,
         );
         _titleCtrl.text = _recipe.title;
         _descCtrl.text = _recipe.description ?? '';

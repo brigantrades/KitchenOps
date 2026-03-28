@@ -676,10 +676,9 @@ Widget buildPlannerDaySlotCard({
       children: [
         InkWell(
           borderRadius: BorderRadius.circular(24),
-          onTap: openRecipeOnTap
-              ? ((slot.recipeId?.trim().isNotEmpty ?? false)
-                  ? openRecipeIfLinked
-                  : null)
+          onTap: openRecipeOnTap &&
+                  (slot.recipeId?.trim().isNotEmpty ?? false)
+              ? openRecipeIfLinked
               : editSlotPlan,
           child: Stack(
             children: [
@@ -735,7 +734,7 @@ Widget buildPlannerDaySlotCard({
                             ),
                           if (openRecipeOnTap && recipe == null)
                             Text(
-                              'No recipe linked. Use edit to choose one.',
+                              'No recipe linked. Tap this row or use the menu (⋮).',
                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: scheme.onSurfaceVariant,
                                   ),

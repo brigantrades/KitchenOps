@@ -336,6 +336,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       var recipe = recipeFromInstagramGeminiMap(
         map,
         sourceUrl: sourceUrl,
+        sharedContent: combined,
       );
 
       if (imagePath != null && imagePath.isNotEmpty) {

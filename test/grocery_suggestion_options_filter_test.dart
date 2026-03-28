@@ -15,7 +15,8 @@ void main() {
       expect(out.any((o) => o.isCreate && o.label == 'newitem'), isTrue);
     });
 
-    test('drops non-create row that exactly matches typed query', () {
+    test('keeps catalog row that exactly matches typed query when no create row',
+        () {
       final out = filterGrocerySuggestionOptionsForDisplay(
         suggestionOptions: [
           (label: 'chicken', isCreate: false),
@@ -23,18 +24,30 @@ void main() {
         ],
         normalizedTypedQuery: 'chicken',
       );
-      expect(out.length, 1);
-      expect(out.single.label, 'chicken breast');
+      expect(out.length, 2);
+      expect(out.map((o) => o.label).toList(), ['chicken', 'chicken breast']);
     });
 
-    test('hides lone catalog chip that exactly matches query (no create row)', () {
+    test('keeps lone catalog chip that exactly matches query (no create row)', () {
       final out = filterGrocerySuggestionOptionsForDisplay(
         suggestionOptions: [
           (label: 'milk', isCreate: false),
         ],
         normalizedTypedQuery: 'milk',
       );
-      expect(out, isEmpty);
+      expect(out.single.label, 'milk');
+    });
+
+    test('drops catalog when create row covers same normalized query', () {
+      final out = filterGrocerySuggestionOptionsForDisplay(
+        suggestionOptions: [
+          (label: 'Milk', isCreate: false),
+          (label: 'milk', isCreate: true),
+        ],
+        normalizedTypedQuery: 'milk',
+      );
+      expect(out.length, 1);
+      expect(out.single.isCreate, isTrue);
     });
   });
 }

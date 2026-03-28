@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
@@ -20,7 +21,16 @@ class DiscoverShellScaffold extends StatelessWidget {
     this.floatingActionButton,
     this.floatingActionButtonLocation,
     this.resizeToAvoidBottomInset,
+    this.shellBackdropColor,
+    this.shellPanelColor,
+    this.shellAvatarBackground,
+    this.shellAvatarIconColor,
   });
+
+  static const Color _defaultShellBackdrop = AppBrand.paleMint;
+  static const Color _defaultShellPanel = AppBrand.offWhite;
+  static const Color _defaultAvatarBg = AppBrand.mutedAqua;
+  static const Color _defaultAvatarFg = AppBrand.deepTeal;
 
   final String title;
   final Widget body;
@@ -31,15 +41,25 @@ class DiscoverShellScaffold extends StatelessWidget {
   final FloatingActionButtonLocation? floatingActionButtonLocation;
   final bool? resizeToAvoidBottomInset;
 
+  /// When set (e.g. Home brand trial), overrides the default green/cream shell colors.
+  final Color? shellBackdropColor;
+  final Color? shellPanelColor;
+  final Color? shellAvatarBackground;
+  final Color? shellAvatarIconColor;
+
   @override
   Widget build(BuildContext context) {
+    final backdrop = shellBackdropColor ?? _defaultShellBackdrop;
+    final panel = shellPanelColor ?? _defaultShellPanel;
+    final avatarBg = shellAvatarBackground ?? _defaultAvatarBg;
+    final avatarFg = shellAvatarIconColor ?? _defaultAvatarFg;
     return Scaffold(
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
       floatingActionButton: floatingActionButton,
       floatingActionButtonLocation: floatingActionButtonLocation,
       body: DecoratedBox(
-        decoration: const BoxDecoration(
-          color: Color(0xFFC4CFBC),
+        decoration: BoxDecoration(
+          color: backdrop,
         ),
         child: SafeArea(
           child: Column(
@@ -65,12 +85,12 @@ class DiscoverShellScaffold extends StatelessWidget {
                         InkWell(
                           onTap: () => context.push('/profile'),
                           borderRadius: BorderRadius.circular(18),
-                          child: const CircleAvatar(
+                          child: CircleAvatar(
                             radius: 15,
-                            backgroundColor: Color(0xFFE7DED1),
+                            backgroundColor: avatarBg,
                             child: Icon(
                               Icons.person_rounded,
-                              color: Color(0xFF4F5B52),
+                              color: avatarFg,
                               size: 16,
                             ),
                           ),
@@ -82,13 +102,13 @@ class DiscoverShellScaffold extends StatelessWidget {
                           child: Container(
                             width: 32,
                             height: 32,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFE7DED1),
+                            decoration: BoxDecoration(
+                              color: avatarBg,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.notifications_none_rounded,
-                              color: Color(0xFF4F5B52),
+                              color: avatarFg,
                               size: 18,
                             ),
                           ),
@@ -102,9 +122,10 @@ class DiscoverShellScaffold extends StatelessWidget {
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF3F2E8),
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  decoration: BoxDecoration(
+                    color: panel,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(20)),
                   ),
                   child: body,
                 ),
@@ -200,7 +221,7 @@ Future<void> showDiscoverNotificationsDropdown(
                 constraints: const BoxConstraints(maxHeight: 460),
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF3F2E8),
+                  color: AppBrand.offWhite,
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: AppShadows.soft,
                 ),

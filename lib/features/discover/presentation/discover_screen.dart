@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/measurement/ingredient_display_units.dart';
 import 'package:plateplan/core/measurement/measurement_system_provider.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
@@ -42,15 +43,35 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final quickRecipesAsync = ref.watch(discoverQuickEasyRecipesProvider);
-    final trendingAsync = ref.watch(discoverTrendingRecipesProvider);
+    final selectedMeal = ref.watch(discoverMealTypeProvider);
+    final isBreakfastOnlySelected = selectedMeal == DiscoverMealType.entree;
+    final isLunchOnlySelected = selectedMeal == DiscoverMealType.side;
+    final isSnackOnlySelected = selectedMeal == DiscoverMealType.snack;
+    final isDessertOnlySelected = selectedMeal == DiscoverMealType.dessert;
+    final featuredRecipesAsync = isBreakfastOnlySelected
+        ? ref.watch(discoverLazyBreakfastRecipesProvider)
+        : isLunchOnlySelected
+            ? ref.watch(discoverQuickLunchRecipesProvider)
+            : isSnackOnlySelected
+                ? ref.watch(discoverSnackIdeasRecipesProvider)
+                : isDessertOnlySelected
+                    ? ref.watch(discoverDessertIdeasRecipesProvider)
+                    : ref.watch(discoverQuickEasyRecipesProvider);
+    final featuredSectionTitle = isBreakfastOnlySelected
+        ? 'Lazy Breakfast Ideas'
+        : isLunchOnlySelected
+            ? 'Quick & Easy Lunch Ideas'
+            : isSnackOnlySelected
+                ? 'Snack Ideas'
+                : isDessertOnlySelected
+                    ? 'Dessert Ideas'
+                    : 'Quick & Easy Dinners';
     final cuisinesAsync = ref.watch(discoverCuisineTilesProvider);
-    final activeFilterCount = ref.watch(discoverActiveFilterCountProvider);
 
     return Scaffold(
       body: DecoratedBox(
         decoration: const BoxDecoration(
-          color: Color(0xFFC4CFBC),
+          color: AppBrand.paleMint,
         ),
         child: SafeArea(
           child: Column(
@@ -61,7 +82,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   children: [
                     _buildHeader(context),
                     const SizedBox(height: AppSpacing.sm),
-                    _buildSearchAndFilter(activeFilterCount),
+                    _buildSearchOnly(),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildMealTypeChips(selectedMeal),
                     const SizedBox(height: AppSpacing.md),
                   ],
                 ),
@@ -73,19 +96,15 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                     Container(
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
                       decoration: const BoxDecoration(
-                        color: Color(0xFFF3F2E8),
+                        color: AppBrand.offWhite,
                         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _sectionTitle(context, 'Trending This Week'),
+                          _sectionTitle(context, featuredSectionTitle),
                           const SizedBox(height: AppSpacing.xs),
-                          _buildTrendingStrip(trendingAsync),
-                          const SizedBox(height: AppSpacing.md),
-                          _sectionTitle(context, 'Quick & Easy Dinners'),
-                          const SizedBox(height: AppSpacing.xs),
-                          _buildQuickDinnerGrid(quickRecipesAsync),
+                          _buildQuickDinnerGrid(featuredRecipesAsync),
                           const SizedBox(height: AppSpacing.md),
                           // New From Users intentionally hidden for now.
                           _sectionTitle(context, 'Explore Cuisines'),
@@ -120,8 +139,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
           borderRadius: BorderRadius.circular(14),
           child: const CircleAvatar(
             radius: 12,
-            backgroundColor: Color(0xFFE7DED1),
-            child: Icon(Icons.person_rounded, size: 14, color: Color(0xFF6C6C66)),
+            backgroundColor: AppBrand.mutedAqua,
+            child: Icon(Icons.person_rounded, size: 14, color: AppBrand.deepTeal),
           ),
         ),
         const SizedBox(width: 8),
@@ -131,46 +150,68 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
           child: const Icon(
             Icons.notifications_none_rounded,
             size: 18,
-            color: Color(0xFF5E665E),
+            color: AppBrand.deepTeal,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildSearchAndFilter(int activeFilterCount) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: _searchController,
-            onChanged: (value) {
-              ref.read(discoverSearchQueryProvider.notifier).state = value;
-            },
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search_rounded),
-              hintText: 'Search recipes',
-              isDense: true,
+  Widget _buildSearchOnly() {
+    return TextField(
+      controller: _searchController,
+      onChanged: (value) {
+        ref.read(discoverSearchQueryProvider.notifier).state = value;
+      },
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.search_rounded),
+        hintText: 'Search recipes',
+        isDense: true,
+      ),
+    );
+  }
+
+  Widget _buildMealTypeChips(DiscoverMealType selectedMeal) {
+    final meals = DiscoverMealType.values;
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: meals.map((meal) {
+        final isSelected = meal == selectedMeal;
+        return InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: () {
+            ref.read(discoverMealTypeProvider.notifier).state = meal;
+            ref.read(discoverSelectedMealTypesProvider.notifier).state =
+                <DiscoverMealType>{meal};
+          },
+          child: AnimatedContainer(
+            duration: AppMotion.fast,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: isSelected ? colorScheme.secondary : AppBrand.offWhite,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: isSelected
+                    ? colorScheme.secondary
+                    : AppBrand.mutedAqua,
+              ),
+            ),
+            child: Text(
+              meal.label,
+              style: textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: isSelected
+                    ? colorScheme.onSecondary
+                    : AppBrand.black,
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        TextButton.icon(
-          onPressed: _showFilterSheet,
-          icon: const Icon(Icons.tune_rounded),
-          label: Text(activeFilterCount > 0
-              ? 'Filters ($activeFilterCount)'
-              : 'Filters'),
-          style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFF2D342F),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-            minimumSize: const Size(84, 44),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-        ),
-      ],
+        );
+      }).toList(),
     );
   }
 
@@ -239,7 +280,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
               final recipe = quickRecipes[index];
               final isSaved = _isRecipeSaved(recipe, savedRecipes);
               final imageUrl = recipe.imageUrl?.isNotEmpty == true
-                  ? recipe.imageUrl!
+                  ? _normalizeImageUrl(recipe.imageUrl!) ?? recipe.imageUrl!
                   : _fallbackFoodImage(index + 10);
               return GestureDetector(
                 onTap: () => _showPublicRecipeDetail(recipe),
@@ -383,7 +424,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
           crossAxisCount: 2,
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
-          childAspectRatio: 1.45,
+          childAspectRatio: 1.22,
         ),
         itemBuilder: (context, index) {
           final tile = tiles[index];
@@ -511,7 +552,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   constraints: const BoxConstraints(maxHeight: 460),
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF3F2E8),
+                    color: AppBrand.offWhite,
                     borderRadius: BorderRadius.circular(14),
                     boxShadow: AppShadows.soft,
                   ),
@@ -755,6 +796,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _showFilterSheet() async {
     final initialCuisines = ref.read(discoverSelectedCuisineIdsProvider);
     final initialDietary = ref.read(discoverSelectedDietaryTagsProvider);
@@ -956,7 +998,7 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
     return Scaffold(
       body: DecoratedBox(
         decoration: const BoxDecoration(
-          color: Color(0xFFC4CFBC),
+          color: AppBrand.paleMint,
         ),
         child: SafeArea(
           child: Column(
@@ -983,9 +1025,9 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(18),
                       child: const CircleAvatar(
                         radius: 15,
-                        backgroundColor: Color(0xFFE7DED1),
+                        backgroundColor: AppBrand.mutedAqua,
                         child: Icon(Icons.person_rounded,
-                            color: Color(0xFF4F5B52), size: 16),
+                            color: AppBrand.deepTeal, size: 16),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -996,11 +1038,11 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                         width: 32,
                         height: 32,
                         decoration: const BoxDecoration(
-                          color: Color(0xFFE7DED1),
+                          color: AppBrand.mutedAqua,
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(Icons.notifications_none_rounded,
-                            color: Color(0xFF4F5B52), size: 18),
+                            color: AppBrand.deepTeal, size: 18),
                       ),
                     ),
                   ],
@@ -1011,7 +1053,7 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
                   decoration: const BoxDecoration(
-                    color: Color(0xFFF3F2E8),
+                    color: AppBrand.offWhite,
                     borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                   ),
                   child: recipesAsync.when(
@@ -1019,8 +1061,17 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                       final savedRecipes =
                           ref.watch(recipesProvider).valueOrNull ??
                               const <Recipe>[];
+                      final selectedMealTypes =
+                          ref.watch(discoverSelectedMealTypesProvider);
+                      final selectedRecipeMealTypes = selectedMealTypes
+                          .map((meal) => meal.recipeMealType)
+                          .toSet();
                       final filtered = recipes
                           .where((recipe) => _matchesCuisine(recipe, cuisineId))
+                          .where(
+                            (recipe) => selectedRecipeMealTypes.isEmpty ||
+                                selectedRecipeMealTypes.contains(recipe.mealType),
+                          )
                           .toList();
                       if (filtered.isEmpty) {
                         return const Center(
@@ -1041,7 +1092,8 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                           final recipe = filtered[index];
                           final isSaved = _isRecipeSaved(recipe, savedRecipes);
                           final imageUrl = recipe.imageUrl?.isNotEmpty == true
-                              ? recipe.imageUrl!
+                              ? _normalizeImageUrl(recipe.imageUrl!) ??
+                                  recipe.imageUrl!
                               : 'https://images.unsplash.com/photo-1516100882582-96c3a05fe590?auto=format&fit=crop&w=1200&q=80';
                           return GestureDetector(
                             onTap: () => onOpenRecipe(recipe),
@@ -1146,12 +1198,270 @@ bool _matchesCuisine(Recipe recipe, String cuisineId) {
       return _hasAny(haystack, const <String>['asian', 'ramen', 'stir-fry', 'noodle']);
     case 'plant-based-power':
       return _hasAny(haystack, const <String>['plant', 'vegetarian', 'veggie']);
+    case 'whole30':
+      return _hasAny(
+        haystack,
+        const <String>['whole30', 'whole 30', 'paleo', 'grain-free', 'dairy-free'],
+      );
+    case 'high-protein':
+      return _hasAny(haystack, const <String>['high-protein', 'high protein', 'protein']);
+    case 'healthy':
+      return _hasAny(haystack, const <String>['healthy', 'wellness', 'clean', 'nourishing']);
+    case 'pancakes':
+      return _hasAny(haystack, const <String>['pancake', 'waffle', 'crepe', 'hotcake']);
+    case 'breakfast-casserole':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'breakfast casserole',
+          'breakfast',
+          'egg bake',
+          'scrambled',
+          'scramble',
+          'strata',
+          'frittata',
+          'hash',
+          'potato',
+        ],
+      );
+    case 'bento-box-lunch':
+      return _hasAny(
+        haystack,
+        const <String>['bento', 'lunch box', 'box lunch', 'meal prep lunch'],
+      );
+    case 'healthy-lunch':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'healthy lunch',
+          'lunch ideas',
+          'meal prep lunch',
+          'light lunch',
+          'nourishing',
+        ],
+      );
+    case 'salads':
+      return _hasAny(
+        haystack,
+        const <String>['salad', 'vinaigrette', 'greens', 'caesar'],
+      );
+    case 'sandwiches-wraps':
+      return _hasAny(
+        haystack,
+        const <String>['sandwich', 'wrap', 'panini', 'melt', 'hoagie', 'sub'],
+      );
+    case 'vegetarian':
+      return _hasAny(
+        haystack,
+        const <String>['vegetarian', 'veggie', 'plant-based', 'meatless'],
+      );
     case 'comfort-classics':
       return _hasAny(haystack, const <String>['comfort', 'classic', 'baked', 'creamy']);
     case 'vegan-delights':
       return _hasAny(haystack, const <String>['vegan']);
     case 'mediterranean-flavors':
       return _hasAny(haystack, const <String>['mediterranean', 'greek', 'orzo']);
+    case 'snack-dips-spreads':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'dip',
+          'hummus',
+          'guacamole',
+          'salsa',
+          'tapenade',
+          'tzatziki',
+          'muhammara',
+          'whipped feta',
+        ],
+      );
+    case 'snack-finger-foods':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'finger food',
+          'bites',
+          'skewer',
+          'roll',
+          'taquito',
+          'dumpling',
+          'poppers',
+          'deviled eggs',
+        ],
+      );
+    case 'snack-boards-platters':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'board',
+          'platter',
+          'charcuterie',
+          'cheese board',
+          'crudite',
+          'mezze',
+          'nachos',
+        ],
+      );
+    case 'snack-cheesy-bakes':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'baked brie',
+          'cheese log',
+          'potato skins',
+          'spinach artichoke',
+          'cheese',
+        ],
+      );
+    case 'snack-wings-meaty-bites':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'wings',
+          'meatballs',
+          'sausage rolls',
+          'buffalo',
+          'chicken',
+          'bacon',
+        ],
+      );
+    case 'snack-seafood-appetizers':
+      return _hasAny(
+        haystack,
+        const <String>['shrimp', 'prawns', 'smoked salmon', 'ceviche', 'fish'],
+      );
+    case 'snack-crispy-snacks':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'fries',
+          'onion rings',
+          'fried pickles',
+          'zucchini fries',
+          'chips',
+          'popcorn',
+        ],
+      );
+    case 'snack-healthy-veggie-snacks':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'cauliflower',
+          'mushrooms',
+          'vegetarian',
+          'vegan',
+          'veggie',
+          'nuts',
+          'seeds',
+        ],
+      );
+    case 'dessert-chocolate':
+      return _hasAny(
+        haystack,
+        const <String>['chocolate', 'brownie', 'mousse', 'cacao', 'fudge'],
+      );
+    case 'dessert-cookies-bars':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'cookie',
+          'bars',
+          'shortbread',
+          'snickerdoodle',
+          'thumbprint',
+        ],
+      );
+    case 'dessert-cakes-cupcakes':
+      return _hasAny(
+        haystack,
+        const <String>['cake', 'cupcake', 'layer cake', 'pound cake'],
+      );
+    case 'dessert-muffins-breads':
+      return _hasAny(
+        haystack,
+        const <String>['muffin', 'banana bread', 'zucchini bread', 'quick bread'],
+      );
+    case 'dessert-pies-cobblers-crisps':
+      return _hasAny(
+        haystack,
+        const <String>['pie', 'cobbler', 'crisp', 'crumble', 'tart'],
+      );
+    case 'dessert-fruit':
+      return _hasAny(
+        haystack,
+        const <String>['fruit', 'berries', 'strawberry', 'peach', 'apple', 'cherry'],
+      );
+    case 'dessert-no-bake':
+      return _hasAny(
+        haystack,
+        const <String>['no-bake', 'energy balls', 'protein balls', 'truffles'],
+      );
+    case 'dessert-frozen-creamy':
+      return _hasAny(
+        haystack,
+        const <String>['ice cream', 'pudding', 'panna cotta', 'affogato', 'custard'],
+      );
+    case 'dinner-chicken':
+      return _hasAny(haystack, const <String>['chicken', 'poultry']);
+    case 'dinner-beef':
+      return _hasAny(haystack, const <String>['beef', 'steak', 'brisket']);
+    case 'dinner-pasta':
+      return _hasAny(
+        haystack,
+        const <String>['pasta', 'spaghetti', 'italian', 'penne', 'linguine'],
+      );
+    case 'dinner-pork':
+      return _hasAny(haystack, const <String>['pork', 'bacon', 'ham', 'sausage']);
+    case 'dinner-vegetarian':
+      return _hasAny(
+        haystack,
+        const <String>['vegetarian', 'plant-based', 'veggie', 'plant', 'tofu'],
+      );
+    case 'dinner-seafood':
+      return _hasAny(
+        haystack,
+        const <String>['seafood', 'salmon', 'shrimp', 'fish', 'scallop', 'cod'],
+      );
+    case 'dinner-one-pan':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'one-pan',
+          'one pan',
+          'sheet pan',
+          'sheet-pan',
+          'skillet',
+        ],
+      );
+    case 'dinner-southern':
+      return _hasAny(
+        haystack,
+        const <String>[
+          'southern',
+          'comfort',
+          'grits',
+          'biscuit',
+          'cajun',
+          'fried',
+        ],
+      );
+    case 'dinner-crockpot':
+      return _hasAny(
+        haystack,
+        const <String>['crockpot', 'slow cooker', 'slow-cooker'],
+      );
+    case 'dinner-instant-pot':
+      return _hasAny(
+        haystack,
+        const <String>['instant pot', 'instant-pot', 'pressure cooker'],
+      );
+    case 'dinner-grill':
+      return _hasAny(haystack, const <String>['grill', 'grilled', 'bbq', 'skewer']);
+    case 'dinner-soup':
+      return _hasAny(
+        haystack,
+        const <String>['soup', 'stew', 'chowder', 'bisque', 'broth', 'chili'],
+      );
     default:
       return false;
   }
@@ -1216,15 +1526,15 @@ class _DiscoverRecipeDetailPageState
             actions: [
               CircleAvatar(
                 radius: 12,
-                backgroundColor: Color(0xFFE7DED1),
+                backgroundColor: AppBrand.mutedAqua,
                 child: Icon(Icons.person_rounded,
-                    size: 14, color: Color(0xFF6C6C66)),
+                    size: 14, color: AppBrand.deepTeal),
               ),
               SizedBox(width: 8),
               Icon(
                 Icons.notifications_none_rounded,
                 size: 18,
-                color: Color(0xFF5E665E),
+                color: AppBrand.deepTeal,
               ),
               SizedBox(width: 8),
             ],
@@ -1663,6 +1973,18 @@ String _fallbackFoodImage(int index) {
   return images[index % images.length];
 }
 
+String? _normalizeImageUrl(String? rawUrl) {
+  if (rawUrl == null) return null;
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return null;
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return trimmed;
+  if (uri.scheme.toLowerCase() == 'http') {
+    return uri.replace(scheme: 'https').toString();
+  }
+  return trimmed;
+}
+
 String _decodeHtmlEntities(String input) {
   return input
       .replaceAll('&#215;', '×')
@@ -1684,6 +2006,73 @@ String _decodeHtmlEntities(String input) {
 
 String _cuisineGraphicForLabel(String label) {
   final key = label.toLowerCase();
+  const curatedByLabel = <String, String>{
+    // Appetizers & Snacks
+    'dips & spreads':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f95f.png',
+    'finger foods':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f96f.png',
+    'boards & platters':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9c0.png',
+    'cheesy bakes':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9c8.png',
+    'wings & meaty bites':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f357.png',
+    'seafood appetizers':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f990.png',
+    'crispy snacks':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35f.png',
+    'healthy & veggie':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f96c.png',
+
+    // Dinner
+    'chicken':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f357.png',
+    'beef':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f969.png',
+    'pasta':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35d.png',
+    'pork':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f356.png',
+    'vegetarian':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f331.png',
+    'seafood':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f41f.png',
+    'one-pan & sheet pan':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f373.png',
+    'southern comfort':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f372.png',
+    'crockpot':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f958.png',
+    'instant pot':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35b.png',
+    'grill':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f525.png',
+    'soups':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f35c.png',
+
+    // Desserts
+    'chocolate':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f36b.png',
+    'cookies & bars':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f36a.png',
+    'cakes & cupcakes':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f370.png',
+    'muffins & quick breads':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9c1.png',
+    'pies, cobblers & crisps':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f967.png',
+    'fruit desserts':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f352.png',
+    'no-bake':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f95c.png',
+    'frozen & creamy':
+        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f366.png',
+  };
+
+  final curated = curatedByLabel[key];
+  if (curated != null) return curated;
+
   if (key.contains('mexican') || key.contains('taco')) {
     return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f32e.png';
   }
@@ -1699,6 +2088,39 @@ String _cuisineGraphicForLabel(String label) {
       key.contains('vegan') ||
       key.contains('vegetarian')) {
     return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f331.png';
+  }
+  if (key.contains('whole30') || key.contains('whole 30') || key.contains('paleo')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f95d.png';
+  }
+  if (key.contains('high-protein') || key.contains('protein')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f4aa.png';
+  }
+  if (key.contains('healthy') || key.contains('wellness')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f957.png';
+  }
+  if (key.contains('pancake')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f95e.png';
+  }
+  if (key.contains('bento')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f371.png';
+  }
+  if (key.contains('healthy lunch')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f957.png';
+  }
+  if (key.contains('salad')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f96c.png';
+  }
+  if (key.contains('sandwich') || key.contains('wrap')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f96a.png';
+  }
+  if (key.contains('vegetarian')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f33f.png';
+  }
+  if (key.contains('casserole') ||
+      key.contains('strata') ||
+      key.contains('egg bake') ||
+      key.contains('hearty breakfast')) {
+    return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f373.png';
   }
   if (key.contains('comfort') || key.contains('classic')) {
     return 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f372.png';

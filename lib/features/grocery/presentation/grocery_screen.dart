@@ -4,9 +4,9 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/food_icon_resolver.dart';
-import 'package:plateplan/core/ui/hero_panel.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
@@ -18,6 +18,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const double _groceryCardGridSpacing = kGroceryCardGridSpacing;
 const double _groceryCardAspectRatio = kGroceryCardAspectRatio;
+
+/// Lists grid cards — very light blue (light mode); subtle blue-gray (dark).
+Color _groceryListItemCardColor(BuildContext context) {
+  final scheme = Theme.of(context).colorScheme;
+  return Theme.of(context).brightness == Brightness.dark
+      ? (Color.lerp(
+              scheme.surfaceContainerHighest,
+              scheme.primary,
+              0.12,
+            ) ??
+            scheme.surfaceContainerHighest)
+      : const Color(0xFFEFF6FC);
+}
 
 class GroceryScreen extends ConsumerStatefulWidget {
   const GroceryScreen({super.key});
@@ -244,53 +257,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     });
     invalidateActiveGroceryStreams(ref);
     ref.invalidate(groceryRecentsProvider);
-  }
-
-  Future<void> _clearAll() async {
-    final user = ref.read(currentUserProvider);
-    if (user == null) {
-      return;
-    }
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => BrandedSheetScaffold(
-        title: 'Clear grocery list?',
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('This will remove all grocery items.'),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('Clear all'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true) {
-      return;
-    }
-    await ref.read(groceryRepositoryProvider).clear(
-          user.id,
-          listId: ref.read(selectedListIdProvider),
-        );
-    invalidateActiveGroceryStreams(ref);
   }
 
   Future<void> _openReorderListSheet({
@@ -794,38 +760,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       title: 'Lists',
       onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
       resizeToAvoidBottomInset: false,
-      trailingActions: [
-        IconButton(
-          icon: const Icon(Icons.share_outlined),
-          onPressed: () async {
-            final messenger = ScaffoldMessenger.of(context);
-            final async = ref.read(groceryItemsProvider);
-            final List<GroceryItem> items;
-            if (async.hasValue) {
-              items = async.requireValue;
-            } else {
-              final sid = ref.read(selectedListIdProvider);
-              if (sid != null && sid.isNotEmpty) {
-                items = await ref.read(groceryListItemsFamily(sid).future);
-              } else {
-                items =
-                    await ref.read(groceryItemsDefaultListStreamProvider.future);
-              }
-            }
-            await ref.read(groceryRepositoryProvider).shareText(items);
-            if (!mounted) {
-              return;
-            }
-            messenger.showSnackBar(
-              const SnackBar(content: Text('Copied list to clipboard')),
-            );
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.delete_sweep_outlined),
-          onPressed: _clearAll,
-        ),
-      ],
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openAddItemSheet(itemsAsync.valueOrNull ?? const []),
@@ -865,33 +799,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
             children: [
-              HeroPanel(
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: const Icon(Icons.shopping_cart_rounded),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        itemsAreaLoading
-                            ? 'Loading items…'
-                            : '${items?.length ?? 0} items',
-                        style:
-                            Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
               listsAsync.when(
                 data: (lists) {
                   final effectiveScopeIndex =
@@ -918,111 +825,52 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     }
                   }
 
-                  final dropdownValue = selectedListId != null &&
+                  final activeListId = selectedListId != null &&
                           orderedFilteredLists
                               .any((l) => l.id == selectedListId)
                       ? selectedListId
                       : orderedFilteredLists.firstOrNull?.id;
 
-                  return Column(
-                    children: [
-                      if (hasSharedHousehold) ...[
-                        SegmentedPills(
-                          labels: const ['Shared', 'Private'],
-                          selectedIndex: effectiveScopeIndex,
-                          onSelect: (idx) {
-                            setState(() => _listScopeIndex = idx);
-                            final newScope = idx == 0
-                                ? ListScope.household
-                                : ListScope.private;
-                            final order = ref
-                                    .read(profileProvider)
-                                    .valueOrNull
-                                    ?.groceryListOrder ??
-                                GroceryListOrder.empty;
-                            final newScopeLists =
-                                applyGroceryListOrder(lists, newScope, order);
-                            final currentStillVisible = newScopeLists
-                                .any((l) => l.id == selectedListId);
-                            if (!currentStillVisible &&
-                                newScopeLists.isNotEmpty) {
-                              ref.read(selectedListIdProvider.notifier).state =
-                                  newScopeLists.first.id;
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: orderedFilteredLists.isEmpty
-                                ? Text(
-                                    'No lists yet',
-                                    style:
-                                        Theme.of(context).textTheme.bodyMedium,
-                                  )
-                                : InputDecorator(
-                                    decoration: const InputDecoration(
-                                      border: OutlineInputBorder(),
-                                      isDense: true,
-                                      contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 4,
-                                      ),
-                                    ),
-                                    child: DropdownButtonHideUnderline(
-                                      child: DropdownButton<String>(
-                                        value: dropdownValue,
-                                        isExpanded: true,
-                                        isDense: true,
-                                        items: orderedFilteredLists
-                                            .map(
-                                              (list) =>
-                                                  DropdownMenuItem<String>(
-                                                value: list.id,
-                                                child: Text(list.name),
-                                              ),
-                                            )
-                                            .toList(),
-                                        onChanged: (id) {
-                                          if (id != null) {
-                                            ref
-                                                .read(selectedListIdProvider
-                                                    .notifier)
-                                                .state = id;
-                                          }
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                          ),
-                          IconButton(
-                            tooltip: 'Reorder, rename, or delete lists',
-                            onPressed: orderedFilteredLists.isEmpty
-                                ? null
-                                : () => _openReorderListSheet(
-                                      orderedLists: orderedFilteredLists,
-                                      scope: scopeFilter,
-                                    ),
-                            icon: const Icon(Icons.sort_rounded),
-                          ),
-                          IconButton(
-                            tooltip: 'New list',
-                            onPressed: () => _openCreateListSheet(scopeFilter),
-                            icon: const Icon(Icons.add_circle_outline_rounded),
-                          ),
-                        ],
-                      ),
-                    ],
+                  return _ListsToolbar(
+                    hasSharedHousehold: hasSharedHousehold,
+                    effectiveScopeIndex: effectiveScopeIndex,
+                    onScopeSelected: (idx) {
+                      setState(() => _listScopeIndex = idx);
+                      final newScope = idx == 0
+                          ? ListScope.household
+                          : ListScope.private;
+                      final order = ref
+                              .read(profileProvider)
+                              .valueOrNull
+                              ?.groceryListOrder ??
+                          GroceryListOrder.empty;
+                      final newScopeLists =
+                          applyGroceryListOrder(lists, newScope, order);
+                      final currentStillVisible =
+                          newScopeLists.any((l) => l.id == selectedListId);
+                      if (!currentStillVisible && newScopeLists.isNotEmpty) {
+                        ref.read(selectedListIdProvider.notifier).state =
+                            newScopeLists.first.id;
+                      }
+                    },
+                    orderedFilteredLists: orderedFilteredLists,
+                    activeListId: activeListId,
+                    onListSelected: (id) {
+                      ref.read(selectedListIdProvider.notifier).state = id;
+                    },
+                    itemsAreaLoading: itemsAreaLoading,
+                    itemCount: items?.length ?? 0,
+                    onManageLists: () => _openReorderListSheet(
+                      orderedLists: orderedFilteredLists,
+                      scope: scopeFilter,
+                    ),
+                    onNewList: () => _openCreateListSheet(scopeFilter),
                   );
                 },
                 loading: () => const SizedBox.shrink(),
                 error: (_, __) => const SizedBox.shrink(),
               ),
-              const SizedBox(height: 4),
-              const SizedBox(height: 4),
+              const SizedBox(height: 12),
               if (_addSheetOpen)
                 SectionCard(
                   child: Padding(
@@ -1412,6 +1260,223 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
   }
 }
 
+class _ListsToolbar extends StatelessWidget {
+  const _ListsToolbar({
+    required this.hasSharedHousehold,
+    required this.effectiveScopeIndex,
+    required this.onScopeSelected,
+    required this.orderedFilteredLists,
+    required this.activeListId,
+    required this.onListSelected,
+    required this.itemsAreaLoading,
+    required this.itemCount,
+    required this.onManageLists,
+    required this.onNewList,
+  });
+
+  final bool hasSharedHousehold;
+  final int effectiveScopeIndex;
+  final ValueChanged<int> onScopeSelected;
+  final List<AppList> orderedFilteredLists;
+  final String? activeListId;
+  final ValueChanged<String> onListSelected;
+  final bool itemsAreaLoading;
+  final int itemCount;
+  final VoidCallback onManageLists;
+  final VoidCallback onNewList;
+
+  void _openListPicker(BuildContext context) {
+    if (orderedFilteredLists.isEmpty) {
+      return;
+    }
+    final scheme = Theme.of(context).colorScheme;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final maxH = MediaQuery.sizeOf(ctx).height * 0.55;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                child: Text(
+                  'Choose list',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxH),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: orderedFilteredLists.length,
+                  itemBuilder: (context, index) {
+                    final list = orderedFilteredLists[index];
+                    final selected = list.id == activeListId;
+                    return ListTile(
+                      title: Text(list.name),
+                      trailing: selected
+                          ? Icon(Icons.check_rounded, color: scheme.primary)
+                          : null,
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        onListSelected(list.id);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final displayName = orderedFilteredLists.isEmpty
+        ? ''
+        : (orderedFilteredLists.firstWhereOrNull((l) => l.id == activeListId) ??
+                orderedFilteredLists.first)
+            .name;
+
+    return Material(
+      color: scheme.surfaceContainerLow,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppRadius.md,
+        side: BorderSide(
+          color: scheme.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (hasSharedHousehold) ...[
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment<int>(
+                      value: 0,
+                      label: Text('Shared'),
+                    ),
+                    ButtonSegment<int>(
+                      value: 1,
+                      label: Text('Private'),
+                    ),
+                  ],
+                  selected: {effectiveScopeIndex},
+                  onSelectionChanged: (next) {
+                    if (next.isEmpty) {
+                      return;
+                    }
+                    onScopeSelected(next.first);
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (orderedFilteredLists.isEmpty)
+                        Text(
+                          'No lists yet',
+                          style: textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        )
+                      else
+                        InkWell(
+                          onTap: () => _openListPicker(context),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 4,
+                              horizontal: 2,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    displayName,
+                                    style: textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                      Text(
+                        itemsAreaLoading
+                            ? 'Loading items…'
+                            : '$itemCount ${itemCount == 1 ? 'item' : 'items'}',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'List actions',
+                  icon: Icon(
+                    Icons.more_vert_rounded,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  onSelected: (value) {
+                    if (value == 'manage') {
+                      onManageLists();
+                    } else if (value == 'new') {
+                      onNewList();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem<String>(
+                      value: 'manage',
+                      enabled: orderedFilteredLists.isNotEmpty,
+                      child: const Text('Manage lists'),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: 'new',
+                      child: Text('New list'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _GroceryItemCard extends StatelessWidget {
   const _GroceryItemCard({
     required this.item,
@@ -1444,12 +1509,51 @@ class _GroceryItemCard extends StatelessWidget {
       decorationColor: scheme.onSurface.withValues(alpha: 0.45),
     );
     return Material(
-      color: scheme.surfaceContainerHighest,
+      color: _groceryListItemCardColor(context),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => onRemove(item),
-        onLongPress: () => onUpdateQuantity(item),
+        onTap: () => unawaited(onToggleStatus(item)),
+        onLongPress: () {
+          showModalBottomSheet<void>(
+            context: context,
+            showDragHandle: true,
+            builder: (ctx) {
+              return SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.edit_outlined),
+                      title: const Text('Change quantity'),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(onUpdateQuantity(item));
+                      },
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.delete_outline_rounded,
+                        color: scheme.error,
+                      ),
+                      title: Text(
+                        'Remove from list',
+                        style: TextStyle(
+                          color: scheme.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(onRemove(item));
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
         child: LayoutBuilder(
           builder: (context, constraints) {
             final availableHeight = constraints.maxHeight - 20;
@@ -1564,33 +1668,6 @@ class _GroceryItemCard extends StatelessWidget {
                             ),
                           ],
                         ],
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 30,
-                        minHeight: 30,
-                      ),
-                      tooltip: item.isDone
-                          ? 'Mark as not purchased'
-                          : 'Mark as purchased',
-                      onPressed: () => unawaited(onToggleStatus(item)),
-                      icon: Icon(
-                        item.isDone
-                            ? Icons.check_circle_rounded
-                            : Icons.circle_outlined,
-                        size: 18,
-                        color: item.isDone
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant,
                       ),
                     ),
                   ),

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 
 /// Upper label for home outlook rows: prefer meal time from [mealLabel], else
 /// [plannerSlotDisplayLabel] uppercased.
@@ -54,13 +55,14 @@ class HomeOutlookDayCard extends StatelessWidget {
 
   static const BorderRadius cardRadius = BorderRadius.all(Radius.circular(16));
 
-  static const Color _lightTodayFill = Color(0xFFE8E8F5);
-  static const Color _lightOtherFill = Color(0xFFFFFFFF);
-  static const Color _lightMuted = Color(0xFF8F9BB3);
-  static const Color _lightNavy = Color(0xFF2E3A59);
-  static const Color _lightBody = Color(0xFF2E3A59);
-  static const Color _diningPillBg = Color(0xFFE8F5E9);
-  static const Color _diningPillFg = Color(0xFF2E5C3A);
+  /// Home brand: muted aqua for "today" vs off-white for other days.
+  static const Color _lightTodayFill = AppBrand.mutedAqua;
+  static const Color _lightOtherFill = AppBrand.offWhite;
+  static const Color _lightMuted = Color(0xFF6B7A78);
+  static const Color _lightNavy = AppBrand.black;
+  static const Color _lightBody = Color(0xFF1A2E2C);
+  static const Color _diningPillBg = Color(0xFFD6EDEA);
+  static const Color _diningPillFg = Color(0xFF124A40);
 
   String get _ribbonLabel {
     switch (outlookIndex) {
@@ -81,12 +83,12 @@ class HomeOutlookDayCard extends StatelessWidget {
 
     final fill = isDark
         ? (isToday
-            ? scheme.primaryContainer.withValues(alpha: 0.35)
+            ? AppBrand.tealVibrant.withValues(alpha: 0.28)
             : scheme.surface)
         : (isToday ? _lightTodayFill : _lightOtherFill);
     final borderColor = isDark
         ? scheme.outlineVariant.withValues(alpha: 0.5)
-        : const Color(0xFFE8EAEF);
+        : AppBrand.mutedAqua.withValues(alpha: 0.85);
     final ribbonColor = isDark ? scheme.onSurfaceVariant : _lightMuted;
     final titleColor = isDark ? scheme.onSurface : _lightNavy;
     final dayNumColor =

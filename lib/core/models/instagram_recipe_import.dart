@@ -155,12 +155,106 @@ double? _parseSingleAmountToken(String token) {
   return double.tryParse(numeric);
 }
 
+/// Max length for a caption line we treat as a recipe title (longer lines look like paragraphs).
+const int kInstagramInferredTitleMaxLength = 120;
+
+final RegExp _urlToken = RegExp(r'^https?://\S+$', caseSensitive: false);
+
+bool _isUrlOnlyLine(String line) {
+  final t = line.trim();
+  if (t.isEmpty) return true;
+  for (final tok in t.split(RegExp(r'\s+'))) {
+    if (!_urlToken.hasMatch(tok)) return false;
+  }
+  return true;
+}
+
+bool _isIngredientsSectionHeader(String line) {
+  return RegExp(r'^\s*ingredients?\s*:?\s*$', caseSensitive: false)
+      .hasMatch(line);
+}
+
+bool _isSectionHeaderLine(String line) {
+  return RegExp(
+    r'^\s*(ingredients?|instructions?|method|directions|steps|prep|cook\s*time|notes|tips)\s*:?\s*$',
+    caseSensitive: false,
+  ).hasMatch(line);
+}
+
+bool _isHashtagOnlyLine(String line) {
+  final t = line.trim();
+  if (t.isEmpty) return true;
+  for (final tok in t.split(RegExp(r'\s+'))) {
+    if (RegExp(r'^#\w').hasMatch(tok)) continue;
+    if (RegExp(r'[a-zA-Z]').hasMatch(tok)) return false;
+  }
+  return true;
+}
+
+/// Line starts like a quantity + common cooking unit (not a dish name like "1-Pot Pasta").
+final RegExp _ingredientLineLead = RegExp(
+  r'^\s*([\d\s.,/\-–—½¼¾⅓⅔⅛⅜⅝⅞]+)\s+'
+  r'(cups?|tbsp|tsp|oz|ounce|ounces|g|kg|grams?|ml|l|lb|lbs|tablespoons?|teaspoons?|pinch|cloves?|large|medium|small|stalks?|sticks?|slices?|packets?|cans?|bunch|bunches)\b',
+  caseSensitive: false,
+);
+
+bool _looksLikeIngredientLine(String line) {
+  return _ingredientLineLead.hasMatch(line);
+}
+
+String _normalizeInstagramTitle(String line) {
+  var s = line.replaceAll(RegExp(r'\s+'), ' ').trim();
+  s = s.replaceAll(RegExp(r'(\s+#\w+)+$'), '');
+  return s.trim();
+}
+
+/// Picks a title from shared Instagram text (URL + caption) when the caption has a clear headline.
+///
+/// Uses the **first** substantive line after skipping leading URL-only and hashtag-only lines.
+/// If that line is not a plausible title (section header, ingredient-like, too long), returns null
+/// so callers can fall back to Gemini's [title] in JSON.
+String? inferInstagramRecipeTitle(String sharedContent) {
+  final raw = sharedContent.trim();
+  if (raw.isEmpty) return null;
+  final lines = raw.split(RegExp(r'\r?\n')).map((e) => e.trim()).toList();
+  var i = 0;
+  while (i < lines.length) {
+    final lineTrim = lines[i];
+    if (lineTrim.isEmpty) {
+      i++;
+      continue;
+    }
+    if (_isUrlOnlyLine(lineTrim)) {
+      i++;
+      continue;
+    }
+    if (_isHashtagOnlyLine(lineTrim)) {
+      i++;
+      continue;
+    }
+    break;
+  }
+  if (i >= lines.length) return null;
+
+  final lineTrim = lines[i];
+  if (_isIngredientsSectionHeader(lineTrim)) return null;
+  if (lineTrim.length > kInstagramInferredTitleMaxLength) return null;
+  if (_isSectionHeaderLine(lineTrim)) return null;
+  if (_looksLikeIngredientLine(lineTrim)) return null;
+
+  final normalized = _normalizeInstagramTitle(lineTrim);
+  if (normalized.isEmpty) return null;
+  if (normalized.length > kInstagramInferredTitleMaxLength) return null;
+  return normalized;
+}
+
 /// Builds a [Recipe] from Gemini JSON for Instagram import (see prompt in [GeminiService]).
 Recipe recipeFromInstagramGeminiMap(
   Map<String, dynamic> json, {
   String? id,
   String? imageUrl,
   String? sourceUrl,
+  String? sharedContent,
 }) {
   final tempId =
       id ?? 'import-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(999999)}';
@@ -179,9 +273,17 @@ Recipe recipeFromInstagramGeminiMap(
 
   final servings = (json['servings'] as num?)?.toInt().clamp(1, 99) ?? 2;
 
+  final geminiTitle = json['title']?.toString().trim();
+  final inferredTitle =
+      sharedContent != null ? inferInstagramRecipeTitle(sharedContent) : null;
+  final title =
+      (inferredTitle != null && inferredTitle.isNotEmpty)
+          ? inferredTitle
+          : (geminiTitle ?? 'Imported recipe');
+
   return Recipe(
     id: tempId,
-    title: json['title']?.toString().trim() ?? 'Imported recipe',
+    title: title,
     description: json['description']?.toString().trim(),
     servings: servings,
     prepTime: (json['prep_time'] as num?)?.toInt(),

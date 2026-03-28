@@ -555,8 +555,14 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
         title: const Text('Cooking'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
-          tooltip: 'Back to Recipes',
-          onPressed: () => context.go('/recipes'),
+          tooltip: 'Back',
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/recipes');
+            }
+          },
         ),
         actions: [
           IconButton(

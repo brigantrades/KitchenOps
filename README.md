@@ -49,3 +49,13 @@ Note: bulk inserts (e.g. many planner ingredients) enqueue **one notification pe
 - The script imports up to 10 dinner recipes for each category:
   - `chicken`, `beef`, `vegetarian`, `pasta`, `pork`
 - It waits 1000ms between category requests and stops if Spoonacular quota is hit.
+
+## Discover seeding (curated web dinners)
+- Imports public recipes from curated source pages (Downshiftology, Milk Street, Half Baked Harvest, Delish, Food52, Love and Lemons) with `meal_type` **`sauce`** (Discover “Dinner” tab).
+- Dry run (writes `tmp/dinner_curated_review.csv`, no database writes):  
+  `dart run bin/import_discover_dinner_curated.dart`
+- After reviewing the CSV, import:  
+  `dart run bin/import_discover_dinner_curated.dart --execute`
+- Environment variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SEED_USER_ID`
+- Optional: `--per-category=25` (default 25 recipes per bucket). `--limit=25` is also supported as an alias.
+- The home “Quick & Easy Dinners” strip uses a fixed `api_id` allowlist in code; new imports appear in Discover search and cuisine tiles, not necessarily that strip unless you add their `api_id`s to that list.

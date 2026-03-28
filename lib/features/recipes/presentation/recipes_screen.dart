@@ -33,6 +33,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 /// When true, Step 5 shows per-ingredient USDA/Gemini breakdown (dev / diagnostics).
 const bool _kShowNutritionIngredientBreakdown = false;
 
+/// Create / Edit Recipe wizard header gradient & saved ingredient chips (step 3).
+const Color _kCreateRecipeBlueLight = Color(0xFFD7EEFF);
+const Color _kCreateRecipeBlueMid = Color(0xFFB4DEFF);
+const Color _kCreateRecipeBlueDeep = Color(0xFF8BCBFF);
+
 class RecipesScreen extends ConsumerStatefulWidget {
   const RecipesScreen({super.key});
 
@@ -1655,7 +1660,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     return '$name · $amt $unitStr';
   }
 
-  /// Pill-shaped rose chip for saved ingredients on the wizard step (matches prior condensed style).
+  /// Pill chip for saved ingredients; fill/border match Create Recipe header blues.
   Widget _buildIngredientSavedChip(BuildContext context, int i) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
@@ -1669,10 +1674,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           onTap: () => _editIngredientAt(i),
           child: Ink(
             decoration: BoxDecoration(
-              color: const Color(0xFFFFE8EE),
+              color: _kCreateRecipeBlueLight,
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
-                color: const Color(0xFFE8A8B8),
+                color: _kCreateRecipeBlueMid,
               ),
             ),
             child: Padding(
@@ -2188,11 +2193,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   }
 
   InputDecoration _directionInstructionDecoration(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final primary = scheme.primary;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(_kDirectionFieldBorderRadius),
-      borderSide: BorderSide(color: primary, width: 1.2),
+      borderSide: const BorderSide(color: _kCreateRecipeBlueMid, width: 1.2),
     );
     return InputDecoration(
       filled: true,
@@ -2218,48 +2221,54 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.xs),
       child: Material(
-        color: scheme.surfaceContainerHigh.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(999),
+        color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
           onTap: () => setState(() => _selectedDirectionIndex = idx),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.format_list_numbered_rounded,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                Expanded(
-                  child: Text(
-                    'Step ${idx + 1}: ${_directionSummary(draft)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: _kCreateRecipeBlueLight,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: _kCreateRecipeBlueMid),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.format_list_numbered_rounded,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      'Step ${idx + 1}: ${_directionSummary(draft)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
-                ),
-                Icon(
-                  Icons.edit_outlined,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
-                IconButton(
-                  onPressed: () => _removeDirectionAt(idx),
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                  tooltip: 'Remove',
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
+                  Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
                   ),
-                ),
-              ],
+                  IconButton(
+                    onPressed: () => _removeDirectionAt(idx),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    tooltip: 'Remove',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -2282,10 +2291,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         AppSpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        color: _kCreateRecipeBlueLight,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: scheme.primary.withValues(alpha: 0.22),
+          color: _kCreateRecipeBlueMid,
         ),
       ),
       child: Column(
@@ -2298,13 +2307,14 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: scheme.primaryContainer.withValues(alpha: 0.65),
+                  color: _kCreateRecipeBlueMid,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   'Step ${idx + 1}',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
                         fontWeight: FontWeight.w700,
+                        color: scheme.onSurface,
                       ),
                 ),
               ),
@@ -3343,9 +3353,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                         borderRadius: BorderRadius.circular(20),
                         gradient: const LinearGradient(
                           colors: [
-                            Color(0xFFD7EEFF),
-                            Color(0xFFB4DEFF),
-                            Color(0xFF8BCBFF)
+                            _kCreateRecipeBlueLight,
+                            _kCreateRecipeBlueMid,
+                            _kCreateRecipeBlueDeep,
                           ],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,

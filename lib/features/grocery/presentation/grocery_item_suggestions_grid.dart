@@ -7,18 +7,25 @@ import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 const double kGroceryCardGridSpacing = 8;
 const double kGroceryCardAspectRatio = 1.15;
 
-/// Hides non-create suggestion chips whose label equals the typed query; always
-/// keeps the create-new row (same label as query). Used by [GroceryItemSuggestionsGrid]
-/// and tests.
+/// Hides a catalog chip when it only duplicates a **create-new** row for the
+/// same normalized text (e.g. typed "milk" + create chip + catalog "Milk").
+/// If there is no create row, the matching catalog chip stays visible so typing
+/// "Eggs" still shows the Eggs suggestion.
 List<({String label, bool isCreate})> filterGrocerySuggestionOptionsForDisplay({
   required List<({String label, bool isCreate})> suggestionOptions,
   required String normalizedTypedQuery,
 }) {
+  final hasCreateMatchingQuery = suggestionOptions.any(
+    (o) =>
+        o.isCreate &&
+        normalizeGroceryItemName(o.label) == normalizedTypedQuery,
+  );
   return suggestionOptions
       .where(
         (o) =>
             o.isCreate ||
-            normalizeGroceryItemName(o.label) != normalizedTypedQuery,
+            normalizeGroceryItemName(o.label) != normalizedTypedQuery ||
+            !hasCreateMatchingQuery,
       )
       .toList();
 }

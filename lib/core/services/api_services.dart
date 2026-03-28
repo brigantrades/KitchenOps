@@ -252,6 +252,10 @@ Return ONLY valid JSON with these keys:
   "meal_type": "dinner" or "lunch" etc (best guess),
   "cuisine_tags": array of strings
 }
+Title guidance:
+- The app may use the first line of the caption as the recipe name when it is clear.
+- For "title", provide a short fallback dish name only when the caption does not clearly name the recipe (otherwise a simple descriptive name is fine).
+
 Here is the shared content: $trimmed
 
 Serving size guidance:

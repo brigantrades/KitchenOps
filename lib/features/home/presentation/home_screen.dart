@@ -16,27 +16,39 @@ import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final planner = ref.watch(plannerSlotsProvider);
     return DiscoverShellScaffold(
       title: 'Home',
       onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(0, 2, 0, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _HomeHeader(plannerSlots: planner),
-            const SizedBox(height: 16),
-            const _HomeThreeDayOutlook(),
-            const SizedBox(height: 16),
-            const _HomeGrocerySnippet(),
-          ],
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppBrand.offWhite,
+            borderRadius: AppRadius.md,
+            border: Border.all(
+              color: AppBrand.mutedAqua.withValues(alpha: 0.65),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const _HomeHeader(),
+                const SizedBox(height: 14),
+                const _HomeThreeDayOutlook(),
+                const SizedBox(height: 14),
+                const _HomeGrocerySnippet(),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -53,20 +65,24 @@ class _HomeThreeDayOutlook extends ConsumerWidget {
     final outlook = ref.watch(plannerThreeDayOutlookSlotsProvider);
     final recipesAsync = ref.watch(recipesProvider);
     final dates = plannerOutlookDates(DateTime.now());
-
     return SectionCard(
       title: '3-Day Outlook',
-      subtitle: 'Your curated culinary schedule',
-      titleTrailing: TextButton(
+      subtitle: 'Next up in your meal flow',
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      titleTrailing: FilledButton(
         onPressed: () => context.go('/planner'),
-        style: TextButton.styleFrom(
-          foregroundColor: Theme.of(context).colorScheme.primary,
-          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.6,
+        style: FilledButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          backgroundColor: AppBrand.deepTeal,
+          foregroundColor: AppBrand.offWhite,
+          textStyle: Theme.of(context).textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppBrand.offWhite,
               ),
+          shape: const StadiumBorder(),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         ),
-        child: const Text('VIEW FULL PLAN'),
+        child: const Text('View planner'),
       ),
       child: outlook.when(
         skipLoadingOnReload: true,
@@ -317,8 +333,6 @@ Future<void> _promptClearPurchasedFromHome(
 class _HomeGrocerySnippet extends ConsumerWidget {
   const _HomeGrocerySnippet();
 
-  static const Color _lightCream = Color(0xFFF5F0E8);
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
@@ -327,9 +341,14 @@ class _HomeGrocerySnippet extends ConsumerWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? scheme.surfaceContainerHigh : _lightCream,
+        color: isDark ? scheme.surfaceContainerHigh : AppBrand.offWhite,
         borderRadius: AppRadius.md,
         boxShadow: AppShadows.soft,
+        border: Border.all(
+          color: isDark
+              ? scheme.outlineVariant.withValues(alpha: 0.35)
+              : AppBrand.mutedAqua.withValues(alpha: 0.85),
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -339,6 +358,22 @@ class _HomeGrocerySnippet extends ConsumerWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? scheme.surfaceContainerHighest
+                        : AppBrand.paleMint,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.shopping_basket_rounded,
+                    size: 18,
+                    color: isDark ? scheme.onSurface : AppBrand.deepTeal,
+                  ),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'Grocery Snippet',
@@ -347,17 +382,50 @@ class _HomeGrocerySnippet extends ConsumerWidget {
                         ),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Open grocery list',
+                TextButton.icon(
                   onPressed: () => context.go('/grocery'),
-                  icon: Icon(
-                    Icons.shopping_basket_rounded,
-                    color: scheme.onSurfaceVariant,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor:
+                        isDark ? scheme.primary : AppBrand.deepTeal,
+                    textStyle: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
+                  icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                  label: const Text('Open list'),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? scheme.surfaceContainerHighest.withValues(alpha: 0.55)
+                    : AppBrand.paleMint,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Quick checklist',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.checklist_rounded,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
             async.when(
               skipLoadingOnReload: true,
               loading: () => const Padding(
@@ -383,7 +451,7 @@ class _HomeGrocerySnippet extends ConsumerWidget {
                         ),
                         const SizedBox(height: 12),
                         Align(
-                          child: FilledButton.tonal(
+                          child: FilledButton(
                             onPressed: () => context.go('/grocery'),
                             child: const Text('ADD ITEMS'),
                           ),
@@ -409,16 +477,36 @@ class _HomeGrocerySnippet extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (purchasedCount > 0) ...[
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _HomeCountPill(
+                            label: '${open.length} to buy',
+                            icon: Icons.shopping_cart_outlined,
+                          ),
+                          _HomeCountPill(
+                            label: '$purchasedCount purchased',
+                            icon: Icons.check_circle_outline_rounded,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
                       Align(
-                        alignment: Alignment.centerRight,
+                        alignment: Alignment.centerLeft,
                         child: TextButton.icon(
                           onPressed: () =>
                               _promptClearPurchasedFromHome(context, ref),
-                          icon: const Icon(Icons.done_all_outlined, size: 20),
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          icon: const Icon(Icons.done_all_outlined, size: 18),
                           label: Text('Clear $purchasedCount purchased'),
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 2),
                     ],
                     if (openPreview.isNotEmpty) ...[
                       if (purchasedCount > 0)
@@ -582,7 +670,7 @@ class _HomeGrocerySnippet extends ConsumerWidget {
                     ],
                     const SizedBox(height: 8),
                     Center(
-                      child: FilledButton.tonal(
+                      child: FilledButton(
                         onPressed: () => context.go('/grocery'),
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
@@ -612,13 +700,11 @@ class _HomeGrocerySnippet extends ConsumerWidget {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.plannerSlots});
-
-  final AsyncValue<List<MealPlanSlot>> plannerSlots;
+  const _HomeHeader();
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final now = DateTime.now();
     final weekday = switch (now.weekday) {
       DateTime.monday => 'Monday',
@@ -630,31 +716,14 @@ class _HomeHeader extends StatelessWidget {
       DateTime.sunday => 'Sunday',
       _ => 'Today',
     };
-    final statusLine = plannerSlots.when(
-      data: (slots) {
-        final count = _filledTodaySlots(slots).length;
-        if (count == 0) {
-          return 'No meals planned yet. Start one for tonight.';
-        }
-        if (count == 1) return '1 meal planned for today.';
-        return '$count meals planned for today.';
-      },
-      loading: () => 'Checking today’s plan…',
-      error: (_, __) => 'Could not load today’s meals.',
-    );
-
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         borderRadius: AppRadius.md,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            scheme.primaryContainer,
-            scheme.tertiaryContainer,
-          ],
-        ),
+        gradient: isDark
+            ? AppBrand.headerGradientDark
+            : AppBrand.headerGradient,
+        boxShadow: AppShadows.soft,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -663,32 +732,17 @@ class _HomeHeader extends StatelessWidget {
             children: [
               Icon(
                 Icons.wb_sunny_outlined,
-                color: scheme.onPrimaryContainer,
+                color: AppBrand.offWhite.withValues(alpha: 0.95),
               ),
               const SizedBox(width: AppSpacing.xs),
               Text(
-                '$weekday focus',
+                '$weekday Focus',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: scheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w700,
+                      color: AppBrand.offWhite,
+                      fontWeight: FontWeight.w800,
                     ),
               ),
             ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            'Home',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: scheme.onPrimaryContainer,
-                  fontWeight: FontWeight.w900,
-                ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            statusLine,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: scheme.onPrimaryContainer.withValues(alpha: 0.9),
-                ),
           ),
         ],
       ),
@@ -696,17 +750,43 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
-/// True when [slot] falls on today's calendar date (matches planner mapping).
-bool _isSlotOnToday(MealPlanSlot slot) {
-  final today = plannerDateOnly(DateTime.now());
-  return plannerDateOnly(calendarDateForSlot(slot)) == today;
+class _HomeCountPill extends StatelessWidget {
+  const _HomeCountPill({
+    required this.label,
+    required this.icon,
+  });
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDark
+            ? scheme.surfaceContainerHighest.withValues(alpha: 0.65)
+            : AppBrand.paleMint,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
 }
-
-Iterable<MealPlanSlot> _todaySlots(Iterable<MealPlanSlot> slots) =>
-    slots.where(_isSlotOnToday);
-
-Iterable<MealPlanSlot> _filledTodaySlots(Iterable<MealPlanSlot> slots) =>
-    _todaySlots(slots).where((s) => s.hasPlannedContent);
 
 double _groceryParseQuantity(String? raw, {double fallback = 1}) {
   final normalized = raw?.trim().replaceAll(',', '.');

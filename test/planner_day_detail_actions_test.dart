@@ -82,7 +82,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No recipe linked. Use edit to choose one.'), findsOneWidget);
+    expect(
+      find.text('No recipe linked. Tap this row or use the menu (⋮).'),
+      findsOneWidget,
+    );
     expect(find.byTooltip('Slot options'), findsOneWidget);
     await tester.tap(find.byTooltip('Slot options'));
     await tester.pumpAndSettle();

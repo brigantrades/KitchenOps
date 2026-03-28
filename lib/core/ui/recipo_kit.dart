@@ -25,18 +25,19 @@ class EditorialHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
+    final normalizedImageUrl = _normalizeImageUrl(imageUrl);
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
         borderRadius: AppRadius.hero,
         boxShadow: AppShadows.floating,
-        image: imageUrl == null
+        image: normalizedImageUrl == null
             ? null
             : DecorationImage(
-                image: NetworkImage(imageUrl!),
+                image: NetworkImage(normalizedImageUrl),
                 fit: BoxFit.cover,
               ),
-        gradient: imageUrl == null
+        gradient: normalizedImageUrl == null
             ? LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -111,6 +112,9 @@ class SegmentedPills extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors =
         Theme.of(context).extension<AppThemeColors>() ?? AppThemeColors.light;
+    final scheme = Theme.of(context).colorScheme;
+    final selectedBg = scheme.secondary;
+    final selectedFg = scheme.onSecondary;
     return Container(
       padding: const EdgeInsets.all(AppSpacing.xs),
       decoration: BoxDecoration(
@@ -128,16 +132,14 @@ class SegmentedPills extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   borderRadius: AppRadius.sm,
-                  color: i == selectedIndex
-                      ? Theme.of(context).colorScheme.secondary
-                      : Colors.transparent,
+                  color: i == selectedIndex ? selectedBg : Colors.transparent,
                 ),
                 child: Text(
                   labels[i],
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
                         color: i == selectedIndex
-                            ? Theme.of(context).colorScheme.onSecondary
+                            ? selectedFg
                             : Theme.of(context).colorScheme.onSurfaceVariant,
                         fontWeight: FontWeight.w700,
                       ),
@@ -405,6 +407,7 @@ class DiscoverCuisineCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final normalizedGraphicUrl = _normalizeImageUrl(graphicUrl);
     return InkWell(
       onTap: onTap,
       borderRadius: AppRadius.sm,
@@ -421,12 +424,12 @@ class DiscoverCuisineCard extends StatelessWidget {
             SizedBox(
               height: 56,
               width: 56,
-              child: graphicUrl == null
+              child: normalizedGraphicUrl == null
                   ? Icon(icon, color: const Color(0xFF2D3436), size: 36)
                   : ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: Image.network(
-                        graphicUrl!,
+                        normalizedGraphicUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => Icon(
                           icon,
@@ -436,24 +439,33 @@ class DiscoverCuisineCard extends StatelessWidget {
                       ),
                     ),
             ),
-            const Spacer(),
-            Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF2D3436),
+            const SizedBox(height: 8),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF2D3436),
+                        ),
                   ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: const Color(0xFF2D3436).withValues(alpha: 0.8),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: const Color(0xFF2D3436).withValues(alpha: 0.8),
+                        ),
                   ),
+                ],
+              ),
             ),
           ],
         ),
@@ -485,11 +497,12 @@ class FoodMedia extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (imageUrl == null || imageUrl!.trim().isEmpty) {
+    final normalizedImageUrl = _normalizeImageUrl(imageUrl);
+    if (normalizedImageUrl == null || normalizedImageUrl.trim().isEmpty) {
       return _FoodPlaceholder(height: height, width: width);
     }
     return Image.network(
-      imageUrl!,
+      normalizedImageUrl,
       fit: fit,
       alignment: alignment,
       width: width ?? double.infinity,
@@ -499,6 +512,18 @@ class FoodMedia extends StatelessWidget {
           _FoodPlaceholder(height: height, width: width),
     );
   }
+}
+
+String? _normalizeImageUrl(String? rawUrl) {
+  if (rawUrl == null) return null;
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return null;
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return trimmed;
+  if (uri.scheme.toLowerCase() == 'http') {
+    return uri.replace(scheme: 'https').toString();
+  }
+  return trimmed;
 }
 
 class _FoodPlaceholder extends StatelessWidget {

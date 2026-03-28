@@ -34,6 +34,45 @@ List<AppList> applyGroceryListOrder(
   return filtered;
 }
 
+/// Household lists can accumulate duplicate rows (same name/kind) from migrations
+/// and default-list creation. The UI should show one row per logical list.
+List<AppList> dedupeHouseholdListsByHouseholdKindAndName(List<AppList> lists) {
+  final byId = <String, AppList>{};
+  for (final l in lists) {
+    byId[l.id] = l;
+  }
+  final unique = byId.values.toList();
+
+  final groups = <String, List<AppList>>{};
+  for (final l in unique) {
+    final key = l.scope == ListScope.household && l.householdId != null
+        ? '${l.householdId}|${l.kind}|${normalizeGroceryItemName(l.name)}'
+        : l.id;
+    groups.putIfAbsent(key, () => []).add(l);
+  }
+
+  final kept = <AppList>[];
+  for (final group in groups.values) {
+    if (group.length == 1) {
+      kept.add(group.single);
+      continue;
+    }
+    group.sort((a, b) {
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return da.compareTo(db);
+    });
+    kept.add(group.first);
+  }
+
+  kept.sort((a, b) {
+    final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return da.compareTo(db);
+  });
+  return kept;
+}
+
 /// Resolves which grocery list to show when [selectedListId] is null or stale.
 /// Matches the default used on the Lists screen (Shared tab first when
 /// [hasSharedHousehold] is true, else private lists).
@@ -951,10 +990,11 @@ class GroceryRepository {
 
   Future<List<AppList>> listLists(String userId) async {
     final rows = await _client.from('lists').select().order('created_at');
-    return (rows as List)
+    final lists = (rows as List)
         .whereType<Map<String, dynamic>>()
         .map(AppList.fromJson)
         .toList();
+    return dedupeHouseholdListsByHouseholdKindAndName(lists);
   }
 
   Future<AppList> createList({

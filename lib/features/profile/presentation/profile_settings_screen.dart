@@ -55,7 +55,6 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
     final profileAsync = ref.watch(profileProvider);
     final pendingInvitesAsync = ref.watch(pendingHouseholdInvitesProvider);
     final householdAsync = ref.watch(activeHouseholdProvider);
-    final plannerLayout = ref.watch(plannerLayoutModeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -342,44 +341,6 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                 subtitle:
                     'Units for new ingredients and for viewing amounts. Saved recipes keep their values; display converts. US customary volumes (cup, fl oz).',
                 child: const MeasurementSystemToggle(),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              SectionCard(
-                title: 'Planner layout',
-                subtitle:
-                    'Saved on this device. You can also switch from the layout menu on the Planner tab.',
-                child: SegmentedButton<PlannerLayoutMode>(
-                  segments: const [
-                    ButtonSegment<PlannerLayoutMode>(
-                      value: PlannerLayoutMode.list,
-                      label: Text('List'),
-                      icon: Icon(Icons.view_list_rounded),
-                    ),
-                    ButtonSegment<PlannerLayoutMode>(
-                      value: PlannerLayoutMode.calendar,
-                      label: Text('Grid'),
-                      icon: Icon(Icons.calendar_view_month_rounded),
-                    ),
-                  ],
-                  selected: {plannerLayout},
-                  onSelectionChanged: (next) {
-                    if (next.isEmpty) return;
-                    ref
-                        .read(plannerLayoutModeProvider.notifier)
-                        .setMode(next.first);
-                  },
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              SectionCard(
-                title: 'Planner window',
-                subtitle:
-                    'The visible week is set for your whole household. Open Household to change it (owner only), or use the tune icon on the Planner tab.',
-                child: OutlinedButton.icon(
-                  onPressed: () => context.push('/household'),
-                  icon: const Icon(Icons.home_outlined),
-                  label: const Text('Open Household'),
-                ),
               ),
               const SizedBox(height: AppSpacing.sm),
               SectionCard(
