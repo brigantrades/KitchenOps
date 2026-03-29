@@ -117,6 +117,8 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
         await repo.copyPersonalRecipeToHousehold(
           userId: user.id,
           recipeId: personalId,
+          householdFavorite: personalDraft.isFavorite,
+          householdToTry: personalDraft.isToTry,
         );
       } else {
         await repo.create(
@@ -801,15 +803,26 @@ class _RecipeCollectionsSheetState
     extends ConsumerState<_RecipeCollectionsSheet> {
   bool _sharing = false;
   bool _removingHouseholdCopy = false;
+  String? _appliedHouseholdShareDefaultsForRecipeId;
+  bool _householdFavoriteOnShare = false;
+  bool _householdToTryOnShare = false;
 
   Future<void> _shareToHousehold(Recipe recipe) async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
+    final favorite = _appliedHouseholdShareDefaultsForRecipeId == recipe.id
+        ? _householdFavoriteOnShare
+        : recipe.isFavorite;
+    final toTry = _appliedHouseholdShareDefaultsForRecipeId == recipe.id
+        ? _householdToTryOnShare
+        : recipe.isToTry;
     setState(() => _sharing = true);
     try {
       await ref.read(recipesRepositoryProvider).copyPersonalRecipeToHousehold(
             userId: user.id,
             recipeId: recipe.id,
+            householdFavorite: favorite,
+            householdToTry: toTry,
           );
       ref.invalidate(recipesProvider);
       if (!mounted) return;
@@ -883,6 +896,21 @@ class _RecipeCollectionsSheetState
               currentUserId: user.id,
             );
 
+        if (canSharePersonal && !hasLikelyHouseholdCopy) {
+          if (_appliedHouseholdShareDefaultsForRecipeId != recipe.id) {
+            final r = recipe;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              if (_appliedHouseholdShareDefaultsForRecipeId == r.id) return;
+              setState(() {
+                _appliedHouseholdShareDefaultsForRecipeId = r.id;
+                _householdFavoriteOnShare = r.isFavorite;
+                _householdToTryOnShare = r.isToTry;
+              });
+            });
+          }
+        }
+
         return SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(8, 0, 8, 16 + bottom),
           child: Column(
@@ -943,8 +971,43 @@ class _RecipeCollectionsSheetState
                         ? 'Add a copy everyone in your household can open and cook from.'
                         : 'Create or join a household in Settings to share recipes.',
                   ),
-                  trailing: canSharePersonal
-                      ? (_sharing
+                ),
+                if (canSharePersonal && !hasLikelyHouseholdCopy) ...[
+                  SwitchListTile(
+                    secondary:
+                        Icon(Icons.favorite_outline, color: scheme.outline),
+                    title: const Text('Favorite on Household Recipes'),
+                    subtitle: const Text(
+                      'Applies to the shared copy. My Favorites above is only for My Recipes.',
+                    ),
+                    value: _appliedHouseholdShareDefaultsForRecipeId == recipe.id
+                        ? _householdFavoriteOnShare
+                        : recipe.isFavorite,
+                    onChanged: (v) => setState(() {
+                      _appliedHouseholdShareDefaultsForRecipeId = recipe.id;
+                      _householdFavoriteOnShare = v;
+                    }),
+                  ),
+                  SwitchListTile(
+                    secondary:
+                        Icon(Icons.bookmark_outline, color: scheme.outline),
+                    title: const Text('To Try on Household Recipes'),
+                    subtitle: const Text(
+                      'Applies to the shared copy. To Try below is only for My Recipes.',
+                    ),
+                    value: _appliedHouseholdShareDefaultsForRecipeId == recipe.id
+                        ? _householdToTryOnShare
+                        : recipe.isToTry,
+                    onChanged: (v) => setState(() {
+                      _appliedHouseholdShareDefaultsForRecipeId = recipe.id;
+                      _householdToTryOnShare = v;
+                    }),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _sharing
                           ? const SizedBox(
                               width: 28,
                               height: 28,
@@ -953,9 +1016,10 @@ class _RecipeCollectionsSheetState
                           : FilledButton.tonal(
                               onPressed: () => _shareToHousehold(recipe),
                               child: const Text('Share'),
-                            ))
-                      : null,
-                ),
+                            ),
+                    ),
+                  ),
+                ],
                 if (canSharePersonal && hasLikelyHouseholdCopy)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

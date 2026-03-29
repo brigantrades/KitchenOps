@@ -227,6 +227,8 @@ class RecipesRepository {
   Future<void> copyPersonalRecipeToHousehold({
     required String userId,
     required String recipeId,
+    bool? householdFavorite,
+    bool? householdToTry,
   }) async {
     final householdId = await _householdForUser(userId);
     if (householdId == null || householdId.isEmpty) {
@@ -267,12 +269,17 @@ class RecipesRepository {
       ..remove('api_id')
       ..remove('copied_from_personal_recipe_id');
 
+    final sourceFavorite = source['is_favorite'] == true;
+    final sourceToTry = source['is_to_try'] == true;
+
     await _client.from('recipes').insert({
       ...payload,
       'user_id': userId,
       'household_id': householdId,
       'visibility': RecipeVisibility.household.name,
       'copied_from_personal_recipe_id': recipeId,
+      'is_favorite': householdFavorite ?? sourceFavorite,
+      'is_to_try': householdToTry ?? sourceToTry,
     });
   }
 

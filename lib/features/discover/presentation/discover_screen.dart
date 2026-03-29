@@ -687,6 +687,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     var saveToFavorites = false;
     var saveToTry = false;
     var saveToHousehold = false;
+    var householdFavorite = false;
+    var householdToTry = false;
 
     final shouldSave = await showModalBottomSheet<bool>(
       context: context,
@@ -729,9 +731,44 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   title: const Text('Household'),
                   value: saveToHousehold,
                   onChanged: (value) {
-                    setModalState(() => saveToHousehold = value);
+                    setModalState(() {
+                      saveToHousehold = value;
+                      if (value) {
+                        householdFavorite = saveToFavorites;
+                        householdToTry = saveToTry;
+                      }
+                    });
                   },
                 ),
+                if (saveToHousehold) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, top: 4),
+                    child: Text(
+                      'Household copy',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.favorite_border_rounded),
+                    title: const Text('Favorite on Household Recipes'),
+                    value: householdFavorite,
+                    onChanged: (value) {
+                      setModalState(() => householdFavorite = value);
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.bookmark_border_rounded),
+                    title: const Text('To Try on Household Recipes'),
+                    value: householdToTry,
+                    onChanged: (value) {
+                      setModalState(() => householdToTry = value);
+                    },
+                  ),
+                ],
                 const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
@@ -752,6 +789,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       saveToFavorites: saveToFavorites,
       saveToTry: saveToTry,
       saveToHousehold: saveToHousehold,
+      householdFavorite: householdFavorite,
+      householdToTry: householdToTry,
     );
   }
 
@@ -760,6 +799,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     required bool saveToFavorites,
     required bool saveToTry,
     required bool saveToHousehold,
+    bool householdFavorite = false,
+    bool householdToTry = false,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     final user = ref.read(currentUserProvider);
@@ -788,6 +829,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
         await ref.read(recipesRepositoryProvider).copyPersonalRecipeToHousehold(
               userId: user.id,
               recipeId: personalId,
+              householdFavorite: householdFavorite,
+              householdToTry: householdToTry,
             );
       }
 
