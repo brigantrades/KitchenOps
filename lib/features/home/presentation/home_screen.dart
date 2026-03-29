@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,12 +8,14 @@ import 'package:intl/intl.dart';
 import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
+import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/home/presentation/home_outlook_day_card.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
+import 'package:plateplan/features/planner/presentation/planner_screen.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
 import 'package:plateplan/core/models/app_models.dart';
@@ -106,6 +110,13 @@ class _HomeThreeDayOutlook extends ConsumerWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
             data: (recipes) {
+              final members =
+                  ref.watch(householdMembersProvider).valueOrNull ?? const [];
+              final activeMembers = members
+                  .where((m) => m.status == HouseholdMemberStatus.active)
+                  .toList();
+              final showMemberAssignment =
+                  ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -136,6 +147,29 @@ class _HomeThreeDayOutlook extends ConsumerWidget {
                           date: dates[i],
                           daySlots: daySlots,
                           recipes: recipes,
+                        );
+                      },
+                      onPlanEmptySlot: (slot) {
+                        final user = ref.read(currentUserProvider);
+                        if (user == null) return;
+                        final daySlots = slots
+                            .where((s) =>
+                                plannerDateOnly(calendarDateForSlot(s)) ==
+                                plannerDateOnly(dates[i]))
+                            .sorted(
+                                (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                            .toList();
+                        unawaited(
+                          openSlotMealPlanEditorFromHome(
+                            context,
+                            ref,
+                            slot: slot,
+                            daySlots: daySlots,
+                            recipes: recipes,
+                            activeMembers: activeMembers,
+                            currentUserId: user.id,
+                            showMemberAssignment: showMemberAssignment,
+                          ),
                         );
                       },
                     ),

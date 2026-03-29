@@ -445,6 +445,46 @@ typedef PlannerEditSlotGroceryFn = Future<List<_GroceryEditDraft>?> Function(
   required List<GroceryItem> groceryItems,
 });
 
+Future<void> _persistSlotPlanDraft(
+  BuildContext context,
+  WidgetRef ref, {
+  required MealPlanSlot slot,
+  required DateTime storageWeek,
+  required int storageDow,
+  required _SlotPlanDraft draft,
+  required VoidCallback onInvalidatePlanner,
+}) async {
+  final user = ref.read(currentUserProvider);
+  if (user == null) return;
+  try {
+    if (draft.clearAll) {
+      await ref.read(plannerRepositoryProvider).unassignSlot(slotId: slot.id);
+      onInvalidatePlanner();
+      return;
+    }
+    await ref.read(plannerRepositoryProvider).assignSlot(
+          userId: user.id,
+          weekStart: storageWeek,
+          dayOfWeek: storageDow,
+          mealLabel: slot.mealLabel,
+          slotOrder: slot.slotOrder,
+          slotId: slot.id,
+          recipeId: draft.mealRecipeId,
+          mealText: draft.mealText,
+          sideItems: draft.sideItems,
+          sauceRecipeId: draft.sauceRecipeId,
+          sauceText: draft.sauceText,
+          assignedUserIds: draft.assignedUserIds,
+        );
+    onInvalidatePlanner();
+  } on PostgrestException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not assign recipe: ${error.message}')),
+    );
+  }
+}
+
 /// Shared slot row for list layout and calendar day sheet.
 Widget buildPlannerDaySlotCard({
   required BuildContext context,
@@ -532,35 +572,16 @@ Widget buildPlannerDaySlotCard({
       slotDisplayLabel: plannerSlotDisplayLabel(displaySlots, slot),
     );
     if (draft == null) return;
-    final user = ref.read(currentUserProvider);
-    if (user == null) return;
-    try {
-      if (draft.clearAll) {
-        await ref.read(plannerRepositoryProvider).unassignSlot(slotId: slot.id);
-        onInvalidatePlanner();
-        return;
-      }
-      await ref.read(plannerRepositoryProvider).assignSlot(
-            userId: user.id,
-            weekStart: storageWeek,
-            dayOfWeek: storageDow,
-            mealLabel: slot.mealLabel,
-            slotOrder: slot.slotOrder,
-            slotId: slot.id,
-            recipeId: draft.mealRecipeId,
-            mealText: draft.mealText,
-            sideItems: draft.sideItems,
-            sauceRecipeId: draft.sauceRecipeId,
-            sauceText: draft.sauceText,
-            assignedUserIds: draft.assignedUserIds,
-          );
-      onInvalidatePlanner();
-    } on PostgrestException catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not assign recipe: ${error.message}')),
-      );
-    }
+    if (!context.mounted) return;
+    await _persistSlotPlanDraft(
+      context,
+      ref,
+      slot: slot,
+      storageWeek: storageWeek,
+      storageDow: storageDow,
+      draft: draft,
+      onInvalidatePlanner: onInvalidatePlanner,
+    );
   }
 
   Future<void> openRecipeIfLinked() async {
@@ -884,6 +905,42 @@ Future<Recipe?> pickRecipeForPlannerSlot(
   );
 }
 
+/// Same meal editor as the planner; saves on confirm. Does not navigate away.
+Future<void> openSlotMealPlanEditorFromHome(
+  BuildContext context,
+  WidgetRef ref, {
+  required MealPlanSlot slot,
+  required List<MealPlanSlot> daySlots,
+  required List<Recipe> recipes,
+  required List<HouseholdMember> activeMembers,
+  required String currentUserId,
+  required bool showMemberAssignment,
+}) async {
+  if (currentUserId.isEmpty) return;
+  final draft = await PlannerScreen.editSlotPlan(
+    context,
+    slot: slot,
+    recipes: recipes,
+    slotDisplayLabel: plannerSlotDisplayLabel(daySlots, slot),
+    activeMembers: activeMembers,
+    currentUserId: currentUserId,
+    showMemberAssignment: showMemberAssignment,
+  );
+  if (draft == null || !context.mounted) return;
+  final dayOnly = plannerDateOnly(calendarDateForSlot(slot));
+  final storageWeek = weekStartMondayForDate(dayOnly);
+  final storageDow = dartWeekdayToStartDay(dayOnly.weekday);
+  await _persistSlotPlanDraft(
+    context,
+    ref,
+    slot: slot,
+    storageWeek: storageWeek,
+    storageDow: storageDow,
+    draft: draft,
+    onInvalidatePlanner: () => invalidatePlannerSlotCaches(ref, dayOnly),
+  );
+}
+
 Future<void> showPlannerDayDetailSheet(
   BuildContext context,
   WidgetRef ref, {
@@ -894,6 +951,7 @@ Future<void> showPlannerDayDetailSheet(
   required List<HouseholdMember> activeMembers,
   required Map<String, String> memberNameById,
   required String? currentUserId,
+  required bool showMemberAssignment,
   required PlannerEditSlotGroceryFn onEditSlotGroceryItems,
   required Future<String?> Function(BuildContext context) onPickNewMealLabel,
 }) async {
@@ -1006,6 +1064,7 @@ Future<void> showPlannerDayDetailSheet(
                           slotDisplayLabel: slotDisplayLabel,
                           activeMembers: activeMembers,
                           currentUserId: currentUserId ?? '',
+                          showMemberAssignment: showMemberAssignment,
                         ),
                         onEditSlotGroceryItems: onEditSlotGroceryItems,
                         onInvalidatePlanner: () =>
@@ -1105,6 +1164,8 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
     };
     final groceryItems =
         ref.watch(groceryItemsProvider).valueOrNull ?? const [];
+    final showMemberAssignment =
+        ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
 
     return slotsAsync.when(
       skipLoadingOnReload: true,
@@ -1228,6 +1289,7 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                                       activeMembers: activeMembers,
                                       memberNameById: memberNameById,
                                       currentUserId: currentUser?.id,
+                                      showMemberAssignment: showMemberAssignment,
                                       onEditSlotGroceryItems:
                                           onEditSlotGroceryItems,
                                       onPickNewMealLabel: onPickNewMealLabel,
@@ -2093,6 +2155,7 @@ class PlannerScreen extends ConsumerWidget {
     required String slotDisplayLabel,
     required List<HouseholdMember> activeMembers,
     required String currentUserId,
+    required bool showMemberAssignment,
   }) {
     return showDialog<_SlotPlanDraft>(
       context: context,
@@ -2102,6 +2165,7 @@ class PlannerScreen extends ConsumerWidget {
         recipes: recipes,
         activeMembers: activeMembers,
         currentUserId: currentUserId,
+        showMemberAssignment: showMemberAssignment,
         pickRecipeForMeal: pickRecipeForPlannerSlot,
       ),
     );
@@ -2317,6 +2381,8 @@ class PlannerScreen extends ConsumerWidget {
     final members = ref.watch(householdMembersProvider).valueOrNull ?? const [];
     final activeMembers =
         members.where((m) => m.status == HouseholdMemberStatus.active).toList();
+    final showMemberAssignment =
+        ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
     final currentUser = ref.watch(currentUserProvider);
     final groceryItems =
         ref.watch(groceryItemsProvider).valueOrNull ?? const [];
@@ -2604,6 +2670,7 @@ class PlannerScreen extends ConsumerWidget {
                               slotDisplayLabel: slotDisplayLabel,
                               activeMembers: activeMembers,
                               currentUserId: currentUser?.id ?? '',
+                              showMemberAssignment: showMemberAssignment,
                             ),
                             onEditSlotGroceryItems: _editPlannerSlotGroceryItems,
                             onInvalidatePlanner: () =>
@@ -3219,6 +3286,7 @@ class _SlotPlanEditorDialog extends StatefulWidget {
     required this.recipes,
     required this.activeMembers,
     required this.currentUserId,
+    required this.showMemberAssignment,
     required this.pickRecipeForMeal,
   });
 
@@ -3227,6 +3295,7 @@ class _SlotPlanEditorDialog extends StatefulWidget {
   final List<Recipe> recipes;
   final List<HouseholdMember> activeMembers;
   final String currentUserId;
+  final bool showMemberAssignment;
   final _PickRecipeForMeal pickRecipeForMeal;
 
   @override
@@ -3288,7 +3357,9 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
     _showSauce = _sauceTextCtrl.text.trim().isNotEmpty || _sauceRecipe != null;
     _assignedUserIds = widget.slot.assignedUserIds.isNotEmpty
         ? widget.slot.assignedUserIds.toSet()
-        : widget.activeMembers.map((m) => m.userId).toSet();
+        : widget.showMemberAssignment
+            ? widget.activeMembers.map((m) => m.userId).toSet()
+            : {if (widget.currentUserId.isNotEmpty) widget.currentUserId};
     if (_assignedUserIds.isEmpty && widget.currentUserId.isNotEmpty) {
       _assignedUserIds.add(widget.currentUserId);
     }
@@ -3720,43 +3791,45 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
                     ),
                   ),
               ],
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 8),
-              Text(
-                'Who is this for?',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final member in widget.activeMembers)
-                    FilterChip(
-                      label: Text(member.displayName),
-                      selected: _assignedUserIds.contains(member.userId),
-                      onSelected: (selected) {
-                        setState(() {
-                          if (selected) {
-                            _assignedUserIds.add(member.userId);
-                          } else if (_assignedUserIds.length > 1) {
-                            _assignedUserIds.remove(member.userId);
-                          }
-                        });
-                      },
-                    ),
-                ],
-              ),
-              if (_assignedUserIds.length <= 1)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    'Tip: select both people for shared meals.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+              if (widget.showMemberAssignment) ...[
+                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 8),
+                Text(
+                  'Who is this for?',
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final member in widget.activeMembers)
+                      FilterChip(
+                        label: Text(member.displayName),
+                        selected: _assignedUserIds.contains(member.userId),
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              _assignedUserIds.add(member.userId);
+                            } else if (_assignedUserIds.length > 1) {
+                              _assignedUserIds.remove(member.userId);
+                            }
+                          });
+                        },
+                      ),
+                  ],
+                ),
+                if (_assignedUserIds.length <= 1)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Tip: select both people for shared meals.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
                   Expanded(

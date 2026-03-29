@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
@@ -12,12 +13,16 @@ import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/grocery/presentation/grocery_item_suggestions_grid.dart';
+import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const double _groceryCardGridSpacing = kGroceryCardGridSpacing;
 const double _groceryCardAspectRatio = kGroceryCardAspectRatio;
+
+/// Custom swap / reorder control (lists ingredients card).
+const String _groceryListReorderAsset = 'assets/images/grocery_list_reorder.png';
 
 /// Lists grid cards — very light blue (light mode); subtle blue-gray (dark).
 /// When [purchased] is true, the item is still on the list but marked done from
@@ -49,6 +54,15 @@ class GroceryScreen extends ConsumerStatefulWidget {
 class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   bool _addSheetOpen = false;
   int _listScopeIndex = 0;
+
+  /// Jiggle + drag reorder; persisted when user taps Save in the toolbar.
+  bool _groceryReorderMode = false;
+  List<GroceryItem>? _reorderWorkingItems;
+
+  /// After a successful reorder save, stream data can lag; keep showing the
+  /// saved order until [groceryListItemsFamily] emits the same id sequence.
+  List<GroceryItem>? _pendingReorderDisplayItems;
+  String? _pendingReorderListId;
 
   @override
   void initState() {
@@ -441,7 +455,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     if (user == null) return;
     final nameCtrl = TextEditingController();
     var scope = defaultScope;
-    final result = await showModalBottomSheet<({String id, ListScope scope})>(
+    final result = await showModalBottomSheet<
+        ({String id, ListScope scope, String name})>(
       context: context,
       showDragHandle: true,
       builder: (ctx) => StatefulBuilder(
@@ -490,7 +505,11 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                               );
                       if (!ctx.mounted) return;
                       Navigator.of(ctx).pop(
-                        (id: createdList.id, scope: scope),
+                        (
+                          id: createdList.id,
+                          scope: scope,
+                          name: createdList.name,
+                        ),
                       );
                     } catch (_) {
                       if (!ctx.mounted) return;
@@ -513,11 +532,21 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     if (!mounted || result == null) return;
     ref.invalidate(listsProvider);
     ref.invalidate(profileProvider);
+    await ref.read(listsProvider.future);
+    await ref.read(profileProvider.future);
+    if (!mounted) return;
     ref.read(selectedListIdProvider.notifier).state = result.id;
     final newScopeIdx = result.scope == ListScope.household ? 0 : 1;
     if (_listScopeIndex != newScopeIdx) {
       setState(() => _listScopeIndex = newScopeIdx);
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          "Created \"${result.name}\". You're now on that list.",
+        ),
+      ),
+    );
   }
 
   /// Returns true if the list was deleted on the server.
@@ -744,6 +773,95 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     }
   }
 
+  void _openGroceryItemActions(GroceryItem item) {
+    final scheme = Theme.of(context).colorScheme;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Change quantity'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  unawaited(_promptUpdateQuantity(item));
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.delete_outline_rounded,
+                  color: scheme.error,
+                ),
+                title: Text(
+                  'Remove from list',
+                  style: TextStyle(
+                    color: scheme.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  unawaited(_removeItem(item));
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _onGroceryWorkingReorder(int oldIndex, int newIndex) {
+    setState(() {
+      final list = List<GroceryItem>.from(_reorderWorkingItems!);
+      final moved = list.removeAt(oldIndex);
+      list.insert(newIndex, moved);
+      _reorderWorkingItems = list;
+    });
+  }
+
+  Future<void> _saveGroceryReorderFromWorking(String listId) async {
+    final working = _reorderWorkingItems;
+    if (working == null) return;
+    try {
+      await ref.read(groceryRepositoryProvider).reorderListItems(
+            listId: listId,
+            orderedItemIds: working.map((e) => e.id).toList(),
+          );
+      if (mounted) {
+        // Phase 1: commit pending overlay while still in reorder mode so the grid
+        // keeps using [_reorderWorkingItems] (correct order) for this frame.
+        setState(() {
+          _pendingReorderDisplayItems = List<GroceryItem>.from(working);
+          _pendingReorderListId = listId;
+        });
+        // Phase 2: exit reorder on the next frame so merge logic can clear pending
+        // only when !_groceryReorderMode (avoids premature clear — see
+        // [mergeGroceryDisplayWithPendingReorder]).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _groceryReorderMode = false;
+            _reorderWorkingItems = null;
+          });
+        });
+        // Do not call [invalidateActiveGroceryStreams] here: reorder_list_items
+        // issues UPDATEs; the existing Realtime subscription already refetches via
+        // pushFresh. Invalidating recreates the stream and races the pending
+        // overlay (one frame of stale list order).
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save item order right now.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final itemsAsync = ref.watch(groceryItemsProvider);
@@ -771,12 +889,59 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           }
 
           final lists = listsAsync.valueOrNull ?? [];
+          final effectiveScopeIndex =
+              hasSharedHousehold ? _listScopeIndex : 0;
+          final scopeFilter = !hasSharedHousehold
+              ? ListScope.private
+              : (effectiveScopeIndex == 0
+                  ? ListScope.household
+                  : ListScope.private);
+          final listOrder = profileAsync.valueOrNull?.groceryListOrder ??
+              GroceryListOrder.empty;
+          final orderedFilteredLists =
+              applyGroceryListOrder(lists, scopeFilter, listOrder);
           final selectedScope =
               lists.firstWhereOrNull((l) => l.id == selectedListId)?.scope;
           final householdNewBadges =
               selectedScope == ListScope.household && currentUser != null;
           final viewerId = currentUser?.id;
           final items = itemsAsync.valueOrNull;
+          final sortMode = ref.watch(groceryItemsSortModeProvider);
+          /// Same list id [groceryItemsProvider] uses for the item stream.
+          final String? itemsStreamListId = effectiveGroceryListId(
+            lists: lists,
+            selectedListId: selectedListId,
+            hasSharedHousehold: hasSharedHousehold,
+            profileOrder: listOrder,
+          );
+
+          List<GroceryItem>? displayItems;
+          if (items == null) {
+            displayItems = null;
+          } else {
+            displayItems = applyGroceryItemsSort(items, sortMode);
+            final pending = _pendingReorderDisplayItems;
+            final pendingListId = _pendingReorderListId;
+            final merge = mergeGroceryDisplayWithPendingReorder(
+              streamItems: items,
+              sortMode: sortMode,
+              pending: pending,
+              pendingListId: pendingListId,
+              reorderEditModeActive: _groceryReorderMode,
+            );
+            if (merge != null) {
+              displayItems = merge.displayItems;
+              if (merge.scheduleClearPending) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() {
+                    _pendingReorderDisplayItems = null;
+                    _pendingReorderListId = null;
+                  });
+                });
+              }
+            }
+          }
           final itemsAreaLoading = itemsAsync.isLoading && !itemsAsync.hasValue;
           final recentsAll = ref.watch(groceryRecentsProvider);
           final filteredRecents = () {
@@ -798,20 +963,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
             children: [
               listsAsync.when(
-                data: (lists) {
-                  final effectiveScopeIndex =
-                      hasSharedHousehold ? _listScopeIndex : 0;
-                  final scopeFilter = !hasSharedHousehold
-                      ? ListScope.private
-                      : (effectiveScopeIndex == 0
-                          ? ListScope.household
-                          : ListScope.private);
-                  final listOrder =
-                      profileAsync.valueOrNull?.groceryListOrder ??
-                          GroceryListOrder.empty;
-                  final orderedFilteredLists =
-                      applyGroceryListOrder(lists, scopeFilter, listOrder);
-
+                data: (_) {
                   if (orderedFilteredLists.isNotEmpty) {
                     final hasValid = selectedListId != null &&
                         orderedFilteredLists.any((l) => l.id == selectedListId);
@@ -854,10 +1006,37 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     orderedFilteredLists: orderedFilteredLists,
                     activeListId: activeListId,
                     onListSelected: (id) {
+                      final clearPending = _pendingReorderDisplayItems != null;
+                      if (_groceryReorderMode || clearPending) {
+                        setState(() {
+                          if (_groceryReorderMode) {
+                            _groceryReorderMode = false;
+                            _reorderWorkingItems = null;
+                          }
+                          _pendingReorderDisplayItems = null;
+                          _pendingReorderListId = null;
+                        });
+                      }
                       ref.read(selectedListIdProvider.notifier).state = id;
                     },
                     itemsAreaLoading: itemsAreaLoading,
                     itemCount: items?.length ?? 0,
+                    sortMode: sortMode,
+                    onSortModeSelected: (mode) {
+                      final clearPending = _pendingReorderDisplayItems != null;
+                      if (_groceryReorderMode || clearPending) {
+                        setState(() {
+                          if (_groceryReorderMode) {
+                            _groceryReorderMode = false;
+                            _reorderWorkingItems = null;
+                          }
+                          _pendingReorderDisplayItems = null;
+                          _pendingReorderListId = null;
+                        });
+                      }
+                      ref.read(groceryItemsSortModeProvider.notifier).state =
+                          mode;
+                    },
                     onManageLists: () => _openReorderListSheet(
                       orderedLists: orderedFilteredLists,
                       scope: scopeFilter,
@@ -879,7 +1058,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Adding item... Long-press in list to edit quantity later.',
+                            'Adding item… Long-press an item in the list to edit quantity.',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ),
@@ -915,32 +1094,131 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 )
               else
                 SectionCard(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      const crossAxisCount = 3;
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: items.length,
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          mainAxisSpacing: _groceryCardGridSpacing,
-                          crossAxisSpacing: _groceryCardGridSpacing,
-                          childAspectRatio: _groceryCardAspectRatio,
-                        ),
-                        itemBuilder: (context, index) {
-                          final item = items[index];
-                          final showNewBadge = householdNewBadges &&
-                              item.addedByUserId != null &&
-                              item.addedByUserId != viewerId;
-                          return _GroceryItemCard(
-                            item: item,
-                            showNewBadge: showNewBadge,
-                            onRemove: _removeItem,
-                            onUpdateQuantity: _promptUpdateQuantity,
-                          );
-                        },
+                  child: Builder(
+                    builder: (context) {
+                      final scheme = Theme.of(context).colorScheme;
+                      final showReorderIcon = items.length > 1 &&
+                          sortMode == GroceryItemsSortMode.asAdded &&
+                          itemsStreamListId != null &&
+                          itemsStreamListId.isNotEmpty &&
+                          orderedFilteredLists.isNotEmpty;
+                      void onReorderIconPressed() {
+                        final id = itemsStreamListId;
+                        if (id == null ||
+                            id.isEmpty ||
+                            displayItems == null ||
+                            displayItems.isEmpty) {
+                          return;
+                        }
+                        if (_groceryReorderMode) {
+                          unawaited(_saveGroceryReorderFromWorking(id));
+                        } else {
+                          final toCopy = displayItems;
+                          setState(() {
+                            _groceryReorderMode = true;
+                            _reorderWorkingItems =
+                                List<GroceryItem>.from(toCopy);
+                            _pendingReorderDisplayItems = null;
+                            _pendingReorderListId = null;
+                          });
+                        }
+                      }
+
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Padding(
+                            padding: EdgeInsets.only(
+                              top: showReorderIcon ? 36 : 0,
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                const crossAxisCount = 3;
+                                final list = _groceryReorderMode &&
+                                        _reorderWorkingItems != null
+                                    ? _reorderWorkingItems!
+                                    : displayItems!;
+                                final useReorderGrid = _groceryReorderMode &&
+                                    _reorderWorkingItems != null &&
+                                    list.length > 1 &&
+                                    itemsStreamListId != null &&
+                                    itemsStreamListId.isNotEmpty;
+                                Widget cardFor(GroceryItem item) {
+                                  final showNewBadge = householdNewBadges &&
+                                      item.addedByUserId != null &&
+                                      item.addedByUserId != viewerId;
+                                  return _GroceryItemCard(
+                                    key: ValueKey(item.id),
+                                    item: item,
+                                    showNewBadge: showNewBadge,
+                                    reorderEditMode: _groceryReorderMode,
+                                    reorderJiggle: _groceryReorderMode,
+                                    onRemove: _removeItem,
+                                    onLongPressMenu: () =>
+                                        _openGroceryItemActions(item),
+                                  );
+                                }
+
+                                // Always use [ReorderableGridView] so Save does not swap to
+                                // [GridView.builder] (different element types caused a one-frame
+                                // flash of the pre-drag layout when the reorder grid disposed).
+                                return ReorderableGridView.count(
+                                  key: ValueKey<bool>(_groceryReorderMode),
+                                  shrinkWrap: true,
+                                  physics:
+                                      const NeverScrollableScrollPhysics(),
+                                  crossAxisCount: crossAxisCount,
+                                  crossAxisSpacing: _groceryCardGridSpacing,
+                                  mainAxisSpacing: _groceryCardGridSpacing,
+                                  childAspectRatio: _groceryCardAspectRatio,
+                                  dragEnabled: useReorderGrid,
+                                  dragStartDelay: useReorderGrid
+                                      ? Duration.zero
+                                      : const Duration(milliseconds: 1),
+                                  onReorder: (oldIndex, newIndex) {
+                                    if (!useReorderGrid) return;
+                                    _onGroceryWorkingReorder(
+                                        oldIndex, newIndex);
+                                  },
+                                  children: list.map(cardFor).toList(),
+                                );
+                              },
+                            ),
+                          ),
+                          if (showReorderIcon)
+                            Positioned(
+                              top: 0,
+                              right: 0,
+                              child: IconButton(
+                                tooltip: _groceryReorderMode
+                                    ? 'Save order'
+                                    : 'Reorder items',
+                                style: IconButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(40, 40),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  foregroundColor: _groceryReorderMode
+                                      ? scheme.primary
+                                      : scheme.onSurfaceVariant,
+                                ),
+                                onPressed: onReorderIconPressed,
+                                icon: _groceryReorderMode
+                                    ? const Icon(
+                                        Icons.check_rounded,
+                                        size: 26,
+                                      )
+                                    : Image.asset(
+                                        _groceryListReorderAsset,
+                                        width: 26,
+                                        height: 26,
+                                        fit: BoxFit.contain,
+                                        color: scheme.onSurfaceVariant,
+                                        colorBlendMode: BlendMode.srcIn,
+                                      ),
+                              ),
+                            ),
+                        ],
                       );
                     },
                   ),
@@ -1183,10 +1461,21 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                         focusNode: _searchFocusNode,
                         autofocus: false,
                         textCapitalization: TextCapitalization.sentences,
-                        textInputAction: TextInputAction.search,
-                        onChanged: (_) {
-                          // Keep button state responsive while suggestion updates are debounced.
-                          setState(() {});
+                        textInputAction: TextInputAction.done,
+                        onChanged: (_) => setState(() {}),
+                        onSubmitted: (value) {
+                          final name = value.trim();
+                          if (name.isEmpty) return;
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          final quantity = _displayQuantity(
+                            _safeQuantity(_qtyCtrl.text, fallback: 1),
+                          );
+                          Navigator.of(context).pop(
+                            _PendingGroceryItem(
+                              name: name,
+                              quantity: quantity,
+                            ),
+                          );
                         },
                         decoration: const InputDecoration(
                           hintText: 'Search or type item',
@@ -1208,7 +1497,7 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                         typedValue: _nameCtrl.text,
                         recentItems: widget.currentItems,
                         duplicateMessage:
-                            'Already in basket. Long-press it in your list to edit quantity.',
+                            'Already in basket. Long-press the item in your list to edit quantity.',
                         onPick: (suggestion) {
                           FocusManager.instance.primaryFocus?.unfocus();
                           final quantity = _displayQuantity(
@@ -1225,28 +1514,6 @@ class _AddGroceryItemSheetState extends State<_AddGroceryItemSheet> {
                       const SizedBox(height: 12),
                     ],
                   ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _nameCtrl.text.trim().isEmpty
-                      ? null
-                      : () {
-                          FocusManager.instance.primaryFocus?.unfocus();
-                          final name = _nameCtrl.text.trim();
-                          final quantity = _displayQuantity(
-                            _safeQuantity(_qtyCtrl.text, fallback: 1),
-                          );
-                          Navigator.of(context).pop(
-                            _PendingGroceryItem(
-                              name: name,
-                              quantity: quantity,
-                            ),
-                          );
-                        },
-                  child: const Text('Add to list'),
                 ),
               ),
             ],
@@ -1267,6 +1534,8 @@ class _ListsToolbar extends StatelessWidget {
     required this.onListSelected,
     required this.itemsAreaLoading,
     required this.itemCount,
+    required this.sortMode,
+    required this.onSortModeSelected,
     required this.onManageLists,
     required this.onNewList,
   });
@@ -1279,6 +1548,8 @@ class _ListsToolbar extends StatelessWidget {
   final ValueChanged<String> onListSelected;
   final bool itemsAreaLoading;
   final int itemCount;
+  final GroceryItemsSortMode sortMode;
+  final ValueChanged<GroceryItemsSortMode> onSortModeSelected;
   final VoidCallback onManageLists;
   final VoidCallback onNewList;
 
@@ -1386,11 +1657,12 @@ class _ListsToolbar extends StatelessWidget {
               const SizedBox(height: 12),
             ],
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       if (orderedFilteredLists.isEmpty)
                         Text(
@@ -1408,23 +1680,13 @@ class _ListsToolbar extends StatelessWidget {
                               vertical: 4,
                               horizontal: 2,
                             ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    displayName,
-                                    style: textTheme.titleSmall?.copyWith(
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.keyboard_arrow_down_rounded,
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ],
+                            child: Text(
+                              displayName,
+                              style: textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ),
@@ -1440,28 +1702,122 @@ class _ListsToolbar extends StatelessWidget {
                     ],
                   ),
                 ),
-                PopupMenuButton<String>(
-                  tooltip: 'List actions',
-                  icon: Icon(
-                    Icons.more_vert_rounded,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  onSelected: (value) {
-                    if (value == 'manage') {
-                      onManageLists();
-                    } else if (value == 'new') {
-                      onNewList();
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    PopupMenuItem<String>(
-                      value: 'manage',
-                      enabled: orderedFilteredLists.isNotEmpty,
-                      child: const Text('Manage lists'),
-                    ),
-                    const PopupMenuItem<String>(
-                      value: 'new',
-                      child: Text('New list'),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (orderedFilteredLists.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Choose list',
+                        style: IconButton.styleFrom(
+                          padding: const EdgeInsets.fromLTRB(8, 8, 0, 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () => _openListPicker(context),
+                        icon: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    PopupMenuButton<String>(
+                      tooltip: 'List actions',
+                      padding: orderedFilteredLists.isNotEmpty
+                          ? const EdgeInsets.fromLTRB(0, 8, 4, 8)
+                          : EdgeInsets.zero,
+                      icon: Icon(
+                        Icons.more_vert_rounded,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'manage':
+                            onManageLists();
+                          case 'new':
+                            onNewList();
+                          case 'sort_as_added':
+                            onSortModeSelected(GroceryItemsSortMode.asAdded);
+                          case 'sort_category':
+                            onSortModeSelected(GroceryItemsSortMode.byCategory);
+                          case 'sort_alpha':
+                            onSortModeSelected(
+                              GroceryItemsSortMode.alphabetical,
+                            );
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem<String>(
+                          value: 'sort_as_added',
+                          enabled: orderedFilteredLists.isNotEmpty,
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 28,
+                                child: sortMode == GroceryItemsSortMode.asAdded
+                                    ? Icon(Icons.check_rounded,
+                                        size: 20, color: scheme.primary)
+                                    : null,
+                              ),
+                              Expanded(
+                                child: Text(
+                                  GroceryItemsSortMode.asAdded.menuLabel,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'sort_category',
+                          enabled: orderedFilteredLists.isNotEmpty,
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 28,
+                                child:
+                                    sortMode == GroceryItemsSortMode.byCategory
+                                        ? Icon(Icons.check_rounded,
+                                            size: 20, color: scheme.primary)
+                                        : null,
+                              ),
+                              Expanded(
+                                child: Text(
+                                  GroceryItemsSortMode.byCategory.menuLabel,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'sort_alpha',
+                          enabled: orderedFilteredLists.isNotEmpty,
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 28,
+                                child: sortMode ==
+                                        GroceryItemsSortMode.alphabetical
+                                    ? Icon(Icons.check_rounded,
+                                        size: 20, color: scheme.primary)
+                                    : null,
+                              ),
+                              Expanded(
+                                child: Text(
+                                  GroceryItemsSortMode.alphabetical.menuLabel,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem<String>(
+                          value: 'manage',
+                          enabled: orderedFilteredLists.isNotEmpty,
+                          child: const Text('Manage lists'),
+                        ),
+                        const PopupMenuItem<String>(
+                          value: 'new',
+                          child: Text('New list'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1474,18 +1830,93 @@ class _ListsToolbar extends StatelessWidget {
   }
 }
 
+class _GroceryReorderJiggle extends StatefulWidget {
+  const _GroceryReorderJiggle({
+    required this.active,
+    required this.child,
+  });
+
+  final bool active;
+  final Widget child;
+
+  @override
+  State<_GroceryReorderJiggle> createState() => _GroceryReorderJiggleState();
+}
+
+class _GroceryReorderJiggleState extends State<_GroceryReorderJiggle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
+    if (widget.active) {
+      _controller.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(_GroceryReorderJiggle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _controller.repeat(reverse: true);
+    } else if (!widget.active && oldWidget.active) {
+      _controller
+        ..stop()
+        ..reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.active) return widget.child;
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) {
+        final t = _controller.value * math.pi * 2;
+        // iOS-style jiggle: visible tilt + slight horizontal wobble (phase-shifted).
+        final angle = 0.0325 * math.sin(t);
+        final dx = 0.55 * math.sin(t + 1.1);
+        return Transform.translate(
+          offset: Offset(dx, 0),
+          child: Transform.rotate(
+            angle: angle,
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _GroceryItemCard extends StatelessWidget {
   const _GroceryItemCard({
+    super.key,
     required this.item,
     required this.showNewBadge,
+    this.reorderEditMode = false,
+    this.reorderJiggle = false,
     required this.onRemove,
-    required this.onUpdateQuantity,
+    required this.onLongPressMenu,
   });
 
   final GroceryItem item;
   final bool showNewBadge;
+  final bool reorderEditMode;
+  final bool reorderJiggle;
   final Future<void> Function(GroceryItem item) onRemove;
-  final Future<void> Function(GroceryItem item) onUpdateQuantity;
+  final VoidCallback onLongPressMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -1496,7 +1927,6 @@ class _GroceryItemCard extends StatelessWidget {
         : '${_displayQuantity(quantityValue)} ${item.unit!.trim()}';
     final scheme = Theme.of(context).colorScheme;
     final foodAsset = foodIconAssetForName(item.name, category: item.category);
-    // Match home "Purchased" state: done items show strikethrough here too; tap still removes.
     final nameStyle = TextStyle(
       color: scheme.onSurface.withValues(alpha: item.isDone ? 0.55 : 1),
       fontWeight: FontWeight.w600,
@@ -1504,63 +1934,51 @@ class _GroceryItemCard extends StatelessWidget {
       decoration: item.isDone ? TextDecoration.lineThrough : null,
       decorationColor: scheme.onSurface.withValues(alpha: 0.45),
     );
-    return Material(
-      color: _groceryListItemCardColor(context, purchased: item.isDone),
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
+    return _GroceryReorderJiggle(
+      active: reorderJiggle,
+      child: Material(
+        color: _groceryListItemCardColor(context, purchased: item.isDone),
         borderRadius: BorderRadius.circular(16),
-        onTap: () => unawaited(onRemove(item)),
-        onLongPress: () {
-          showModalBottomSheet<void>(
-            context: context,
-            showDragHandle: true,
-            builder: (ctx) {
-              return SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.edit_outlined),
-                      title: const Text('Change quantity'),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        unawaited(onUpdateQuantity(item));
-                      },
-                    ),
-                    ListTile(
-                      leading: Icon(
-                        Icons.delete_outline_rounded,
-                        color: scheme.error,
-                      ),
-                      title: Text(
-                        'Remove from list',
-                        style: TextStyle(
-                          color: scheme.error,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        unawaited(onRemove(item));
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final availableHeight = constraints.maxHeight - 20;
-            final ultraCompact = availableHeight < 126;
-            final compact = availableHeight < 150;
-            const iconSize = 38.0;
-            return Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned.fill(
-                  child: Padding(
+        clipBehavior: Clip.none,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: reorderEditMode ? null : () => unawaited(onRemove(item)),
+              onLongPress: reorderEditMode ? null : onLongPressMenu,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final availableHeight = constraints.maxHeight - 20;
+                  final ultraCompact = availableHeight < 126;
+                  final compact = availableHeight < 150;
+                  const iconSize = 38.0;
+                  final iconChild = foodAsset != null
+                      ? Image.asset(
+                          foodAsset,
+                          width: iconSize,
+                          height: iconSize,
+                          filterQuality: FilterQuality.high,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Icon(
+                              _iconForName(
+                                item.name,
+                                fallback: item.category.icon,
+                              ),
+                              color: item.category.tint,
+                              size: iconSize,
+                            );
+                          },
+                        )
+                      : Icon(
+                          _iconForName(
+                            item.name,
+                            fallback: item.category.icon,
+                          ),
+                          color: item.category.tint,
+                          size: iconSize,
+                        );
+                  return Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: ultraCompact ? 5 : (compact ? 7 : 10),
@@ -1571,134 +1989,109 @@ class _GroceryItemCard extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Center(
-                            child: foodAsset != null
-                                ? Image.asset(
-                                    foodAsset,
-                                    width: iconSize,
-                                    height: iconSize,
-                                    filterQuality: FilterQuality.high,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Icon(
-                                        _iconForName(
-                                          item.name,
-                                          fallback: item.category.icon,
-                                        ),
-                                        color: item.category.tint,
-                                        size: iconSize,
-                                      );
-                                    },
-                                  )
-                                : Icon(
-                                    _iconForName(
-                                      item.name,
-                                      fallback: item.category.icon,
-                                    ),
-                                    color: item.category.tint,
-                                    size: iconSize,
-                                  ),
+                          Center(child: iconChild),
+                          SizedBox(
+                            height: ultraCompact ? 4 : (compact ? 6 : 8),
                           ),
                           SizedBox(
-                              height: ultraCompact ? 4 : (compact ? 6 : 8)),
+                          width: double.infinity,
+                          child: Text(
+                            item.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: nameStyle,
+                          ),
+                        ),
+                        if (ultraCompact && hasMultipleQuantity) ...[
+                          const SizedBox(height: 2),
                           SizedBox(
                             width: double.infinity,
                             child: Text(
-                              item.name,
-                              maxLines: 2,
+                              '(${_displayQuantity(quantityValue)})',
+                              maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.center,
-                              style: nameStyle,
+                              style: TextStyle(
+                                color:
+                                    scheme.onSurface.withValues(alpha: 0.78),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                          if (ultraCompact && hasMultipleQuantity) ...[
-                            const SizedBox(height: 2),
-                            SizedBox(
-                              width: double.infinity,
+                        ],
+                        if (hasMultipleQuantity && !ultraCompact) ...[
+                          SizedBox(height: compact ? 2 : 4),
+                          Align(
+                            alignment: Alignment.center,
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: compact ? 7 : 8,
+                                vertical: compact ? 2 : 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
                               child: Text(
-                                '(${_displayQuantity(quantityValue)})',
+                                quantityLabel,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  color:
-                                      scheme.onSurface.withValues(alpha: 0.78),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurface,
+                                  fontSize: compact ? 10 : 12,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),
-                          ],
-                          if (hasMultipleQuantity && !ultraCompact) ...[
-                            SizedBox(height: compact ? 2 : 4),
-                            Align(
-                              alignment: Alignment.center,
-                              child: Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: compact ? 7 : 8,
-                                  vertical: compact ? 2 : 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: scheme.primaryContainer,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  quantityLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: scheme.onSurface,
-                                    fontSize: compact ? 10 : 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                          if (item.fromPlanner && !compact) ...[
-                            const SizedBox(height: 6),
-                            Icon(
-                              Icons.auto_awesome_rounded,
-                              size: 16,
-                              color: scheme.secondary,
-                            ),
-                          ],
+                          ),
                         ],
-                      ),
+                        if (item.fromPlanner && !compact) ...[
+                          const SizedBox(height: 6),
+                          Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 16,
+                            color: scheme.secondary,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          if (showNewBadge)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    'New',
+                    style: TextStyle(
+                      color: scheme.onSecondaryContainer,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
                     ),
                   ),
                 ),
-                if (showNewBadge)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: scheme.secondaryContainer,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        child: Text(
-                          'New',
-                          style: TextStyle(
-                            color: scheme.onSecondaryContainer,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            height: 1.1,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
+              ),
+            ),
+        ],
       ),
+    ),
     );
   }
 }

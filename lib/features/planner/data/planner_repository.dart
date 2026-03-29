@@ -405,11 +405,13 @@ class PlannerRepository {
 
     for (var day = 0; day < 7; day++) {
       final daySlots = existing.where((s) => s.dayOfWeek == day).toList();
-      final usedOrders = daySlots.map((s) => s.slotOrder).toSet();
-      final needed = targetSlotsPerDay - daySlots.length;
-      if (needed <= 0) continue;
+      // Only seed a day that has no rows yet. Do not top back up to
+      // [targetSlotsPerDay] after the user deletes slots — that ran on every
+      // planner stream refresh and recreated deleted slots.
+      if (daySlots.isNotEmpty) continue;
 
-      for (var n = 0; n < needed; n++) {
+      final usedOrders = <int>{};
+      for (var n = 0; n < targetSlotsPerDay; n++) {
         var order = 0;
         while (usedOrders.contains(order)) {
           order += 1;

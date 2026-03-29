@@ -36,14 +36,42 @@ alter table grocery_items
 add column if not exists household_id uuid references households(id) on delete cascade;
 
 -- Backfill one household per existing profile.
-insert into households (id, name, created_by)
-select uuid_generate_v4(), coalesce(nullif(p.name, ''), 'My Household'), p.id
-from profiles p
-where not exists (
-  select 1
-  from households h
-  where h.created_by = p.id
-);
+-- When this runs before planner columns exist, omit them; when replayed on a DB that
+-- already has NOT NULL planner columns, supply defaults (see 202603310001).
+do $household_backfill$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'households'
+      and column_name = 'planner_start_day'
+  ) then
+    insert into households (id, name, created_by, planner_start_day, planner_day_count)
+    select
+      uuid_generate_v4(),
+      coalesce(nullif(p.name, ''), 'My Household'),
+      p.id,
+      0,
+      7
+    from profiles p
+    where not exists (
+      select 1
+      from households h
+      where h.created_by = p.id
+    );
+  else
+    insert into households (id, name, created_by)
+    select uuid_generate_v4(), coalesce(nullif(p.name, ''), 'My Household'), p.id
+    from profiles p
+    where not exists (
+      select 1
+      from households h
+      where h.created_by = p.id
+    );
+  end if;
+end
+$household_backfill$;
 
 update profiles p
 set household_id = h.id
@@ -106,6 +134,29 @@ check (
 alter table households enable row level security;
 alter table household_members enable row level security;
 
+-- SECURITY DEFINER read avoids RLS recursion when policies on household_members
+-- would otherwise subquery household_members (42P17).
+create or replace function is_household_member(
+  target_household_id uuid,
+  target_user_id uuid default auth.uid()
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from household_members hm
+    where hm.household_id = target_household_id
+      and hm.user_id = target_user_id
+      and hm.status = 'active'
+  );
+$$;
+
+grant execute on function is_household_member(uuid, uuid) to authenticated;
+
 drop policy if exists "profiles_select_own" on profiles;
 create policy "profiles_select_own" on profiles
 for select using (auth.uid() = id);
@@ -126,7 +177,7 @@ for select using (
     from household_members hm
     where hm.household_id = households.id
       and hm.user_id = auth.uid()
-      and hm.status = 'active'
+      and hm.status in ('active', 'invited')
   )
 );
 
@@ -136,88 +187,40 @@ for insert with check (created_by = auth.uid());
 
 drop policy if exists "households_update_member" on households;
 create policy "households_update_member" on households
-for update using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = households.id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-)
-with check (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = households.id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for update
+using (is_household_member(households.id))
+with check (is_household_member(households.id));
 
 drop policy if exists "household_members_select_member" on household_members;
 create policy "household_members_select_member" on household_members
 for select using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = household_members.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
+  is_household_member(household_members.household_id)
+  or household_members.user_id = auth.uid()
 );
 
 drop policy if exists "household_members_insert_member" on household_members;
 create policy "household_members_insert_member" on household_members
-for insert with check (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = household_members.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for insert with check (is_household_member(household_members.household_id));
 
 drop policy if exists "household_members_update_member" on household_members;
 create policy "household_members_update_member" on household_members
-for update using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = household_members.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-)
-with check (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = household_members.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for update
+using (is_household_member(household_members.household_id))
+with check (is_household_member(household_members.household_id));
 
 drop policy if exists "recipes_select_own" on recipes;
 drop policy if exists "recipes_write_own" on recipes;
 drop policy if exists "recipes_select_public" on recipes;
+drop policy if exists "recipes_select_visibility" on recipes;
+drop policy if exists "recipes_insert_visibility" on recipes;
+drop policy if exists "recipes_update_visibility" on recipes;
+drop policy if exists "recipes_delete_visibility" on recipes;
 
 create policy "recipes_select_visibility" on recipes
 for select using (
   (visibility = 'public')
   or (visibility = 'personal' and user_id = auth.uid())
-  or (
-    visibility = 'household'
-    and exists (
-      select 1
-      from household_members hm
-      where hm.household_id = recipes.household_id
-        and hm.user_id = auth.uid()
-        and hm.status = 'active'
-    )
-  )
+  or (visibility = 'household' and is_household_member(recipes.household_id))
 );
 
 create policy "recipes_insert_visibility" on recipes
@@ -226,128 +229,54 @@ for insert with check (
   or (
     visibility = 'household'
     and user_id = auth.uid()
-    and exists (
-      select 1
-      from household_members hm
-      where hm.household_id = recipes.household_id
-        and hm.user_id = auth.uid()
-        and hm.status = 'active'
-    )
+    and is_household_member(recipes.household_id)
   )
   or (visibility = 'public' and user_id = auth.uid())
 );
 
 create policy "recipes_update_visibility" on recipes
-for update using (
+for update
+using (
   (visibility = 'personal' and user_id = auth.uid())
-  or (
-    visibility = 'household'
-    and exists (
-      select 1
-      from household_members hm
-      where hm.household_id = recipes.household_id
-        and hm.user_id = auth.uid()
-        and hm.status = 'active'
-    )
-  )
+  or (visibility = 'household' and is_household_member(recipes.household_id))
 )
 with check (
   (visibility = 'personal' and user_id = auth.uid())
-  or (
-    visibility = 'household'
-    and exists (
-      select 1
-      from household_members hm
-      where hm.household_id = recipes.household_id
-        and hm.user_id = auth.uid()
-        and hm.status = 'active'
-    )
-  )
+  or (visibility = 'household' and is_household_member(recipes.household_id))
   or (visibility = 'public' and user_id = auth.uid())
 );
 
 create policy "recipes_delete_visibility" on recipes
 for delete using (
   (visibility = 'personal' and user_id = auth.uid())
-  or (
-    visibility = 'household'
-    and exists (
-      select 1
-      from household_members hm
-      where hm.household_id = recipes.household_id
-        and hm.user_id = auth.uid()
-        and hm.status = 'active'
-    )
-  )
+  or (visibility = 'household' and is_household_member(recipes.household_id))
 );
 
 drop policy if exists "slots_select_own" on meal_plan_slots;
 drop policy if exists "slots_write_own" on meal_plan_slots;
+drop policy if exists "slots_select_household" on meal_plan_slots;
+drop policy if exists "slots_write_household" on meal_plan_slots;
 
 create policy "slots_select_household" on meal_plan_slots
-for select using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = meal_plan_slots.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for select using (is_household_member(meal_plan_slots.household_id));
 
 create policy "slots_write_household" on meal_plan_slots
-for all using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = meal_plan_slots.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-)
-with check (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = meal_plan_slots.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for all
+using (is_household_member(meal_plan_slots.household_id))
+with check (is_household_member(meal_plan_slots.household_id));
 
 drop policy if exists "grocery_select_own" on grocery_items;
 drop policy if exists "grocery_write_own" on grocery_items;
+drop policy if exists "grocery_select_household" on grocery_items;
+drop policy if exists "grocery_write_household" on grocery_items;
 
 create policy "grocery_select_household" on grocery_items
-for select using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = grocery_items.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for select using (is_household_member(grocery_items.household_id));
 
 create policy "grocery_write_household" on grocery_items
-for all using (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = grocery_items.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-)
-with check (
-  exists (
-    select 1
-    from household_members hm
-    where hm.household_id = grocery_items.household_id
-      and hm.user_id = auth.uid()
-      and hm.status = 'active'
-  )
-);
+for all
+using (is_household_member(grocery_items.household_id))
+with check (is_household_member(grocery_items.household_id));
 
 create or replace function create_household_with_member(name text)
 returns uuid

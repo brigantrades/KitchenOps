@@ -34,6 +34,127 @@ List<AppList> applyGroceryListOrder(
   return filtered;
 }
 
+/// How to order items on the Lists screen. [GroceryItemsSortMode.asAdded] follows
+/// DB `sort_order` (manual drag when using that mode).
+enum GroceryItemsSortMode {
+  asAdded,
+  byCategory,
+  alphabetical,
+}
+
+extension GroceryItemsSortModeX on GroceryItemsSortMode {
+  String get menuLabel => switch (this) {
+        GroceryItemsSortMode.asAdded => 'As added (drag to reorder)',
+        GroceryItemsSortMode.byCategory => 'By category',
+        GroceryItemsSortMode.alphabetical => 'Alphabetical (A–Z)',
+      };
+}
+
+List<GroceryItem> applyGroceryItemsSort(
+  List<GroceryItem> items,
+  GroceryItemsSortMode mode,
+) {
+  final copy = List<GroceryItem>.from(items);
+  switch (mode) {
+    case GroceryItemsSortMode.asAdded:
+      return copy;
+    case GroceryItemsSortMode.byCategory:
+      copy.sort((a, b) {
+        final c = a.category.index.compareTo(b.category.index);
+        if (c != 0) return c;
+        final n = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        if (n != 0) return n;
+        return a.id.compareTo(b.id);
+      });
+      return copy;
+    case GroceryItemsSortMode.alphabetical:
+      copy.sort((a, b) {
+        final n = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        if (n != 0) return n;
+        return a.id.compareTo(b.id);
+      });
+      return copy;
+  }
+}
+
+bool _groceryItemIdSequencesEqual(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].toLowerCase() != b[i].toLowerCase()) return false;
+  }
+  return true;
+}
+
+/// Result of overlaying a just-saved manual order on stream-backed items.
+class GroceryPendingReorderMergeResult {
+  const GroceryPendingReorderMergeResult({
+    required this.displayItems,
+    required this.scheduleClearPending,
+  });
+
+  final List<GroceryItem> displayItems;
+
+  /// When true, clear the pending reorder snapshot after this frame.
+  final bool scheduleClearPending;
+}
+
+/// Merges [pending] row order with fresh fields from [streamItems].
+///
+/// When the stream id sequence already matches [pending], we only schedule
+/// clearing pending if [reorderEditModeActive] is false. Otherwise a realtime
+/// update during the same frame as "save" can clear pending before the UI
+/// leaves reorder mode, exposing one frame of stale stream order.
+GroceryPendingReorderMergeResult? mergeGroceryDisplayWithPendingReorder({
+  required List<GroceryItem> streamItems,
+  required GroceryItemsSortMode sortMode,
+  required List<GroceryItem>? pending,
+  required String? pendingListId,
+  required bool reorderEditModeActive,
+}) {
+  if (pending == null ||
+      pendingListId == null ||
+      sortMode != GroceryItemsSortMode.asAdded) {
+    return null;
+  }
+  final baseline = applyGroceryItemsSort(streamItems, sortMode);
+  final streamIds = streamItems.map((e) => e.id).toList();
+  final pendingIds = pending.map((e) => e.id).toList();
+  final streamSet = streamIds.map((id) => id.toLowerCase()).toSet();
+  final pendingSet = pendingIds.map((id) => id.toLowerCase()).toSet();
+  // Multiset compare: use [SetEquality], not `Set ==`, for same elements.
+  const idSetEquality = SetEquality<String>();
+
+  if (streamSet.length != streamIds.length ||
+      pendingSet.length != pendingIds.length) {
+    return GroceryPendingReorderMergeResult(
+      displayItems: baseline,
+      scheduleClearPending: true,
+    );
+  }
+  if (!idSetEquality.equals(streamSet, pendingSet)) {
+    return GroceryPendingReorderMergeResult(
+      displayItems: baseline,
+      scheduleClearPending: true,
+    );
+  }
+  final byId = {
+    for (final i in streamItems) i.id.toLowerCase(): i,
+  };
+  final merged = pending
+      .map((o) => byId[o.id.toLowerCase()] ?? o)
+      .toList();
+  if (_groceryItemIdSequencesEqual(streamIds, pendingIds)) {
+    return GroceryPendingReorderMergeResult(
+      displayItems: merged,
+      scheduleClearPending: !reorderEditModeActive,
+    );
+  }
+  return GroceryPendingReorderMergeResult(
+    displayItems: merged,
+    scheduleClearPending: false,
+  );
+}
+
 /// Household lists can accumulate duplicate rows (same name/kind) from migrations
 /// and default-list creation. The UI should show one row per logical list.
 List<AppList> dedupeHouseholdListsByHouseholdKindAndName(List<AppList> lists) {
@@ -703,7 +824,8 @@ class GroceryRepository {
           .from('list_items')
           .select()
           .eq('list_id', listId)
-          .order('created_at');
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: true);
       final items = (rows as List)
           .whereType<Map<String, dynamic>>()
           .map(GroceryItem.fromJson)
@@ -813,6 +935,20 @@ class GroceryRepository {
 
   Future<void> removeItem(String itemId) {
     return _client.from('list_items').delete().eq('id', itemId);
+  }
+
+  /// Persists manual order after a drag-reorder (must match rows in [listId]).
+  Future<void> reorderListItems({
+    required String listId,
+    required List<String> orderedItemIds,
+  }) async {
+    await _client.rpc(
+      'reorder_list_items',
+      params: {
+        'p_list_id': listId,
+        'p_item_ids': orderedItemIds,
+      },
+    );
   }
 
   /// Deletes all [GroceryItemStatus.done] rows for [listId] (e.g. after shopping).
@@ -988,12 +1124,70 @@ class GroceryRepository {
     await _client.from('list_items').delete().eq('list_id', targetListId);
   }
 
-  Future<List<AppList>> listLists(String userId) async {
+  Future<List<AppList>> _loadAllListsOrdered() async {
     final rows = await _client.from('lists').select().order('created_at');
-    final lists = (rows as List)
+    return (rows as List)
         .whereType<Map<String, dynamic>>()
         .map(AppList.fromJson)
         .toList();
+  }
+
+  /// Ensures at least one private list and (when in a household) one shared list
+  /// exist so the Lists screen always has a default row to show; users can rename,
+  /// add more, or delete like any other list.
+  Future<void> _ensureStarterListsForUser(String userId) async {
+    await _ensureProfileRow(userId);
+    var lists =
+        dedupeHouseholdListsByHouseholdKindAndName(await _loadAllListsOrdered());
+
+    if (!lists.any((l) => l.scope == ListScope.private)) {
+      final row = await _client
+          .from('lists')
+          .insert({
+            'owner_user_id': userId,
+            'name': 'My list',
+            'kind': 'general',
+            'scope': ListScope.private.name,
+          })
+          .select()
+          .single();
+      final created = AppList.fromJson(row);
+      await _profileRepo.appendGroceryListId(
+        userId,
+        ListScope.private,
+        created.id,
+      );
+      lists =
+          dedupeHouseholdListsByHouseholdKindAndName(await _loadAllListsOrdered());
+    }
+
+    final householdId = await _householdForUser(userId);
+    if (householdId != null &&
+        householdId.isNotEmpty &&
+        !lists.any((l) => l.scope == ListScope.household)) {
+      final row = await _client
+          .from('lists')
+          .insert({
+            'owner_user_id': userId,
+            'household_id': householdId,
+            'name': 'Shared list',
+            'kind': 'general',
+            'scope': ListScope.household.name,
+          })
+          .select()
+          .single();
+      final created = AppList.fromJson(row);
+      await _profileRepo.appendGroceryListId(
+        userId,
+        ListScope.household,
+        created.id,
+      );
+    }
+  }
+
+  Future<List<AppList>> listLists(String userId) async {
+    await _ensureStarterListsForUser(userId);
+    final lists = await _loadAllListsOrdered();
     return dedupeHouseholdListsByHouseholdKindAndName(lists);
   }
 
@@ -1048,6 +1242,7 @@ class GroceryRepository {
   }
 
   Future<String?> _defaultListIdForUser(String userId) async {
+    await _ensureProfileRow(userId);
     final householdId = await _householdForUser(userId);
     if (householdId != null && householdId.isNotEmpty) {
       final existingHousehold = await _client
@@ -1055,7 +1250,7 @@ class GroceryRepository {
           .select('id')
           .eq('household_id', householdId)
           .eq('scope', ListScope.household.name)
-          .eq('kind', 'grocery')
+          .order('created_at')
           .limit(1)
           .maybeSingle();
       if (existingHousehold != null) {
@@ -1066,13 +1261,21 @@ class GroceryRepository {
           .insert({
             'owner_user_id': userId,
             'household_id': householdId,
-            'name': 'Household Grocery',
-            'kind': 'grocery',
+            'name': 'Shared list',
+            'kind': 'general',
             'scope': ListScope.household.name,
           })
           .select('id')
           .single();
-      return inserted['id']?.toString();
+      final id = inserted['id']?.toString();
+      if (id != null && id.isNotEmpty) {
+        await _profileRepo.appendGroceryListId(
+          userId,
+          ListScope.household,
+          id,
+        );
+      }
+      return id;
     }
 
     final existingPrivate = await _client
@@ -1080,7 +1283,7 @@ class GroceryRepository {
         .select('id')
         .eq('owner_user_id', userId)
         .eq('scope', ListScope.private.name)
-        .eq('kind', 'grocery')
+        .order('created_at')
         .limit(1)
         .maybeSingle();
     if (existingPrivate != null) {
@@ -1090,13 +1293,17 @@ class GroceryRepository {
         .from('lists')
         .insert({
           'owner_user_id': userId,
-          'name': 'My List',
-          'kind': 'grocery',
+          'name': 'My list',
+          'kind': 'general',
           'scope': ListScope.private.name,
         })
         .select('id')
         .single();
-    return inserted['id']?.toString();
+    final id = inserted['id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      await _profileRepo.appendGroceryListId(userId, ListScope.private, id);
+    }
+    return id;
   }
 
   Future<void> upsertDeviceToken(String userId, String token) async {
@@ -1149,6 +1356,9 @@ final listsProvider = FutureProvider<List<AppList>>((ref) async {
 });
 
 final selectedListIdProvider = StateProvider<String?>((ref) => null);
+
+final groceryItemsSortModeProvider =
+    StateProvider<GroceryItemsSortMode>((ref) => GroceryItemsSortMode.asAdded);
 
 /// Realtime + fetch per list id. [keepAlive] retains the subscription when you
 /// switch Private/Shared so the UI can show cached data instead of a cold reload.

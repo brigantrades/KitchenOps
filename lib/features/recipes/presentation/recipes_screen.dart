@@ -72,6 +72,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     final recipe = await showModalBottomSheet<Recipe>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       isDismissible: false,
       enableDrag: false,
       builder: (context) => const _RecipeBuilderSheet(),
@@ -152,6 +153,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
     final updated = await showModalBottomSheet<Recipe>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       isDismissible: false,
       enableDrag: false,
       builder: (context) => _RecipeBuilderSheet(initialRecipe: recipe),
@@ -431,15 +433,17 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
               : 'Search my recipes',
           onChanged: (_) => setState(() {}),
         ),
-        const SizedBox(height: 6),
-        SegmentedPills(
-          labels: libraryLabels,
-          selectedIndex: effectiveLibraryIndex,
-          onSelect: (idx) => setState(() {
-            _libraryIndex = idx;
-            _segmentIndex = 0;
-          }),
-        ),
+        if (hasSharedHousehold) ...[
+          const SizedBox(height: 6),
+          SegmentedPills(
+            labels: libraryLabels,
+            selectedIndex: effectiveLibraryIndex,
+            onSelect: (idx) => setState(() {
+              _libraryIndex = idx;
+              _segmentIndex = 0;
+            }),
+          ),
+        ],
         if (!(hasSharedHousehold && effectiveLibraryIndex == 0)) ...[
           const SizedBox(height: 6),
           SegmentedPills(
@@ -478,7 +482,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
         : const ['My Recipes'];
 
     return DiscoverShellScaffold(
-      title: 'Recipes',
+      title: hasSharedHousehold ? 'Recipes' : 'My Recipes',
       onNotificationsTap: () => showDiscoverNotificationsDropdown(context, ref),
       trailingActions: [
         IconButton(
@@ -3460,9 +3464,11 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       _ => 'Step 6: Final touches',
     };
 
+    final topObstruction = MediaQuery.viewPaddingOf(context).top;
     return WillPopScope(
       onWillPop: () async => false,
       child: SafeArea(
+        minimum: EdgeInsets.only(top: topObstruction),
         child: Form(
             key: _formKey,
             child: Theme(

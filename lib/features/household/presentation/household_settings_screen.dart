@@ -12,6 +12,39 @@ import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
+const _householdRecipeSharingPrivacyNote =
+    'Recipes shared with your household are only visible to members of '
+    'this household. They are not published and are not shown to people '
+    'outside your household.';
+
+class _HouseholdRecipePrivacyCallout extends StatelessWidget {
+  const _HouseholdRecipePrivacyCallout();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.lock_person_outlined,
+          size: 20,
+          color: scheme.onSurfaceVariant,
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Text(
+            _householdRecipeSharingPrivacyNote,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class HouseholdSettingsScreen extends ConsumerStatefulWidget {
   const HouseholdSettingsScreen({super.key});
 
@@ -34,6 +67,11 @@ class _HouseholdSettingsScreenState
   bool? _lastAppliedSharePlanner;
   bool? _lastAppliedShareGrocery;
   bool _working = false;
+
+  /// Emails where we sent a sign-up OTP but there is no `household_members` row yet.
+  final List<String> _pendingSignupEmails = [];
+
+  String _normalizeEmail(String value) => value.trim().toLowerCase();
 
   @override
   void dispose() {
@@ -118,8 +156,18 @@ class _HouseholdSettingsScreenState
     try {
       final result =
           await ref.read(householdRepositoryProvider).inviteByEmail(email);
+      final norm = _normalizeEmail(email);
       if (result == HouseholdInviteResult.invitedExistingMember) {
         ref.invalidate(householdMembersProvider);
+        setState(() {
+          _pendingSignupEmails.removeWhere((e) => _normalizeEmail(e) == norm);
+        });
+      } else if (result == HouseholdInviteResult.sentSignupInvite) {
+        setState(() {
+          if (!_pendingSignupEmails.any((e) => _normalizeEmail(e) == norm)) {
+            _pendingSignupEmails.add(email.trim());
+          }
+        });
       }
       _inviteEmailCtrl.clear();
       if (!mounted) return;
@@ -630,6 +678,8 @@ class _HouseholdSettingsScreenState
                       ),
                     ),
                     const SizedBox(height: AppSpacing.xs),
+                    const _HouseholdRecipePrivacyCallout(),
+                    const SizedBox(height: AppSpacing.xs),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: SegmentedButton<_RecipeShareMode>(
@@ -744,56 +794,146 @@ class _HouseholdSettingsScreenState
               ),
               error: (error, _) => Text('Could not load members: $error'),
               data: (members) {
-                if (members.isEmpty) {
+                final activeMembers = members
+                    .where(
+                      (m) => m.status == HouseholdMemberStatus.active,
+                    )
+                    .toList();
+                final invitedMembers = members
+                    .where(
+                      (m) => m.status == HouseholdMemberStatus.invited,
+                    )
+                    .toList();
+                final invitedEmails = invitedMembers
+                    .map((m) => _normalizeEmail(m.invitedEmail ?? ''))
+                    .where((e) => e.isNotEmpty)
+                    .toSet();
+                final signupOnlyPending = _pendingSignupEmails
+                    .where(
+                      (e) => !invitedEmails.contains(_normalizeEmail(e)),
+                    )
+                    .toList();
+                final hasPending =
+                    invitedMembers.isNotEmpty || signupOnlyPending.isNotEmpty;
+
+                if (activeMembers.isEmpty && !hasPending) {
                   return const Text('No members yet.');
                 }
+
+                String invitedTitle(HouseholdMember m) {
+                  final em = m.invitedEmail?.trim() ?? '';
+                  if (em.isNotEmpty) return em;
+                  return m.displayName;
+                }
+
                 return Column(
-                  children: members
-                      .map(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ...activeMembers.map(
+                      (member) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          member.role.name == 'owner'
+                              ? Icons.shield_outlined
+                              : Icons.person_outline_rounded,
+                        ),
+                        title: Text(member.displayName),
+                        subtitle: Text(
+                          member.role == HouseholdRole.owner
+                              ? 'Owner'
+                              : 'Member',
+                        ),
+                        trailing: isCurrentOwner &&
+                                user != null &&
+                                member.userId != user.id &&
+                                member.role != HouseholdRole.owner
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Make owner',
+                                    onPressed: _working
+                                        ? null
+                                        : () =>
+                                            _promoteMemberToOwner(member),
+                                    icon: const Icon(
+                                      Icons.workspace_premium_outlined,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Remove member',
+                                    onPressed: _working
+                                        ? null
+                                        : () => _removeMember(member),
+                                    icon: const Icon(
+                                      Icons.person_remove_alt_1_rounded,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : null,
+                      ),
+                    ),
+                    if (hasPending) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        'Pending invites',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'These people have not joined the household yet.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      ...invitedMembers.map(
                         (member) => ListTile(
                           contentPadding: EdgeInsets.zero,
-                          leading: Icon(
-                            member.role.name == 'owner'
-                                ? Icons.shield_outlined
-                                : Icons.person_outline_rounded,
-                          ),
-                          title: Text(member.displayName),
-                          subtitle: Text(
-                            '${member.role.name} • ${member.status.name}',
-                          ),
+                          leading: const Icon(Icons.mark_email_unread_outlined),
+                          title: Text(invitedTitle(member)),
+                          subtitle: const Text('Waiting to accept in the app'),
                           trailing: isCurrentOwner &&
                                   user != null &&
-                                  member.userId != user.id &&
-                                  member.role != HouseholdRole.owner &&
-                                  member.status == HouseholdMemberStatus.active
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      tooltip: 'Make owner',
-                                      onPressed: _working
-                                          ? null
-                                          : () =>
-                                              _promoteMemberToOwner(member),
-                                      icon: const Icon(
-                                        Icons.workspace_premium_outlined,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Remove member',
-                                      onPressed: _working
-                                          ? null
-                                          : () => _removeMember(member),
-                                      icon: const Icon(
-                                        Icons.person_remove_alt_1_rounded,
-                                      ),
-                                    ),
-                                  ],
+                                  member.userId != user.id
+                              ? IconButton(
+                                  tooltip: 'Revoke invite',
+                                  onPressed: _working
+                                      ? null
+                                      : () => _removeMember(member),
+                                  icon: const Icon(Icons.close_rounded),
                                 )
                               : null,
                         ),
-                      )
-                      .toList(),
+                      ),
+                      ...signupOnlyPending.map(
+                        (email) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.forward_to_inbox_outlined),
+                          title: Text(email),
+                          subtitle: const Text(
+                            'Sign-up invite sent — no account yet',
+                          ),
+                          trailing: IconButton(
+                            tooltip: 'Dismiss',
+                            onPressed: () {
+                              setState(() {
+                                _pendingSignupEmails.removeWhere(
+                                  (e) => _normalizeEmail(e) == _normalizeEmail(email),
+                                );
+                              });
+                            },
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 );
               },
             ),
@@ -907,6 +1047,8 @@ class _HouseholdMigrationWizardState
             ),
             const SizedBox(height: AppSpacing.sm),
             const Text('Recipes'),
+            const SizedBox(height: AppSpacing.xs),
+            const _HouseholdRecipePrivacyCallout(),
             const SizedBox(height: AppSpacing.xs),
             Align(
               alignment: Alignment.centerLeft,

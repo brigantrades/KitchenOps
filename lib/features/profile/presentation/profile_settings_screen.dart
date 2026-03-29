@@ -40,7 +40,8 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
 
   static const _householdTooltip =
       'A household lets you share your planner, grocery lists, and recipes '
-      'with family or roommates.';
+      'with family or roommates. Shared recipes stay private to your '
+      'household and are not visible to anyone outside it.';
 
   @override
   Widget build(BuildContext context) {
@@ -345,30 +346,26 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
               const SizedBox(height: AppSpacing.sm),
               SectionCard(
                 title: 'Household',
+                titleTrailing: IconButton(
+                  icon: const Icon(Icons.info_outline_rounded),
+                  tooltip: _householdTooltip,
+                  onPressed: () {
+                    showModalBottomSheet<void>(
+                      context: context,
+                      showDragHandle: true,
+                      builder: (ctx) => Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                        child: Text(
+                          _householdTooltip,
+                          style: Theme.of(ctx).textTheme.bodyLarge,
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: IconButton(
-                        icon: const Icon(Icons.info_outline_rounded),
-                        tooltip: _householdTooltip,
-                        onPressed: () {
-                          showModalBottomSheet<void>(
-                            context: context,
-                            showDragHandle: true,
-                            builder: (ctx) => Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                  20, 0, 20, 24),
-                              child: Text(
-                                _householdTooltip,
-                                style: Theme.of(ctx).textTheme.bodyLarge,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
                     householdAsync.when(
                       loading: () => const Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
@@ -389,7 +386,8 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'You can share planner, grocery lists, and recipes with your household.',
+                                'You can share planner, grocery lists, and recipes with your household. '
+                                'Shared recipes are only visible to household members—not published or shown to others.',
                                 style: Theme.of(context)
                                     .textTheme
                                     .bodySmall

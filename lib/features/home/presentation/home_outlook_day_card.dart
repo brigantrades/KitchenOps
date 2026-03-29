@@ -44,6 +44,7 @@ class HomeOutlookDayCard extends StatelessWidget {
     required this.daySlots,
     required this.recipes,
     required this.onTap,
+    this.onPlanEmptySlot,
   });
 
   final DateTime date;
@@ -52,6 +53,10 @@ class HomeOutlookDayCard extends StatelessWidget {
   final List<MealPlanSlot> daySlots;
   final List<Recipe> recipes;
   final VoidCallback onTap;
+
+  /// When set, empty slots use a nested tap target to open the meal editor
+  /// without relying on the card-level [onTap].
+  final void Function(MealPlanSlot slot)? onPlanEmptySlot;
 
   static const BorderRadius cardRadius = BorderRadius.all(Radius.circular(16));
 
@@ -157,12 +162,49 @@ class HomeOutlookDayCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 if (daySlots.isEmpty)
-                  Text(
-                    'Nothing planned',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: ribbonColor,
-                          fontStyle: FontStyle.italic,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Nothing planned',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: ribbonColor,
+                              fontStyle: FontStyle.italic,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      Semantics(
+                        hint: 'Opens options to plan this day',
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.edit_calendar_outlined,
+                              size: 18,
+                              color: isDark
+                                  ? scheme.primary
+                                  : AppBrand.deepTeal,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Tap to plan this day',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: isDark
+                                          ? scheme.primary
+                                          : AppBrand.deepTeal,
+                                      height: 1.3,
+                                    ),
+                              ),
+                            ),
+                          ],
                         ),
+                      ),
+                    ],
                   )
                 else
                   ...daySlots.map((slot) {
@@ -227,15 +269,62 @@ class HomeOutlookDayCard extends StatelessWidget {
 
     final upper = homeOutlookSlotUpperLabel(slot, daySlots);
     if (!slot.hasPlannedContent) {
-      return Text(
-        'NO $upper PLANNED',
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: ribbonColor,
-              fontStyle: FontStyle.italic,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.35,
+      final scheme = Theme.of(context).colorScheme;
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      final ctaColor = isDark ? scheme.primary : AppBrand.deepTeal;
+      final emptySlotColumn = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'NO $upper PLANNED',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: ribbonColor,
+                  fontStyle: FontStyle.italic,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.35,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Semantics(
+            hint: 'Opens the meal planner editor for this slot',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.add_circle_outline_rounded,
+                  size: 18,
+                  color: ctaColor,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Choose a meal',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: ctaColor,
+                          height: 1.3,
+                        ),
+                  ),
+                ),
+              ],
             ),
+          ),
+        ],
       );
+      if (onPlanEmptySlot != null) {
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => onPlanEmptySlot!(slot),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: emptySlotColumn,
+            ),
+          ),
+        );
+      }
+      return emptySlotColumn;
     }
 
     final line = plannerSlotPrimarySummaryLine(slot, recipes);

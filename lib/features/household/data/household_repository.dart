@@ -292,7 +292,6 @@ class HouseholdRepository {
         .from('lists')
         .select('id')
         .eq('owner_user_id', user.id)
-        .eq('kind', 'grocery')
         .eq('scope', ListScope.household.name)
         .eq('household_id', householdId)
         .limit(1);
@@ -309,7 +308,7 @@ class HouseholdRepository {
     try {
       await _client.rpc(
         'invite_household_member',
-        params: {'email': email},
+        params: {'invite_email': email},
       );
       return HouseholdInviteResult.invitedExistingMember;
     } on PostgrestException catch (error) {
