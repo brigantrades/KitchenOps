@@ -56,6 +56,10 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
       invalidateActiveGroceryStreams(ref);
       ref.invalidate(recipesProvider);
       ref.invalidate(plannerThreeDayOutlookSlotsProvider);
+      if (Env.firebaseEnabled) {
+        final uid = ref.read(currentUserProvider)?.id;
+        unawaited(ref.read(pushNotificationServiceProvider).initForUser(uid));
+      }
     }
   }
 
@@ -91,6 +95,16 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
     ref.listen<User?>(currentUserProvider, (prev, next) {
       if (prev == null && next != null) {
         ref.read(shareImportNotifierProvider.notifier).flushPendingAfterLogin();
+      }
+      if (Env.firebaseEnabled) {
+        if (prev != null && next == null) {
+          ref.read(pushNotificationServiceProvider).clearRegistrationState();
+        }
+        if (next != null && prev?.id != next.id) {
+          unawaited(
+            ref.read(pushNotificationServiceProvider).initForUser(next.id),
+          );
+        }
       }
     });
     ref.listen<ShareImportState>(shareImportNotifierProvider, (prev, next) {

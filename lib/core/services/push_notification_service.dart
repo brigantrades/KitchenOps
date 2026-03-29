@@ -17,6 +17,13 @@ class PushNotificationService {
   String? _lastSyncedUserId;
   String? _lastSyncedToken;
 
+  /// Clears in-memory sync flags after sign-out so the next session always
+  /// re-fetches the FCM token and re-upserts to [user_device_tokens].
+  void clearRegistrationState() {
+    _lastSyncedUserId = null;
+    _lastSyncedToken = null;
+  }
+
   static void _openGroceryFromPayload(RemoteMessage message) {
     final type = message.data['type'];
     if (type != 'list_item_added') return;
@@ -111,12 +118,16 @@ class PushNotificationService {
           _openGroceryFromPayload(initial);
         });
       }
-      messaging.onTokenRefresh.listen((token) {
+      messaging.onTokenRefresh.listen((token) async {
         final activeUserId = _activeUserId;
         if (activeUserId == null || activeUserId.isEmpty) return;
-        _lastSyncedUserId = activeUserId;
-        _lastSyncedToken = token;
-        _upsertToken(activeUserId, token);
+        try {
+          await _upsertToken(activeUserId, token);
+          _lastSyncedUserId = activeUserId;
+          _lastSyncedToken = token;
+        } catch (e, st) {
+          debugPrint('PushNotificationService onTokenRefresh upsert failed: $e\n$st');
+        }
       });
       _initialized = true;
     }
@@ -158,9 +169,11 @@ class PushNotificationService {
       },
     );
     // #endregion
+    // Only mark in-memory sync after Supabase accepts the row; otherwise retries
+    // (login, resume, next build) can run again.
+    await _upsertToken(userId, token);
     _lastSyncedUserId = userId;
     _lastSyncedToken = token;
-    await _upsertToken(userId, token);
   }
 
   Future<void> _upsertToken(String userId, String token) async {
