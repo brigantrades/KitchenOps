@@ -949,7 +949,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
               return <RecentGroceryEntry>[];
             }
             final cart = items;
-            return recentsAll
+            final list = recentsAll
                 .where(
                   (r) => !cart
                       .map((i) => normalizeGroceryItemName(i.name))
@@ -957,6 +957,11 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 )
                 .take(24)
                 .toList();
+            list.sort(
+              (a, b) =>
+                  a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+            );
+            return list;
           }();
 
           return ListView(
