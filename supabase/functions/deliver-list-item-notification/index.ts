@@ -191,6 +191,7 @@ Deno.serve(async (req) => {
   };
 
   let sent = 0;
+  let fcmFailures = 0;
   for (const deviceToken of tokens) {
     try {
       await sendFcmDataMessage(
@@ -203,12 +204,41 @@ Deno.serve(async (req) => {
       );
       sent++;
     } catch (e) {
+      fcmFailures++;
       console.error("send exception", e);
     }
   }
 
+  // #region agent log
+  console.error(
+    JSON.stringify({
+      sessionId: "3e34f6",
+      hypothesisId: "H-C,D,E",
+      location: "deliver-list-item-notification",
+      message: "delivery_summary",
+      data: {
+        recipientCount: recipientIds.length,
+        recipientIdPrefixes: recipientIds.map((id) => id.slice(0, 8)),
+        tokenCount: tokens.length,
+        sent,
+        fcmFailures,
+        actorPrefix: record.actor_user_id?.slice(0, 8) ?? "",
+        householdPrefix: record.household_id?.slice(0, 8) ?? "",
+      },
+      timestamp: Date.now(),
+      runId: "pre-fix",
+    }),
+  );
+  // #endregion
+
   await markProcessed(supabaseUrl, serviceKey, record.id);
-  return jsonResponse({ ok: true, sent, devices: tokens.length });
+  return jsonResponse({
+    ok: true,
+    sent,
+    devices: tokens.length,
+    recipient_count: recipientIds.length,
+    fcm_failures: fcmFailures,
+  });
 });
 
 async function markProcessed(
