@@ -20,9 +20,12 @@ const double _groceryCardGridSpacing = kGroceryCardGridSpacing;
 const double _groceryCardAspectRatio = kGroceryCardAspectRatio;
 
 /// Lists grid cards — very light blue (light mode); subtle blue-gray (dark).
-Color _groceryListItemCardColor(BuildContext context) {
+/// When [purchased] is true, the item is still on the list but marked done from
+/// home — use a softer fill so it reads differently from open items.
+Color _groceryListItemCardColor(BuildContext context, {bool purchased = false}) {
   final scheme = Theme.of(context).colorScheme;
-  return Theme.of(context).brightness == Brightness.dark
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  final base = isDark
       ? (Color.lerp(
               scheme.surfaceContainerHighest,
               scheme.primary,
@@ -30,6 +33,10 @@ Color _groceryListItemCardColor(BuildContext context) {
             ) ??
             scheme.surfaceContainerHighest)
       : const Color(0xFFEFF6FC);
+  if (!purchased) return base;
+  return isDark
+      ? (Color.lerp(base, scheme.surfaceContainerLow, 0.5) ?? base)
+      : (Color.lerp(base, scheme.surfaceContainerHighest, 0.75) ?? base);
 }
 
 class GroceryScreen extends ConsumerStatefulWidget {
@@ -51,23 +58,14 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   }
 
   Future<void> _removeItem(GroceryItem item) async {
-    await ref.read(groceryRecentsProvider.notifier).recordRemovedItem(item);
-    await ref.read(groceryRepositoryProvider).removeItem(item.id);
-    invalidateActiveGroceryStreams(ref);
-  }
-
-  Future<void> _toggleItemStatus(GroceryItem item) async {
-    final next =
-        item.isDone ? GroceryItemStatus.open : GroceryItemStatus.done;
     try {
-      await ref
-          .read(groceryRepositoryProvider)
-          .updateItemStatus(item.id, next);
+      await ref.read(groceryRecentsProvider.notifier).recordRemovedItem(item);
+      await ref.read(groceryRepositoryProvider).removeItem(item.id);
       invalidateActiveGroceryStreams(ref);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not update item right now.')),
+        const SnackBar(content: Text('Could not remove item right now.')),
       );
     }
   }
@@ -941,7 +939,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                             showNewBadge: showNewBadge,
                             onRemove: _removeItem,
                             onUpdateQuantity: _promptUpdateQuantity,
-                            onToggleStatus: _toggleItemStatus,
                           );
                         },
                       );
@@ -1483,14 +1480,12 @@ class _GroceryItemCard extends StatelessWidget {
     required this.showNewBadge,
     required this.onRemove,
     required this.onUpdateQuantity,
-    required this.onToggleStatus,
   });
 
   final GroceryItem item;
   final bool showNewBadge;
   final Future<void> Function(GroceryItem item) onRemove;
   final Future<void> Function(GroceryItem item) onUpdateQuantity;
-  final Future<void> Function(GroceryItem item) onToggleStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -1501,6 +1496,7 @@ class _GroceryItemCard extends StatelessWidget {
         : '${_displayQuantity(quantityValue)} ${item.unit!.trim()}';
     final scheme = Theme.of(context).colorScheme;
     final foodAsset = foodIconAssetForName(item.name, category: item.category);
+    // Match home "Purchased" state: done items show strikethrough here too; tap still removes.
     final nameStyle = TextStyle(
       color: scheme.onSurface.withValues(alpha: item.isDone ? 0.55 : 1),
       fontWeight: FontWeight.w600,
@@ -1509,11 +1505,11 @@ class _GroceryItemCard extends StatelessWidget {
       decorationColor: scheme.onSurface.withValues(alpha: 0.45),
     );
     return Material(
-      color: _groceryListItemCardColor(context),
+      color: _groceryListItemCardColor(context, purchased: item.isDone),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => unawaited(onToggleStatus(item)),
+        onTap: () => unawaited(onRemove(item)),
         onLongPress: () {
           showModalBottomSheet<void>(
             context: context,

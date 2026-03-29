@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
 
 /// Magazine-style day cell for the planner grid (reference UI).
@@ -26,9 +27,12 @@ class PlannerMagazineDayCard extends StatelessWidget {
   static const BorderRadius cardRadius = BorderRadius.all(Radius.circular(20));
 
   static const Color _lightCard = Color(0xFFFFFFFF);
-  static const Color _lightTodayFill = Color(0xFFEEF5F0);
-  static const Color _lightTodayBorder = Color(0xFF4A7C59);
-  static const Color _lightTodayStar = Color(0xFF3D6B4A);
+  /// Matches [DiscoverShellScaffold] header strip ([AppBrand.paleMint]).
+  static const Color _lightTodayFill = AppBrand.paleMint;
+  /// Teal ring aligned with shell avatar / notification accent ([AppBrand.deepTeal]).
+  static final Color _lightTodayBorder =
+      AppBrand.deepTeal.withValues(alpha: 0.5);
+  static const Color _lightTodayStar = AppBrand.deepTeal;
   static const Color _lightMuted = Color(0xFF9AA3B2);
   static const Color _lightBody = Color(0xFF5C6578);
   static const Color _diningPillBg = Color(0xFFE8F5E9);

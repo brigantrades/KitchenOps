@@ -119,10 +119,13 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(18),
                             child: Image.asset(
-                              'assets/images/branding/kitchenops_logo.png',
-                              width: 180,
-                              height: 180,
-                              fit: BoxFit.cover,
+                              'assets/images/branding/leckerly_logo_mark.png',
+                              width: 260,
+                              height: 142,
+                              fit: BoxFit.contain,
+                              filterQuality: FilterQuality.high,
+                              isAntiAlias: true,
+                              semanticLabel: 'Leckerly logo',
                               errorBuilder: (_, __, ___) => CircleAvatar(
                                 radius: 48,
                                 backgroundColor: scheme.primaryContainer,
