@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,16 +23,40 @@ import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.da
 import 'package:plateplan/features/recipes/presentation/recipes_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Notifies [GoRouter] when Supabase auth session changes (e.g. OAuth return)
+/// so [redirect] runs again. Without this, users can stay on `/auth` until a
+/// full restart even though `auth.currentUser` is already set.
+final class _GoRouterAuthRefresh extends ChangeNotifier {
+  _GoRouterAuthRefresh(this._client) {
+    _sub = _client.auth.onAuthStateChange.listen((_) => notifyListeners());
+  }
+
+  final SupabaseClient _client;
+  late final StreamSubscription<AuthState> _sub;
+
+  @override
+  void dispose() {
+    unawaited(_sub.cancel());
+    super.dispose();
+  }
+}
+
 final appRouterProvider = Provider<GoRouter>((ref) {
   final observers = Env.firebaseEnabled
       ? <NavigatorObserver>[
           FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance)
         ]
       : const <NavigatorObserver>[];
+  _GoRouterAuthRefresh? authRefresh;
+  if (Env.hasSupabase) {
+    authRefresh = _GoRouterAuthRefresh(Supabase.instance.client);
+    ref.onDispose(authRefresh.dispose);
+  }
   return GoRouter(
     navigatorKey: rootNavigatorKey,
     initialLocation: '/auth',
     observers: observers,
+    refreshListenable: authRefresh,
     redirect: (context, state) {
       final loggedIn =
           !Env.hasSupabase || Supabase.instance.client.auth.currentUser != null;

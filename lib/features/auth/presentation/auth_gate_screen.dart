@@ -18,12 +18,20 @@ class _AuthGateScreenState extends ConsumerState<AuthGateScreen> {
   bool _busy = false;
   ProviderSubscription<User?>? _userSubscription;
   Future<void> _routeForUser(User user) async {
-    final repo = ref.read(profileRepositoryProvider);
-    final profile = await repo.fetchProfile(user.id);
     if (!mounted) return;
-    final needsOnboarding =
-        profile == null || profile.name.trim().isEmpty;
-    context.go(needsOnboarding ? '/onboarding' : '/');
+    try {
+      final repo = ref.read(profileRepositoryProvider);
+      final profile = await repo.fetchProfile(user.id);
+      if (!mounted) return;
+      final needsOnboarding =
+          profile == null || profile.name.trim().isEmpty;
+      context.go(needsOnboarding ? '/onboarding' : '/');
+    } catch (_) {
+      if (!mounted) return;
+      // Still leave the auth screen so OAuth users are not stuck if profile
+      // fetch fails transiently; shell/home can retry profile.
+      context.go('/');
+    }
   }
 
   @override
