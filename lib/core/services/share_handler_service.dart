@@ -253,8 +253,27 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     return false;
   }
 
+  /// Android can surface the OAuth return URL (e.g. [leckerly://login-callback/])
+  /// through [ReceiveSharingIntent] when coming back from the browser. That is
+  /// not recipe content — ignore silently so we do not show "No recipe content detected."
+  bool _looksLikeAuthOrAppRouting(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    final lower = t.toLowerCase();
+    if (lower.startsWith('leckerly://')) return true;
+    if (lower.contains('login-callback')) return true;
+    if (lower.contains('supabase.co') && lower.contains('/auth/')) return true;
+    if (lower.contains('access_token=') || lower.contains('refresh_token=')) {
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _considerImport(String combined, String? imagePath) async {
     final trimmed = combined.trim();
+    if (_looksLikeAuthOrAppRouting(trimmed)) {
+      return;
+    }
     if (trimmed.isEmpty && (imagePath == null || imagePath.isEmpty)) {
       state = state.copyWith(
         snackMessage: 'No shared content to import.',
