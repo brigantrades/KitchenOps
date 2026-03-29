@@ -14,7 +14,12 @@ type NotificationEventRow = {
   event_type: string;
   household_id: string | null;
   actor_user_id: string | null;
-  payload: { list_id?: string; list_item_id?: string; name?: string };
+  payload: {
+    list_id?: string;
+    list_item_id?: string;
+    name?: string;
+    list_name?: string;
+  };
   processed_at: string | null;
 };
 
@@ -145,6 +150,26 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
+  let listDisplay = typeof record.payload?.list_name === "string"
+    ? record.payload.list_name.trim()
+    : "";
+  if (!listDisplay && listId) {
+    const { data: listRow, error: listErr } = await supabase
+      .from("lists")
+      .select("name")
+      .eq("id", listId)
+      .maybeSingle();
+    if (listErr) {
+      console.error("lists lookup for notification body", listErr);
+    } else {
+      const n = listRow?.name;
+      listDisplay = typeof n === "string" ? n.trim() : "";
+    }
+  }
+  if (!listDisplay) {
+    listDisplay = "your list";
+  }
+
   const { data: members, error: membersError } = await supabase
     .from("household_members")
     .select("user_id")
@@ -182,12 +207,13 @@ Deno.serve(async (req) => {
   const { accessToken, projectId } = await getFcmAccessToken(saJson);
 
   const title = "New grocery item";
-  const body = `${itemName} was added to your household list`;
+  const body = `${itemName} was added to ${listDisplay}`;
   const data: Record<string, string> = {
     type: "list_item_added",
     list_id: listId,
     list_item_id: listItemId,
     household_id: record.household_id,
+    list_name: listDisplay,
   };
 
   let sent = 0;
