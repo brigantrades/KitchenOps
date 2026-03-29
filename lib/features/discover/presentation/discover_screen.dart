@@ -615,7 +615,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        'Role: ${invite.role.name}${invite.invitedEmail != null ? '  •  ${invite.invitedEmail}' : ''}',
+                                        [
+                                          if (invite.invitedByEmail != null)
+                                            'From ${invite.invitedByEmail}',
+                                          'Role: ${invite.role.name}',
+                                        ].join('  •  '),
                                         style: Theme.of(context)
                                             .textTheme
                                             .bodySmall,

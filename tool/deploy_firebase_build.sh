@@ -8,7 +8,10 @@ set -euo pipefail
 # Usage (from repo root):
 #   ./tool/deploy_firebase_build.sh --dart-define-from-file=env/dev.json
 #
-# Any extra args are passed to `flutter build apk` (after --release).
+# Any extra args are passed through to `flutter build apk` before the trailing
+# FIREBASE_ENABLED define. `--dart-define=FIREBASE_ENABLED=true` is always
+# appended so App Distribution / tester builds register FCM tokens in
+# user_device_tokens. For a build without FCM, run `flutter build apk` directly.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -16,8 +19,8 @@ cd "$ROOT_DIR"
 echo "Bumping patch version in pubspec.yaml..."
 dart run tool/bump_version.dart patch
 
-echo "Building Android release APK..."
-flutter build apk --release "$@"
+echo "Building Android release APK (FIREBASE_ENABLED=true appended)..."
+flutter build apk --release "$@" --dart-define=FIREBASE_ENABLED=true
 
 echo
 echo "Build complete with new version from pubspec.yaml."

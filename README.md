@@ -26,7 +26,7 @@ ForkFlow is a Flutter mobile app for weekly meal planning, recipe discovery, gro
 
 When someone adds an item to a **household** grocery list, Postgres enqueues a row in `notification_events` (`list_item_added`). The Edge Function [`supabase/functions/deliver-list-item-notification`](supabase/functions/deliver-list-item-notification) sends FCM to other active household members.
 
-1. **Flutter:** Build with `--dart-define=FIREBASE_ENABLED=true` (in addition to your other defines). Ensure Firebase Cloud Messaging is enabled for the app (Android: default FCM setup from `flutterfire configure`; iOS: push capability + APNs as per Firebase docs). The app registers tokens in `user_device_tokens`.
+1. **Flutter:** Build with `--dart-define=FIREBASE_ENABLED=true` (in addition to your other defines). The default in code is **off** ([`Env.firebaseEnabled`](lib/core/config/env.dart)); omitting the define means **no** `user_device_tokens` rows. [`tool/deploy_firebase_build.sh`](tool/deploy_firebase_build.sh) appends this define for you. Ensure Firebase Cloud Messaging is enabled for the app (Android: default FCM setup from `flutterfire configure`; iOS: push capability + APNs as per Firebase docs). Diagnostic SQL: [`tool/diagnostics/user_device_tokens_sanity.sql`](tool/diagnostics/user_device_tokens_sanity.sql).
 2. **Firebase:** Create a service account with **Firebase Cloud Messaging API** access and download JSON.
 3. **Supabase Edge Function:** From the repo root (with [Supabase CLI](https://supabase.com/docs/guides/cli) linked to your project):
    - `supabase secrets set NOTIFICATION_WEBHOOK_SECRET="<random-long-secret>"`

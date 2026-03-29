@@ -1040,12 +1040,16 @@ class HouseholdInvite {
     required this.householdName,
     required this.role,
     this.invitedEmail,
+    this.invitedByEmail,
   });
 
   final String householdId;
   final String householdName;
   final HouseholdRole role;
+  /// Email address the invite was sent to (the invitee).
   final String? invitedEmail;
+  /// Account email of the user who sent the invite.
+  final String? invitedByEmail;
 
   factory HouseholdInvite.fromJson(Map<String, dynamic> json) {
     final household = json['households'] as Map<String, dynamic>?;
@@ -1057,6 +1061,7 @@ class HouseholdInvite {
           ) ??
           HouseholdRole.member,
       invitedEmail: json['invited_email']?.toString(),
+      invitedByEmail: json['invited_by_email']?.toString(),
     );
   }
 }

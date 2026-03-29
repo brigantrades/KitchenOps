@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,23 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class PushNotificationService {
   PushNotificationService();
+
+  /// Non-fatal Crashlytics in release when Firebase is up; always [debugPrint].
+  static void _recordPushRegistrationFailure(
+    String reason,
+    Object error,
+    StackTrace stack,
+  ) {
+    debugPrint('PushNotificationService: $reason — $error\n$stack');
+    if (!kReleaseMode) return;
+    if (Firebase.apps.isEmpty) return;
+    FirebaseCrashlytics.instance.recordError(
+      error,
+      stack,
+      reason: 'push_registration: $reason',
+      fatal: false,
+    );
+  }
 
   FirebaseMessaging? _messaging;
   bool _initialized = false;
@@ -99,7 +117,7 @@ class PushNotificationService {
       // #endregion
       // FCM / Installations often fails on emulators or without Play Services;
       // must not affect Supabase-backed app data.
-      debugPrint('PushNotificationService.initForUser skipped: $e\n$st');
+      _recordPushRegistrationFailure('init_caught_exception', e, st);
     }
   }
 
@@ -137,7 +155,7 @@ class PushNotificationService {
           _lastSyncedUserId = activeUserId;
           _lastSyncedToken = token;
         } catch (e, st) {
-          debugPrint('PushNotificationService onTokenRefresh upsert failed: $e\n$st');
+          _recordPushRegistrationFailure('onTokenRefresh_upsert', e, st);
         }
       });
       _initialized = true;
@@ -167,6 +185,11 @@ class PushNotificationService {
         data: const {},
       );
       // #endregion
+      _recordPushRegistrationFailure(
+        'getToken_null_or_empty',
+        Exception('FCM getToken returned null or empty'),
+        StackTrace.current,
+      );
       return;
     }
     // #region agent log

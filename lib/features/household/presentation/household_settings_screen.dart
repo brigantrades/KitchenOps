@@ -625,7 +625,7 @@ class _HouseholdSettingsScreenState
 
               return SectionCard(
                 title: 'Create Household',
-                subtitle: 'Set up shared planning with your spouse.',
+                subtitle: 'Set up shared planning for your household.',
                 child: Column(
                   children: [
                     TextField(
@@ -762,7 +762,7 @@ class _HouseholdSettingsScreenState
           SectionCard(
             title: 'Invite Member',
             subtitle: hasHousehold
-                ? 'Add your spouse by account email.'
+                ? 'Add someone to your household using their account email.'
                 : 'Create a household first to invite others.',
             child: Column(
               children: [

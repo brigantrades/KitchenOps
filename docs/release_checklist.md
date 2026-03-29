@@ -32,7 +32,13 @@ Commit the updated `pubspec.yaml`, then build and upload to Firebase.
 - Run `flutterfire configure` for Android + iOS.
 - Replace placeholders in `lib/firebase_options.dart`.
 - Enable Firebase Analytics and Crashlytics dashboards.
-- For household grocery push: enable FCM; release builds use `--dart-define=FIREBASE_ENABLED=true`; service account JSON for Edge Function (see README).
+- **Household grocery push** requires FCM token registration in the client. Without `--dart-define=FIREBASE_ENABLED=true`, [`Env.firebaseEnabled`](../lib/core/config/env.dart) stays false: Firebase is not initialized and **no rows are written to `user_device_tokens`**, so the Edge Function has nothing to send to.
+- Examples (always include the define on **every** release artifact testers or production users install):
+  - `./tool/deploy_firebase_build.sh --dart-define-from-file=env/dev.json` (appends `FIREBASE_ENABLED=true` automatically).
+  - `flutter build appbundle --release --dart-define-from-file=env/prod.json --dart-define=FIREBASE_ENABLED=true`
+  - `flutter build ipa --release --dart-define-from-file=env/prod.json --dart-define=FIREBASE_ENABLED=true`
+- If `Firebase.initializeApp` throws at startup (wrong `google-services` / `GoogleService-Info.plist`), the app still runs but `Firebase.apps` stays empty and push registration is skipped—check device logs for `Firebase initialize failed`.
+- Service account JSON for the `deliver-list-item-notification` Edge Function (see README).
 
 ## Supabase
 - Apply migrations in `supabase/migrations`.

@@ -329,7 +329,9 @@ class HouseholdRepository {
     if (user == null) return const [];
     final rows = await _client
         .from('household_members')
-        .select('household_id,invited_email,role,status,households(name)')
+        .select(
+          'household_id,invited_email,invited_by_email,role,status,households(name)',
+        )
         .eq('user_id', user.id)
         .eq('status', HouseholdMemberStatus.invited.name)
         .order('created_at', ascending: false);

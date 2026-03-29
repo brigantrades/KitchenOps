@@ -161,7 +161,8 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                     title: invites.length == 1
                         ? 'Household Invite'
                         : 'Household Invites',
-                    subtitle: 'Accept or reject without leaving the app.',
+                    subtitle:
+                        'Accept or decline without leaving the app. Each invite shows who invited you.',
                     child: Column(
                       children: invites
                           .map(
@@ -185,6 +186,15 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                                         .textTheme
                                         .titleSmall,
                                   ),
+                                  if (invite.invitedByEmail != null) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'From ${invite.invitedByEmail}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
+                                    ),
+                                  ],
                                   const SizedBox(height: 4),
                                   Text(
                                     'Role: ${invite.role.name}',
