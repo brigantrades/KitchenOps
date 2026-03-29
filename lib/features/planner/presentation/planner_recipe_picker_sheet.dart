@@ -105,9 +105,17 @@ class _PlannerRecipePickerSheetState
         hasSharedHousehold && effectiveLibraryIndex == 0;
     final List<Recipe> visible;
     if (isHouseholdLibrary) {
-      visible = filtered
+      final householdBase = filtered
           .where((r) => r.visibility == RecipeVisibility.household)
           .toList();
+      final hhFavorites =
+          householdBase.where((r) => r.isFavorite).toList();
+      final hhToTry = householdBase.where((r) => r.isToTry).toList();
+      visible = switch (_segmentIndex) {
+        1 => hhFavorites,
+        2 => hhToTry,
+        _ => householdBase,
+      };
     } else {
       final personal =
           filtered.where((r) => r.visibility != RecipeVisibility.household).toList();
@@ -120,6 +128,22 @@ class _PlannerRecipePickerSheetState
       };
     }
     final displayed = visible.where(_recipePassesMealFilter).toList();
+
+    final emptyListMessage = isHouseholdLibrary
+        ? switch (_segmentIndex) {
+            1 =>
+              'No household favorites yet. Open a household recipe and turn on My Favorites in Lists & Sharing.',
+            2 =>
+              'Nothing in To Try for household recipes. Mark one from Lists & Sharing.',
+            _ => 'No recipes yet. Add one in Discover or Planner.',
+          }
+        : switch (_segmentIndex) {
+            1 =>
+              'No favorites yet. Open a personal recipe and turn on My Favorites.',
+            2 =>
+              'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
+            _ => 'No recipes yet. Add one in Discover or Planner.',
+          };
 
     final sheetBodyHeight =
         (MediaQuery.of(context).size.height * 0.62).clamp(340.0, 560.0);
@@ -156,14 +180,12 @@ class _PlannerRecipePickerSheetState
                 _segmentIndex = 0;
               }),
             ),
-            if (!(hasSharedHousehold && effectiveLibraryIndex == 0)) ...[
-              const SizedBox(height: 4),
-              SegmentedPills(
-                labels: const ['All', 'Favorites', 'To Try'],
-                selectedIndex: _segmentIndex,
-                onSelect: (idx) => setState(() => _segmentIndex = idx),
-              ),
-            ],
+            const SizedBox(height: 4),
+            SegmentedPills(
+              labels: const ['All', 'Favorites', 'To Try'],
+              selectedIndex: _segmentIndex,
+              onSelect: (idx) => setState(() => _segmentIndex = idx),
+            ),
             const SizedBox(height: 4),
             Text(
               'Meal type',
@@ -220,18 +242,7 @@ class _PlannerRecipePickerSheetState
             Expanded(
               child: displayed.isEmpty
                   ? Center(
-                      child: Text(
-                        isHouseholdLibrary
-                            ? 'No recipes yet. Add one in Discover or Planner.'
-                            : switch (_segmentIndex) {
-                                1 =>
-                                  'No favorites yet. Open a personal recipe and turn on My Favorites.',
-                                2 =>
-                                  'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
-                                _ =>
-                                  'No recipes yet. Add one in Discover or Planner.',
-                              },
-                      ),
+                      child: Text(emptyListMessage),
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
