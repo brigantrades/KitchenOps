@@ -17,11 +17,22 @@ class PushNotificationService {
   String? _lastSyncedUserId;
   String? _lastSyncedToken;
 
-  /// Clears in-memory sync flags after sign-out so the next session always
-  /// re-fetches the FCM token and re-upserts to [user_device_tokens].
-  void clearRegistrationState() {
+  /// Clears in-memory sync flags and revokes the FCM token on **this device**
+  /// so the next sign-in must call [getToken] again and upsert a new row to
+  /// [user_device_tokens]. Call from sign-out (e.g. via [unawaited]).
+  Future<void> invalidateLocalPushRegistration() async {
     _lastSyncedUserId = null;
     _lastSyncedToken = null;
+    _activeUserId = null;
+    if (!Env.firebaseEnabled || Firebase.apps.isEmpty) {
+      return;
+    }
+    try {
+      final messaging = _messaging ?? FirebaseMessaging.instance;
+      await messaging.deleteToken();
+    } catch (e, st) {
+      debugPrint('PushNotificationService.invalidateLocalPushRegistration: $e\n$st');
+    }
   }
 
   static void _openGroceryFromPayload(RemoteMessage message) {

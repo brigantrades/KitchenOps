@@ -98,7 +98,11 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
       }
       if (Env.firebaseEnabled) {
         if (prev != null && next == null) {
-          ref.read(pushNotificationServiceProvider).clearRegistrationState();
+          unawaited(
+            ref
+                .read(pushNotificationServiceProvider)
+                .invalidateLocalPushRegistration(),
+          );
         }
         if (next != null && prev?.id != next.id) {
           unawaited(
