@@ -21,7 +21,9 @@ enum HouseholdRole { owner, member }
 enum HouseholdMemberStatus { active, invited }
 
 /// Planner strip: [startDay] is 0=Monday … 6=Sunday (matches `MealPlanSlot.dayOfWeek`).
-/// [dayCount] is how many consecutive calendar days to show; navigation moves by [dayCount].
+/// [dayCount] is how many consecutive calendar days to show. Prev/next always move by one
+/// calendar week (7 days) so the first column stays on [startDay] (e.g. Tue–Mon does not
+/// drift to Wed–Tue when [dayCount] is 8).
 class PlannerWindowPreference {
   const PlannerWindowPreference({
     required this.startDay,
@@ -37,7 +39,8 @@ class PlannerWindowPreference {
   static const PlannerWindowPreference appDefault =
       PlannerWindowPreference(startDay: 0, dayCount: 7);
 
-  int get navigationStepDays => dayCount;
+  /// One calendar week — keeps anchor aligned with [startDay] for weekly navigation.
+  int get navigationStepDays => 7;
 
   bool get isValid =>
       startDay >= 0 &&
@@ -1065,3 +1068,103 @@ class HouseholdInvite {
     );
   }
 }
+
+class PantryItem {
+  const PantryItem({
+    required this.id,
+    required this.householdId,
+    required this.name,
+    required this.category,
+    required this.currentQuantity,
+    required this.unit,
+    this.bufferThreshold,
+    this.fdcId,
+    this.lastAuditAt,
+    this.sortOrder = 0,
+    this.createdBy,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String householdId;
+  final String name;
+  final GroceryCategory category;
+  final double currentQuantity;
+  final String unit;
+  final double? bufferThreshold;
+  final int? fdcId;
+  final DateTime? lastAuditAt;
+  final int sortOrder;
+  final String? createdBy;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  PantryItem copyWith({
+    String? id,
+    String? householdId,
+    String? name,
+    GroceryCategory? category,
+    double? currentQuantity,
+    String? unit,
+    double? bufferThreshold,
+    int? fdcId,
+    DateTime? lastAuditAt,
+    int? sortOrder,
+    String? createdBy,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return PantryItem(
+      id: id ?? this.id,
+      householdId: householdId ?? this.householdId,
+      name: name ?? this.name,
+      category: category ?? this.category,
+      currentQuantity: currentQuantity ?? this.currentQuantity,
+      unit: unit ?? this.unit,
+      bufferThreshold: bufferThreshold ?? this.bufferThreshold,
+      fdcId: fdcId ?? this.fdcId,
+      lastAuditAt: lastAuditAt ?? this.lastAuditAt,
+      sortOrder: sortOrder ?? this.sortOrder,
+      createdBy: createdBy ?? this.createdBy,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'household_id': householdId,
+        'name': name,
+        'category': category.dbValue,
+        'current_quantity': currentQuantity,
+        'unit': unit,
+        if (bufferThreshold != null) 'buffer_threshold': bufferThreshold,
+        if (fdcId != null) 'fdc_id': fdcId,
+        if (lastAuditAt != null)
+          'last_audit_at': lastAuditAt!.toUtc().toIso8601String(),
+        'sort_order': sortOrder,
+        if (createdBy != null) 'created_by': createdBy,
+      };
+
+  factory PantryItem.fromJson(Map<String, dynamic> json) => PantryItem(
+        id: json['id'].toString(),
+        householdId: json['household_id'].toString(),
+        name: json['name']?.toString() ?? '',
+        category: GroceryCategory.values.firstWhereOrNull(
+              (c) => c.dbValue == json['category'],
+            ) ??
+            GroceryCategory.other,
+        currentQuantity: (json['current_quantity'] as num?)?.toDouble() ?? 0,
+        unit: json['unit']?.toString() ?? 'g',
+        bufferThreshold: (json['buffer_threshold'] as num?)?.toDouble(),
+        fdcId: (json['fdc_id'] as num?)?.toInt(),
+        lastAuditAt:
+            DateTime.tryParse(json['last_audit_at']?.toString() ?? ''),
+        sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
+        createdBy: json['created_by']?.toString(),
+        createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+        updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? ''),
+      );
+}
+

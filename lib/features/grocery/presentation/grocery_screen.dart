@@ -12,6 +12,7 @@ import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
+import 'package:plateplan/features/pantry/data/pantry_providers.dart';
 import 'package:plateplan/features/grocery/presentation/grocery_item_suggestions_grid.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
@@ -83,6 +84,32 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       );
     }
   }
+
+  Future<void> _toggleGroceryItemDone(GroceryItem item) async {
+    final next =
+        item.isDone ? GroceryItemStatus.open : GroceryItemStatus.done;
+    try {
+      await ref.read(groceryRepositoryProvider).updateItemStatus(item.id, next);
+      if (next == GroceryItemStatus.done) {
+        final hid = ref.read(activeHouseholdIdProvider);
+        if (hid != null && hid.isNotEmpty) {
+          await ref.read(pantryRepositoryProvider).applyPurchaseToPantryIfMatched(
+                householdId: hid,
+                itemName: item.name,
+                quantityStr: item.quantity,
+                unit: item.unit,
+              );
+        }
+      }
+      invalidateActiveGroceryStreams(ref);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not update item right now.')),
+      );
+    }
+  }
+
 
   Future<void> _addFromRecent(
     RecentGroceryEntry entry,
@@ -868,7 +895,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                     showNewBadge: showNewBadge,
                                     reorderEditMode: _groceryReorderMode,
                                     reorderJiggle: _groceryReorderMode,
-                                    onRemove: _removeItem,
+                                    onPrimaryTap: _toggleGroceryItemDone,
                                     onLongPressMenu: () =>
                                         _openGroceryItemActions(item),
                                   );
@@ -1533,7 +1560,7 @@ class _GroceryItemCard extends StatelessWidget {
     required this.showNewBadge,
     this.reorderEditMode = false,
     this.reorderJiggle = false,
-    required this.onRemove,
+    required this.onPrimaryTap,
     required this.onLongPressMenu,
   });
 
@@ -1541,7 +1568,7 @@ class _GroceryItemCard extends StatelessWidget {
   final bool showNewBadge;
   final bool reorderEditMode;
   final bool reorderJiggle;
-  final Future<void> Function(GroceryItem item) onRemove;
+  final Future<void> Function(GroceryItem item) onPrimaryTap;
   final VoidCallback onLongPressMenu;
 
   @override
@@ -1571,7 +1598,7 @@ class _GroceryItemCard extends StatelessWidget {
           children: [
             InkWell(
               borderRadius: BorderRadius.circular(16),
-              onTap: reorderEditMode ? null : () => unawaited(onRemove(item)),
+              onTap: reorderEditMode ? null : () => unawaited(onPrimaryTap(item)),
               onLongPress: reorderEditMode ? null : onLongPressMenu,
               child: LayoutBuilder(
                 builder: (context, constraints) {

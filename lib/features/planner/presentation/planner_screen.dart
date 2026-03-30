@@ -1154,7 +1154,6 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
   const _PlannerWindowSummaryPane({
     required this.pref,
     required this.dayCount,
-    required this.stepDays,
     required this.onShowLoadingShell,
     required this.onEditSlotGroceryItems,
     required this.onOpenPlannerWindowSettings,
@@ -1162,7 +1161,6 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
 
   final PlannerWindowPreference pref;
   final int dayCount;
-  final int stepDays;
   final Widget Function() onShowLoadingShell;
   final PlannerEditSlotGroceryFn onEditSlotGroceryItems;
   final VoidCallback onOpenPlannerWindowSettings;
@@ -1216,11 +1214,11 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                   subtitle: 'CURRENT WEEK',
                   onPrevious: () {
                     ref.read(weekStartProvider.notifier).state =
-                        anchor.subtract(Duration(days: stepDays));
+                        plannerShiftAnchorByCalendarWeeks(anchor, -1);
                   },
                   onNext: () {
                     ref.read(weekStartProvider.notifier).state =
-                        anchor.add(Duration(days: stepDays));
+                        plannerShiftAnchorByCalendarWeeks(anchor, 1);
                   },
                 ),
                 Padding(
@@ -2375,19 +2373,34 @@ class PlannerScreen extends ConsumerWidget {
         ref.read(selectedPlannerDayProvider.notifier).state = max;
       }
       final now = DateTime.now();
-      final anchor = ref.read(weekStartProvider);
+      final rawAnchor = ref.read(weekStartProvider);
+      final anchor = plannerDateOnly(rawAnchor);
       final prefChanged = prev != null &&
           (prev.startDay != next.startDay || prev.dayCount != next.dayCount);
       final anchorMismatched = !plannerAnchorMatchesPreference(anchor, next);
-      if (prefChanged || anchorMismatched) {
+      if (prefChanged) {
         ref.read(weekStartProvider.notifier).state =
             anchorDateForWindowContaining(now, next);
         _syncSelectedPlannerDayToTodayOrFirst(ref);
+        return;
+      }
+      if (anchorMismatched) {
+        final dates = calendarDatesForPlannerWindow(anchor, next);
+        final today = plannerDateOnly(now);
+        final viewingToday =
+            dates.any((d) => plannerDateOnly(d) == today);
+        if (!viewingToday) {
+          return;
+        }
+        ref.read(weekStartProvider.notifier).state =
+            anchorDateForWindowContaining(now, next);
+        _syncSelectedPlannerDayToTodayOrFirst(ref);
+      } else if (anchor != rawAnchor) {
+        ref.read(weekStartProvider.notifier).state = anchor;
       }
     });
     final weekStart = ref.watch(weekStartProvider);
     final dayCount = pref.dayCount;
-    final stepDays = pref.navigationStepDays;
     final selectedDay = ref.watch(selectedPlannerDayProvider);
     final effectiveDay = selectedDay.clamp(0, dayCount - 1);
     final slotsAsync = ref.watch(plannerSlotsProvider);
@@ -2414,12 +2427,10 @@ class PlannerScreen extends ConsumerWidget {
                 ? _PlannerWindowSummaryPane(
                     pref: pref,
                     dayCount: dayCount,
-                    stepDays: stepDays,
                     onShowLoadingShell: () => _PlannerLoadingShell(
                       weekStart: weekStart,
                       pref: pref,
                       dayCount: dayCount,
-                      stepDays: stepDays,
                       effectiveDay: effectiveDay,
                     ),
                     onEditSlotGroceryItems:
@@ -2439,7 +2450,6 @@ class PlannerScreen extends ConsumerWidget {
           weekStart: weekStart,
           pref: pref,
           dayCount: dayCount,
-          stepDays: stepDays,
           effectiveDay: effectiveDay,
         ),
         error: (error, _) => Center(child: Text('Error: $error')),
@@ -2454,7 +2464,6 @@ class PlannerScreen extends ConsumerWidget {
             weekStart: weekStart,
             pref: pref,
             dayCount: dayCount,
-            stepDays: stepDays,
             effectiveDay: effectiveDay,
           ),
           error: (e, _) => Center(child: Text('Error loading recipes: $e')),
@@ -2561,11 +2570,11 @@ class PlannerScreen extends ConsumerWidget {
                   subtitle: 'CURRENT WEEK',
                   onPrevious: () {
                     ref.read(weekStartProvider.notifier).state =
-                        weekStart.subtract(Duration(days: stepDays));
+                        plannerShiftAnchorByCalendarWeeks(weekStart, -1);
                   },
                   onNext: () {
                     ref.read(weekStartProvider.notifier).state =
-                        weekStart.add(Duration(days: stepDays));
+                        plannerShiftAnchorByCalendarWeeks(weekStart, 1);
                   },
                 ),
                 Padding(
@@ -2728,14 +2737,12 @@ class _PlannerLoadingShell extends ConsumerWidget {
     required this.weekStart,
     required this.pref,
     required this.dayCount,
-    required this.stepDays,
     required this.effectiveDay,
   });
 
   final DateTime weekStart;
   final PlannerWindowPreference pref;
   final int dayCount;
-  final int stepDays;
   final int effectiveDay;
 
   @override
@@ -2749,11 +2756,11 @@ class _PlannerLoadingShell extends ConsumerWidget {
           subtitle: 'CURRENT WEEK',
           onPrevious: () {
             ref.read(weekStartProvider.notifier).state =
-                weekStart.subtract(Duration(days: stepDays));
+                plannerShiftAnchorByCalendarWeeks(weekStart, -1);
           },
           onNext: () {
             ref.read(weekStartProvider.notifier).state =
-                weekStart.add(Duration(days: stepDays));
+                plannerShiftAnchorByCalendarWeeks(weekStart, 1);
           },
         ),
         Padding(

@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/instagram_recipe_import.dart';
@@ -44,6 +46,46 @@ class _ScanRecipeBookScreenState extends ConsumerState<ScanRecipeBookScreen> {
       imageQuality: 85,
     );
     if (xFile == null) return;
+
+    if (!kIsWeb) {
+      CroppedFile? cropped;
+      try {
+        cropped = await ImageCropper().cropImage(
+          sourcePath: xFile.path,
+          maxWidth: 2048,
+          maxHeight: 2048,
+          compressQuality: 85,
+          uiSettings: [
+            AndroidUiSettings(
+              toolbarTitle: 'Crop to one recipe',
+              toolbarColor: AppBrand.deepTeal,
+              toolbarWidgetColor: AppBrand.offWhite,
+              lockAspectRatio: false,
+            ),
+            IOSUiSettings(
+              title: 'Crop to one recipe',
+              aspectRatioLockEnabled: false,
+            ),
+          ],
+        );
+      } catch (e, st) {
+        debugPrint('ScanRecipeBookScreen: crop failed: $e\n$st');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not open crop. Rebuild the app after updating, or try another photo.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      if (cropped == null) return;
+      await _runExtraction(XFile(cropped.path));
+      return;
+    }
+
     await _runExtraction(xFile);
   }
 
@@ -180,7 +222,7 @@ class _ScanRecipeBookScreenState extends ConsumerState<ScanRecipeBookScreen> {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                'Take a clear photo of any recipe page in a cookbook',
+                                'Photo a cookbook page, then crop to the recipe you want',
                                 style: textTheme.titleSmall?.copyWith(
                                   fontWeight: FontWeight.w800,
                                   color: AppBrand.deepTeal,
@@ -192,8 +234,9 @@ class _ScanRecipeBookScreenState extends ConsumerState<ScanRecipeBookScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Fill the frame with the page, avoid glare, and keep text sharp. '
-                          'You can retake or pick from your gallery if needed.',
+                          'Fill the frame, avoid glare, and keep text sharp. '
+                          'Some books show several recipes on one page—use the crop step to '
+                          'isolate just one. You can retake or pick from your gallery if needed.',
                           style: textTheme.bodyMedium?.copyWith(
                             color: scheme.onSurfaceVariant,
                             height: 1.45,

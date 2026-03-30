@@ -1,7 +1,12 @@
 import 'package:intl/intl.dart';
 import 'package:plateplan/core/models/app_models.dart';
 
-DateTime plannerDateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+/// Local calendar date at midnight. Converts [d] with [DateTime.toLocal] first so UTC
+/// instants from the network map to the user's weekday/calendar day correctly.
+DateTime plannerDateOnly(DateTime d) {
+  final l = d.toLocal();
+  return DateTime(l.year, l.month, l.day);
+}
 
 /// Monday (local) of the ISO week containing [date]; time cleared.
 DateTime weekStartMondayForDate(DateTime date) {
@@ -47,13 +52,13 @@ DateTime anchorDateForWindowContaining(
   for (var i = 0; i <= pref.dayCount + 6; i++) {
     final s = t.subtract(Duration(days: i));
     if (s.weekday != dartW) continue;
-    final end = s.add(Duration(days: pref.dayCount - 1));
+    final end = DateTime(s.year, s.month, s.day + pref.dayCount - 1);
     if (!t.isBefore(s) && !t.isAfter(end)) return s;
   }
   for (var i = 0; i < 400; i++) {
     final s = t.subtract(Duration(days: i));
     if (s.weekday != dartW) continue;
-    final end = s.add(Duration(days: pref.dayCount - 1));
+    final end = DateTime(s.year, s.month, s.day + pref.dayCount - 1);
     if (t.isAfter(end)) return s;
   }
   return t;
@@ -67,7 +72,7 @@ List<DateTime> calendarDatesForPlannerWindow(
   final a = plannerDateOnly(anchor);
   return List.generate(
     pref.dayCount,
-    (i) => a.add(Duration(days: i)),
+    (i) => DateTime(a.year, a.month, a.day + i),
   );
 }
 
@@ -99,7 +104,15 @@ DateTime calendarDateForPlannerUiDay(
   int uiDayIndex,
   PlannerWindowPreference pref,
 ) {
-  return plannerDateOnly(anchor).add(Duration(days: uiDayIndex));
+  final a = plannerDateOnly(anchor);
+  return DateTime(a.year, a.month, a.day + uiDayIndex);
+}
+
+/// Moves the planner anchor by [weekDelta] calendar weeks (±7 days per step). Uses
+/// calendar date math (not [Duration]) so the start weekday stays aligned across DST.
+DateTime plannerShiftAnchorByCalendarWeeks(DateTime anchor, int weekDelta) {
+  final a = plannerDateOnly(anchor);
+  return DateTime(a.year, a.month, a.day + weekDelta * 7);
 }
 
 DateTime slotStorageWeekStartFromUiDay(

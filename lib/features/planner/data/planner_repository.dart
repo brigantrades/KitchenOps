@@ -233,7 +233,7 @@ class PlannerRepository {
         .select()
         .eq('household_id', householdId)
         .eq('week_start', weekStart.toIso8601String().split('T').first)
-        .order('slot_order');
+        .order('slot_order', ascending: true);
     final slots = (rows as List)
         .whereType<Map<String, dynamic>>()
         .map(MealPlanSlot.fromJson)
@@ -674,13 +674,12 @@ class PlannerRepository {
         .eq('household_id', householdId)
         .eq('week_start', weekStart.toIso8601String().split('T').first)
         .eq('day_of_week', dayOfWeek)
-        .order('slot_order');
-    final orders = (rows as List)
-        .whereType<Map<String, dynamic>>()
-        .map((e) => (e['slot_order'] as num?)?.toInt() ?? 0)
-        .toList();
-    if (orders.isEmpty) return 0;
-    return (orders.last + 1);
+        .order('slot_order', ascending: false)
+        .limit(1);
+    final list = (rows as List).whereType<Map<String, dynamic>>().toList();
+    if (list.isEmpty) return 0;
+    final max = (list.first['slot_order'] as num?)?.toInt() ?? 0;
+    return max + 1;
   }
 
   Future<void> updateSlotOrder(String slotId, int slotOrder) {
@@ -751,13 +750,14 @@ class PlannerRepository {
         await _syncSlotMembers(slotId, effectiveAssignedUserIds);
       }
     } on PostgrestException catch (error) {
-      if (error.code != '23505' || attempt >= 4) rethrow;
-      final next = await nextSlotOrder(
+      final unique = error.code == '23505' ||
+          error.message.toLowerCase().contains('duplicate key');
+      if (!unique || attempt >= 8) rethrow;
+      final retryOrder = await nextSlotOrder(
         userId: userId,
         weekStart: weekStart,
         dayOfWeek: dayOfWeek,
       );
-      final retryOrder = next + attempt + 1;
       await _addSlotWithRetry(
         userId: userId,
         weekStart: weekStart,

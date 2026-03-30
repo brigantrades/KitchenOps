@@ -1,7 +1,7 @@
 name: plateplan
 description: Leckerly meal planning and shared lists app.
 publish_to: 'none'
-version: 0.1.21+24
+version: 0.1.22+25
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -38,6 +38,7 @@ dependencies:
   url_launcher: ^6.3.1
   reorderable_grid_view: ^2.2.8
   image_picker: ^1.1.2
+  image_cropper: ^12.1.1
 
 dev_dependencies:
   flutter_test:
