@@ -640,6 +640,7 @@ class PlannerRepository {
     required int dayOfWeek,
     required String mealLabel,
     required int slotOrder,
+    String? recipeId,
     List<String>? assignedUserIds,
   }) {
     return _addSlotWithRetry(
@@ -648,6 +649,7 @@ class PlannerRepository {
       dayOfWeek: dayOfWeek,
       mealLabel: mealLabel,
       slotOrder: slotOrder,
+      recipeId: recipeId,
       attempt: 0,
       assignedUserIds: assignedUserIds,
     );
@@ -711,6 +713,7 @@ class PlannerRepository {
     required int dayOfWeek,
     required String mealLabel,
     required int slotOrder,
+    String? recipeId,
     required int attempt,
     List<String>? assignedUserIds,
   }) async {
@@ -732,7 +735,7 @@ class PlannerRepository {
             'day_of_week': dayOfWeek,
             'meal_type': mealLabel,
             'slot_order': slotOrder,
-            'recipe_id': null,
+            'recipe_id': recipeId,
             'meal_text': null,
             'side_recipe_id': null,
             'side_text': null,
@@ -761,6 +764,7 @@ class PlannerRepository {
         dayOfWeek: dayOfWeek,
         mealLabel: mealLabel,
         slotOrder: retryOrder,
+        recipeId: recipeId,
         attempt: attempt + 1,
         assignedUserIds: assignedUserIds,
       );

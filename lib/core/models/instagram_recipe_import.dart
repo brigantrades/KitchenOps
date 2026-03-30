@@ -248,13 +248,14 @@ String? inferInstagramRecipeTitle(String sharedContent) {
   return normalized;
 }
 
-/// Builds a [Recipe] from Gemini JSON for Instagram import (see prompt in [GeminiService]).
+/// Builds a [Recipe] from Gemini JSON for Instagram or book-scan import (see [GeminiService]).
 Recipe recipeFromInstagramGeminiMap(
   Map<String, dynamic> json, {
   String? id,
   String? imageUrl,
   String? sourceUrl,
   String? sharedContent,
+  String source = 'instagram_import',
 }) {
   final tempId =
       id ?? 'import-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(999999)}';
@@ -300,7 +301,7 @@ Recipe recipeFromInstagramGeminiMap(
     nutrition: const Nutrition(),
     isFavorite: false,
     isToTry: false,
-    source: 'instagram_import',
+    source: source,
     sourceUrl: sourceUrl,
     visibility: RecipeVisibility.personal,
   );

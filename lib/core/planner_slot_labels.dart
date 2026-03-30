@@ -29,6 +29,18 @@ bool _sameCalendarDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
+/// Title segment for [showPlannerRecipePicker] when creating a new slot (no row
+/// index yet). Matches the wording used after the slot exists (`Meal 1`, etc.).
+String plannerNewSlotRecipePickerTitleLabel(String mealLabel) {
+  final lower = mealLabel.trim().toLowerCase();
+  if (lower == 'meal') return 'Meal';
+  if (lower == 'snack') return 'Snack';
+  final raw = mealLabel.trim();
+  if (raw.isEmpty) return 'Meal';
+  final l = raw.toLowerCase();
+  return l[0].toUpperCase() + l.substring(1);
+}
+
 /// Slots for one calendar day of the plan, sorted by [MealPlanSlot.slotOrder].
 String plannerSlotDisplayLabel(
   List<MealPlanSlot> daySlotsSorted,

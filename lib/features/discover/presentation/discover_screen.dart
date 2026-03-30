@@ -68,6 +68,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                     ? 'Dessert Ideas'
                     : 'Quick & Easy Dinners';
     final cuisinesAsync = ref.watch(discoverCuisineTilesProvider);
+    final searchQuery = ref.watch(discoverSearchQueryProvider);
+    final isSearchActive = searchQuery.trim().isNotEmpty;
+    final searchResultsAsync = ref.watch(discoverPublicSearchResultsProvider);
 
     return Scaffold(
       body: DecoratedBox(
@@ -83,39 +86,44 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   children: [
                     _buildHeader(context),
                     const SizedBox(height: AppSpacing.sm),
-                    _buildSearchOnly(),
+                    _buildSearchOnly(isSearchActive: isSearchActive),
                     const SizedBox(height: AppSpacing.sm),
-                    _buildMealTypeChips(selectedMeal),
-                    const SizedBox(height: AppSpacing.md),
+                    if (!isSearchActive) ...[
+                      _buildMealTypeChips(selectedMeal),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
                   ],
                 ),
               ),
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                      decoration: const BoxDecoration(
-                        color: AppBrand.offWhite,
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                child: isSearchActive
+                    ? _buildSearchResultsBody(searchResultsAsync)
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
                         children: [
-                          _sectionTitle(context, featuredSectionTitle),
-                          const SizedBox(height: AppSpacing.xs),
-                          _buildQuickDinnerGrid(featuredRecipesAsync),
-                          const SizedBox(height: AppSpacing.md),
-                          // New From Users intentionally hidden for now.
-                          _sectionTitle(context, 'Explore Cuisines'),
-                          const SizedBox(height: AppSpacing.xs),
-                          _buildCuisineGrid(cuisinesAsync),
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                            decoration: const BoxDecoration(
+                              color: AppBrand.offWhite,
+                              borderRadius:
+                                  BorderRadius.vertical(top: Radius.circular(20)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _sectionTitle(context, featuredSectionTitle),
+                                const SizedBox(height: AppSpacing.xs),
+                                _buildQuickDinnerGrid(featuredRecipesAsync),
+                                const SizedBox(height: AppSpacing.md),
+                                // New From Users intentionally hidden for now.
+                                _sectionTitle(context, 'Explore Cuisines'),
+                                const SizedBox(height: AppSpacing.xs),
+                                _buildCuisineGrid(cuisinesAsync),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
               ),
             ],
           ),
@@ -124,9 +132,119 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     );
   }
 
+  void _clearDiscoverSearch() {
+    _searchController.clear();
+    ref.read(discoverSearchQueryProvider.notifier).state = '';
+  }
+
+  Widget _buildSearchResultsBody(AsyncValue<List<Recipe>> searchAsync) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+      decoration: const BoxDecoration(
+        color: AppBrand.offWhite,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: searchAsync.when(
+        data: (recipes) {
+          if (recipes.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('No recipes found.'),
+              ),
+            );
+          }
+          final savedRecipes =
+              ref.watch(recipesProvider).valueOrNull ?? const <Recipe>[];
+          final userId = ref.watch(currentUserProvider)?.id;
+          return GridView.builder(
+            padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
+            itemCount: recipes.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 0.84,
+            ),
+            itemBuilder: (context, index) {
+              final recipe = recipes[index];
+              final imageUrl = recipe.imageUrl?.isNotEmpty == true
+                  ? _normalizeImageUrl(recipe.imageUrl!) ?? recipe.imageUrl!
+                  : 'https://images.unsplash.com/photo-1516100882582-96c3a05fe590?auto=format&fit=crop&w=1200&q=80';
+              return GestureDetector(
+                onTap: () => _showPublicRecipeDetail(recipe),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: AppShadows.soft,
+                    image: DecorationImage(
+                      image: NetworkImage(imageUrl),
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.08),
+                          Colors.black.withValues(alpha: 0.65),
+                        ],
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Spacer(),
+                            _discoverSaveAffordance(
+                              context: context,
+                              recipe: recipe,
+                              savedRecipes: savedRecipes,
+                              userId: userId,
+                              onOpenSheet: () => _showSaveDestinationModal(recipe),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Align(
+                          alignment: Alignment.bottomLeft,
+                          child: Text(
+                            recipe.title.toUpperCase(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                              height: 1.05,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (_, __) => const Center(
+          child: Text('Could not load recipes right now.'),
+        ),
+      ),
+    );
+  }
+
   Widget _buildHeader(BuildContext context) {
     return Row(
       children: [
+        const SizedBox(width: 40),
         const Spacer(),
         Text(
           'Discover',
@@ -158,16 +276,23 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     );
   }
 
-  Widget _buildSearchOnly() {
+  Widget _buildSearchOnly({required bool isSearchActive}) {
     return TextField(
       controller: _searchController,
       onChanged: (value) {
         ref.read(discoverSearchQueryProvider.notifier).state = value;
       },
-      decoration: const InputDecoration(
-        prefixIcon: Icon(Icons.search_rounded),
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.search_rounded),
         hintText: 'Search recipes',
         isDense: true,
+        suffixIcon: isSearchActive
+            ? IconButton(
+                tooltip: 'Clear search',
+                onPressed: _clearDiscoverSearch,
+                icon: const Icon(Icons.clear_rounded),
+              )
+            : null,
       ),
     );
   }

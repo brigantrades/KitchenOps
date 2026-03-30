@@ -21,6 +21,7 @@ import 'package:plateplan/features/recipes/presentation/import_recipe_preview_sc
 import 'package:plateplan/features/recipes/presentation/instagram_import_test_screen.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/presentation/recipes_screen.dart';
+import 'package:plateplan/features/recipes/presentation/scan_recipe_book_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Notifies [GoRouter] when Supabase auth session changes (e.g. OAuth return)
@@ -65,8 +66,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final atImportPreview = state.matchedLocation == '/import-recipe-preview';
       final atInstagramImportTest =
           state.matchedLocation == '/instagram-import-test';
+      final atScanRecipeBook = state.matchedLocation == '/scan-recipe-book';
 
-      if (!loggedIn && (atImportPreview || atInstagramImportTest)) {
+      if (!loggedIn &&
+          (atImportPreview || atInstagramImportTest || atScanRecipeBook)) {
         return '/auth';
       }
       if (!loggedIn && !atAuth) return '/auth';
@@ -123,6 +126,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/instagram-import-test',
         builder: (context, state) => const InstagramImportTestScreen(),
+      ),
+      GoRoute(
+        path: '/scan-recipe-book',
+        builder: (context, state) => const ScanRecipeBookScreen(),
       ),
     ],
   );

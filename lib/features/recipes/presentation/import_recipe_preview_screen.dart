@@ -11,6 +11,7 @@ import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -47,6 +48,11 @@ class _ImportRecipePreviewScreenState
   late bool _servingsEstimated;
   bool _reparseBusy = false;
   bool _saveBusy = false;
+
+  bool _myFavorite = true;
+  bool _myToTry = false;
+  bool _householdFavorite = false;
+  bool _householdToTry = false;
 
   @override
   void initState() {
@@ -124,12 +130,12 @@ class _ImportRecipePreviewScreenState
       ingredients: ingredients,
       isFavorite: favorite,
       isToTry: toTry,
-      source: 'instagram_import',
+      source: _recipe.source,
       visibility: RecipeVisibility.personal,
     );
   }
 
-  Future<void> _save({required bool favorite, required bool toTry}) async {
+  Future<void> _save() async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -137,19 +143,50 @@ class _ImportRecipePreviewScreenState
       );
       return;
     }
+    final hasShared =
+        ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+    final anyHouseholdList = hasShared &&
+        (_householdFavorite || _householdToTry);
+    if (!_myFavorite &&
+        !_myToTry &&
+        !anyHouseholdList) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Turn on at least one option — My Recipes and/or Household.',
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _saveBusy = true);
     try {
-      final draft = _buildRecipeFromForm(favorite: favorite, toTry: toTry);
-      final id = await ref.read(recipesRepositoryProvider).create(
-            user.id,
-            draft,
-            shareWithHousehold: false,
-            visibilityOverride: RecipeVisibility.personal,
-          );
+      final draft = _buildRecipeFromForm(
+        favorite: _myFavorite,
+        toTry: _myToTry,
+      );
+      final repo = ref.read(recipesRepositoryProvider);
+      final id = await repo.create(
+        user.id,
+        draft,
+        shareWithHousehold: false,
+        visibilityOverride: RecipeVisibility.personal,
+      );
+      if (anyHouseholdList) {
+        await repo.copyPersonalRecipeToHousehold(
+          userId: user.id,
+          recipeId: id,
+          householdFavorite: _householdFavorite,
+          householdToTry: _householdToTry,
+        );
+      }
       ref.invalidate(recipesProvider);
       if (!mounted) return;
+      final msg = anyHouseholdList
+          ? 'Saved to My Recipes and Household Recipes.'
+          : 'Recipe imported successfully!';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Recipe imported successfully!')),
+        SnackBar(content: Text(msg)),
       );
       context.go('/cooking/$id');
     } on PostgrestException catch (e) {
@@ -169,10 +206,176 @@ class _ImportRecipePreviewScreenState
     }
   }
 
+  String _saveSelectionSummary(bool hasSharedHousehold) {
+    final bits = <String>[];
+    if (_myFavorite) bits.add('My Favorites');
+    if (_myToTry) bits.add('My To Try');
+    if (hasSharedHousehold && _householdFavorite) {
+      bits.add('Household Favorites');
+    }
+    if (hasSharedHousehold && _householdToTry) bits.add('Household To Try');
+    if (bits.isEmpty) return 'Tap to choose lists';
+    return bits.join(' · ');
+  }
+
+  Future<void> _openSaveToSheet() async {
+    if (_saveBusy) return;
+    final hasShared =
+        ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+    final scheme = Theme.of(context).colorScheme;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            void updateToggle(VoidCallback fn) {
+              setState(fn);
+              setModalState(() {});
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Save to lists',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Turn on any combination.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'My Recipes',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        secondary: Icon(
+                          _myFavorite
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: _myFavorite
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                        ),
+                        title: const Text('Favorites'),
+                        subtitle: const Text('Your personal Favorites list'),
+                        value: _myFavorite,
+                        onChanged: (v) => updateToggle(() => _myFavorite = v),
+                      ),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        secondary: Icon(
+                          _myToTry
+                              ? Icons.flag_rounded
+                              : Icons.outlined_flag_rounded,
+                          color: _myToTry
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                        ),
+                        title: const Text('To Try'),
+                        subtitle: const Text('Your personal To Try list'),
+                        value: _myToTry,
+                        onChanged: (v) => updateToggle(() => _myToTry = v),
+                      ),
+                      if (hasShared) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Household Recipes',
+                          style:
+                              Theme.of(context).textTheme.labelLarge?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4, top: 4),
+                          child: Text(
+                            'Adds a shared copy when either option is on.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                        SwitchListTile.adaptive(
+                          contentPadding: EdgeInsets.zero,
+                          secondary: Icon(
+                            _householdFavorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: _householdFavorite
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                          ),
+                          title: const Text('Favorites'),
+                          subtitle: const Text('Household Favorites list'),
+                          value: _householdFavorite,
+                          onChanged: (v) =>
+                              updateToggle(() => _householdFavorite = v),
+                        ),
+                        SwitchListTile.adaptive(
+                          contentPadding: EdgeInsets.zero,
+                          secondary: Icon(
+                            _householdToTry
+                                ? Icons.flag_rounded
+                                : Icons.outlined_flag_rounded,
+                            color: _householdToTry
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                          ),
+                          title: const Text('To Try'),
+                          subtitle: const Text('Household To Try list'),
+                          value: _householdToTry,
+                          onChanged: (v) =>
+                              updateToggle(() => _householdToTry = v),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          _save();
+                        },
+                        child: const Text('Save recipe'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final imageUrl = _recipe.imageUrl;
+    final hasSharedHousehold =
+        ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -197,7 +400,7 @@ class _ImportRecipePreviewScreenState
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           if (imageUrl != null && imageUrl.isNotEmpty) ...[
             ClipRRect(
@@ -216,7 +419,9 @@ class _ImportRecipePreviewScreenState
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.md, left: 4),
               child: Text(
-                'Image appears only when Instagram includes media in the share payload.',
+                _recipe.source == 'book_scan'
+                    ? 'No photo was attached. Try scanning again with better light and a steady shot.'
+                    : 'Image appears only when Instagram includes media in the share payload.',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
@@ -244,6 +449,19 @@ class _ImportRecipePreviewScreenState
                           avatar: Icon(Icons.link_rounded, size: 16),
                           label: Text('Original post linked'),
                         ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                if (_recipe.source == 'book_scan') ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: const [
+                      Chip(
+                        avatar: Icon(Icons.menu_book_rounded, size: 16),
+                        label: Text('Cookbook scan'),
+                      ),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
@@ -472,31 +690,73 @@ class _ImportRecipePreviewScreenState
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _saveBusy
-                      ? null
-                      : () => _save(favorite: true, toTry: false),
-                  child: const Text('Save to Favorites'),
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+          child: _saveBusy
+              ? const SizedBox(
+                  height: 52,
+                  child: Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              : Material(
+                  color: scheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(16),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: _openSaveToSheet,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.bookmark_add_outlined,
+                            color: scheme.primary,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Save to',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleSmall
+                                      ?.copyWith(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _saveSelectionSummary(hasSharedHousehold),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.keyboard_arrow_up_rounded,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.tonal(
-                  onPressed: _saveBusy
-                      ? null
-                      : () => _save(favorite: false, toTry: true),
-                  child: const Text('Save to To Try'),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

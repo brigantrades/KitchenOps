@@ -76,6 +76,38 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   final Set<MealType> _mealTypeFilters = {};
   _RecipeSortOption _sortOption = _RecipeSortOption.dateAdded;
 
+  Future<void> _showAddRecipeOptions() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_note_rounded),
+              title: const Text('Add recipe manually'),
+              onTap: () => Navigator.pop(ctx, 'manual'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.menu_book_rounded),
+              title: const Text('Scan from book'),
+              subtitle: const Text('Photo of a cookbook page'),
+              onTap: () => Navigator.pop(ctx, 'scan'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'manual') {
+      await _createRecipeManually();
+    } else if (choice == 'scan') {
+      context.push('/scan-recipe-book');
+    }
+  }
+
   Future<void> _createRecipeManually() async {
     final user = ref.read(currentUserProvider);
     if (user == null) {
@@ -486,7 +518,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
         ),
       ],
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createRecipeManually,
+        onPressed: _showAddRecipeOptions,
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add Recipe'),
       ),

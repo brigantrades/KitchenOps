@@ -271,185 +271,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     ref.invalidate(groceryRecentsProvider);
   }
 
-  Future<void> _openReorderListSheet({
-    required List<AppList> orderedLists,
-    required ListScope scope,
-  }) async {
-    final user = ref.read(currentUserProvider);
-    if (user == null || orderedLists.isEmpty) return;
-    final profileRepo = ref.read(profileRepositoryProvider);
-    var working = List<AppList>.from(orderedLists);
-    var liveOrder = ref.read(profileProvider).valueOrNull?.groceryListOrder ??
-        GroceryListOrder.empty;
-    if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (sheetCtx) {
-        return StatefulBuilder(
-          builder: (ctx, setModalState) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'List order',
-                    style: Theme.of(ctx).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    working.length > 1
-                        ? 'Drag the grip to reorder. The top list opens first. Use the pencil to rename or the trash icon to delete a list.'
-                        : 'Use the pencil to rename or the trash icon to delete this list.',
-                    style: Theme.of(ctx).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: (working.length * 56.0).clamp(120, 360),
-                    child: ReorderableListView.builder(
-                      primary: false,
-                      // Mobile: Flutter does NOT paint default handles — only long-press on the
-                      // row (often broken in bottom sheets). Desktop: handle is trailing. Use an
-                      // explicit leading grip + ReorderableDragStartListener on all platforms.
-                      buildDefaultDragHandles: false,
-                      shrinkWrap: true,
-                      physics: working.length > 5
-                          ? const ClampingScrollPhysics()
-                          : const NeverScrollableScrollPhysics(),
-                      itemCount: working.length,
-                      onReorder: (oldIndex, newIndex) async {
-                        if (newIndex > oldIndex) newIndex -= 1;
-                        setModalState(() {
-                          final item = working.removeAt(oldIndex);
-                          working.insert(newIndex, item);
-                        });
-                        final newIds = working.map((e) => e.id).toList();
-                        liveOrder = liveOrder.withIdsFor(scope, newIds);
-                        try {
-                          await profileRepo.updateGroceryListOrder(
-                            user.id,
-                            liveOrder,
-                          );
-                          ref.invalidate(profileProvider);
-                        } catch (_) {
-                          if (ctx.mounted) {
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              const SnackBar(
-                                content: Text('Could not save list order.'),
-                              ),
-                            );
-                          }
-                        }
-                      },
-                      itemBuilder: (ctx, index) {
-                        final list = working[index];
-                        final scheme = Theme.of(ctx).colorScheme;
-                        return Material(
-                          key: ValueKey(list.id),
-                          color: scheme.surfaceContainerLow,
-                          child: ListTile(
-                            leading: working.length > 1
-                                ? ReorderableDragStartListener(
-                                    index: index,
-                                    child: SizedBox(
-                                      width: 40,
-                                      height: 40,
-                                      child: Icon(
-                                        Icons.drag_handle_rounded,
-                                        color: scheme.onSurface,
-                                      ),
-                                    ),
-                                  )
-                                : SizedBox(
-                                    width: 40,
-                                    height: 40,
-                                    child: Icon(
-                                      Icons.list_rounded,
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.45),
-                                    ),
-                                  ),
-                            title: Text(list.name),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Rename list',
-                                  icon: Icon(
-                                    Icons.edit_outlined,
-                                    color: scheme.primary,
-                                  ),
-                                  onPressed: () async {
-                                    final newName = await _promptRenameList(
-                                      list,
-                                      anchorContext: ctx,
-                                    );
-                                    if (newName == null || !mounted) return;
-                                    setModalState(() {
-                                      final i = working
-                                          .indexWhere((e) => e.id == list.id);
-                                      if (i >= 0) {
-                                        final old = working[i];
-                                        working[i] = AppList(
-                                          id: old.id,
-                                          name: newName,
-                                          kind: old.kind,
-                                          scope: old.scope,
-                                          householdId: old.householdId,
-                                          ownerUserId: old.ownerUserId,
-                                          createdAt: old.createdAt,
-                                        );
-                                      }
-                                    });
-                                  },
-                                ),
-                                IconButton(
-                                  tooltip: 'Delete list',
-                                  icon: Icon(
-                                    Icons.delete_outline_rounded,
-                                    color: scheme.error,
-                                  ),
-                                  onPressed: () async {
-                                    final deleted = await _confirmDeleteList(
-                                      list,
-                                      anchorContext: ctx,
-                                    );
-                                    if (!deleted || !mounted) return;
-                                    setModalState(() {
-                                      working
-                                          .removeWhere((e) => e.id == list.id);
-                                      liveOrder = liveOrder.withIdsFor(
-                                        scope,
-                                        working.map((e) => e.id).toList(),
-                                      );
-                                    });
-                                    if (working.isEmpty && sheetCtx.mounted) {
-                                      Navigator.of(sheetCtx).pop();
-                                    }
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Future<void> _openCreateListSheet(ListScope defaultScope) async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
@@ -547,113 +368,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         ),
       ),
     );
-  }
-
-  /// Returns true if the list was deleted on the server.
-  Future<bool> _confirmDeleteList(
-    AppList list, {
-    BuildContext? anchorContext,
-  }) async {
-    final user = ref.read(currentUserProvider);
-    if (user == null) return false;
-    final householdNote = list.scope == ListScope.household
-        ? ' Household members will no longer see this list.'
-        : '';
-    final sheetContext = anchorContext ?? context;
-    final confirmed = await showModalBottomSheet<bool>(
-      context: sheetContext,
-      showDragHandle: true,
-      builder: (context) => BrandedSheetScaffold(
-        title: 'Delete list?',
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Delete "${list.name}"? All items will be removed. This cannot be undone.$householdNote',
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      foregroundColor: Theme.of(context).colorScheme.onError,
-                    ),
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('Delete'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true || !mounted) return false;
-    try {
-      await ref.read(groceryRepositoryProvider).deleteList(
-            userId: user.id,
-            list: list,
-          );
-      if (ref.read(selectedListIdProvider) == list.id) {
-        ref.read(selectedListIdProvider.notifier).state = null;
-      }
-      ref.invalidate(listsProvider);
-      ref.invalidate(profileProvider);
-      invalidateActiveGroceryStreams(ref);
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Deleted "${list.name}"')),
-      );
-      return true;
-    } on PostgrestException catch (e) {
-      if (!mounted) return false;
-      final msg = e.message.toLowerCase();
-      final friendly = msg.contains('row-level security') ||
-              msg.contains('violates row-level') ||
-              msg.contains('permission denied')
-          ? 'You don\'t have permission to delete this list.'
-          : 'Could not delete list. Try again.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendly)),
-      );
-      return false;
-    } catch (_) {
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not delete list. Try again.')),
-      );
-      return false;
-    }
-  }
-
-  /// Returns the new name if the list was renamed on the server.
-  Future<String?> _promptRenameList(
-    AppList list, {
-    BuildContext? anchorContext,
-  }) async {
-    final sheetContext = anchorContext ?? context;
-    final newName = await showModalBottomSheet<String?>(
-      context: sheetContext,
-      showDragHandle: true,
-      builder: (ctx) => _RenameListSheet(list: list),
-    );
-    if (newName == null || !mounted) return null;
-    ref.invalidate(listsProvider);
-    invalidateActiveGroceryStreams(ref);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Renamed to "$newName"')),
-    );
-    return newName;
   }
 
   Future<void> _promptUpdateQuantity(GroceryItem item) async {
@@ -1042,10 +756,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                       ref.read(groceryItemsSortModeProvider.notifier).state =
                           mode;
                     },
-                    onManageLists: () => _openReorderListSheet(
-                      orderedLists: orderedFilteredLists,
-                      scope: scopeFilter,
-                    ),
                     onNewList: () => _openCreateListSheet(scopeFilter),
                   );
                 },
@@ -1194,33 +904,56 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                             Positioned(
                               top: 0,
                               right: 0,
-                              child: IconButton(
-                                tooltip: _groceryReorderMode
-                                    ? 'Save order'
-                                    : 'Reorder items',
-                                style: IconButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: const Size(40, 40),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  foregroundColor: _groceryReorderMode
-                                      ? scheme.primary
-                                      : scheme.onSurfaceVariant,
-                                ),
-                                onPressed: onReorderIconPressed,
-                                icon: _groceryReorderMode
-                                    ? const Icon(
-                                        Icons.check_rounded,
-                                        size: 26,
-                                      )
-                                    : Image.asset(
-                                        _groceryListReorderAsset,
-                                        width: 26,
-                                        height: 26,
-                                        fit: BoxFit.contain,
-                                        color: scheme.onSurfaceVariant,
-                                        colorBlendMode: BlendMode.srcIn,
-                                      ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 2),
+                                    child: Text(
+                                      _groceryReorderMode
+                                          ? 'Save order'
+                                          : 'Reorder',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            color: _groceryReorderMode
+                                                ? scheme.primary
+                                                : scheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: _groceryReorderMode
+                                        ? 'Save item order'
+                                        : 'Reorder items in this list',
+                                    style: IconButton.styleFrom(
+                                      padding: EdgeInsets.zero,
+                                      minimumSize: const Size(40, 40),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      foregroundColor: _groceryReorderMode
+                                          ? scheme.primary
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                    onPressed: onReorderIconPressed,
+                                    icon: _groceryReorderMode
+                                        ? const Icon(
+                                            Icons.check_rounded,
+                                            size: 26,
+                                          )
+                                        : Image.asset(
+                                            _groceryListReorderAsset,
+                                            width: 26,
+                                            height: 26,
+                                            fit: BoxFit.contain,
+                                            color: scheme.onSurfaceVariant,
+                                            colorBlendMode: BlendMode.srcIn,
+                                          ),
+                                  ),
+                                ],
                               ),
                             ),
                         ],
@@ -1270,108 +1003,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
             ],
           );
         },
-      ),
-    );
-  }
-}
-
-/// Owns the [TextEditingController] so it is disposed only after the modal route
-/// has unmounted (avoids TextEditingController dispose while TextField still depends on it).
-class _RenameListSheet extends ConsumerStatefulWidget {
-  const _RenameListSheet({required this.list});
-
-  final AppList list;
-
-  @override
-  ConsumerState<_RenameListSheet> createState() => _RenameListSheetState();
-}
-
-class _RenameListSheetState extends ConsumerState<_RenameListSheet> {
-  late final TextEditingController _nameCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameCtrl = TextEditingController(text: widget.list.name);
-  }
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return BrandedSheetScaffold(
-      title: 'Rename list',
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextField(
-            controller: _nameCtrl,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'List name',
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () async {
-                final trimmed = _nameCtrl.text.trim();
-                if (trimmed.isEmpty) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please enter a list name.'),
-                      ),
-                    );
-                  }
-                  return;
-                }
-                try {
-                  await ref.read(groceryRepositoryProvider).renameList(
-                        listId: widget.list.id,
-                        name: trimmed,
-                      );
-                  if (context.mounted) Navigator.of(context).pop(trimmed);
-                } on StateError catch (_) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please enter a list name.'),
-                      ),
-                    );
-                  }
-                } on PostgrestException catch (e) {
-                  if (!context.mounted) return;
-                  final msg = e.message.toLowerCase();
-                  final friendly = msg.contains('row-level security') ||
-                          msg.contains('violates row-level') ||
-                          msg.contains('permission denied')
-                      ? 'You don\'t have permission to rename this list.'
-                      : 'Could not rename list. Try again.';
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(friendly)),
-                  );
-                } catch (_) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Could not rename list. Try again.'),
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1541,7 +1172,6 @@ class _ListsToolbar extends StatelessWidget {
     required this.itemCount,
     required this.sortMode,
     required this.onSortModeSelected,
-    required this.onManageLists,
     required this.onNewList,
   });
 
@@ -1555,7 +1185,6 @@ class _ListsToolbar extends StatelessWidget {
   final int itemCount;
   final GroceryItemsSortMode sortMode;
   final ValueChanged<GroceryItemsSortMode> onSortModeSelected;
-  final VoidCallback onManageLists;
   final VoidCallback onNewList;
 
   void _openListPicker(BuildContext context) {
@@ -1735,8 +1364,6 @@ class _ListsToolbar extends StatelessWidget {
                       ),
                       onSelected: (value) {
                         switch (value) {
-                          case 'manage':
-                            onManageLists();
                           case 'new':
                             onNewList();
                           case 'sort_as_added':
@@ -1811,12 +1438,6 @@ class _ListsToolbar extends StatelessWidget {
                               ),
                             ],
                           ),
-                        ),
-                        const PopupMenuDivider(),
-                        PopupMenuItem<String>(
-                          value: 'manage',
-                          enabled: orderedFilteredLists.isNotEmpty,
-                          child: const Text('Manage lists'),
                         ),
                         const PopupMenuItem<String>(
                           value: 'new',

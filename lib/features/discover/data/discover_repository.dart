@@ -1466,6 +1466,47 @@ final discoverFilteredRecipesProvider =
   });
 });
 
+/// Public-catalog search: token AND across title, cuisine tags, and ingredient names.
+final discoverPublicSearchResultsProvider =
+    Provider<AsyncValue<List<Recipe>>>((ref) {
+  final query = ref.watch(discoverSearchQueryProvider).trim();
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  if (query.isEmpty) {
+    return const AsyncValue.data(<Recipe>[]);
+  }
+  final tokens = _discoverSearchTokens(query);
+  if (tokens.isEmpty) {
+    return const AsyncValue.data(<Recipe>[]);
+  }
+  return recipesAsync.whenData((recipes) {
+    return recipes
+        .where((r) => _recipeMatchesDiscoverSearch(r, tokens))
+        .toList();
+  });
+});
+
+List<String> _discoverSearchTokens(String query) {
+  return query
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
+bool _recipeMatchesDiscoverSearch(Recipe recipe, List<String> tokens) {
+  if (tokens.isEmpty) return true;
+  final title = recipe.title.toLowerCase();
+  final tagHaystack = recipe.cuisineTags.map((t) => t.toLowerCase()).join(' ');
+  final ingredientHaystack =
+      recipe.ingredients.map((i) => i.name.toLowerCase()).join(' ');
+  final combined = '$title $tagHaystack $ingredientHaystack';
+  for (final token in tokens) {
+    if (!combined.contains(token)) return false;
+  }
+  return true;
+}
+
 List<Recipe> _applyFilters(List<Recipe> recipes, DiscoverFilters filters) {
   final query = filters.query.trim().toLowerCase();
   return recipes.where((recipe) {

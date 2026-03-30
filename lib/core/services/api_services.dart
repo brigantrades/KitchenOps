@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:google_generative_ai/google_generative_ai.dart';
@@ -95,6 +96,13 @@ class GeminiService {
     'gemini-2.0-flash',
   ];
 
+  /// Models tried for cookbook photo import (multimodal); order matches text fallbacks.
+  static const List<String> _visionFallbackModels = <String>[
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+  ];
+
   Future<GenerateContentResponse?> _generateWithFallback(String prompt) async {
     if (_model == null) return null;
 
@@ -121,6 +129,101 @@ class GeminiService {
       _lastGenerateFailure = err;
       return null;
     }
+  }
+
+  Future<GenerateContentResponse?> _generateMultimodalWithFallback({
+    required String prompt,
+    required Uint8List imageBytes,
+    required String mimeType,
+  }) async {
+    if (_model == null) return null;
+    final userContent = Content.multi([
+      TextPart(prompt),
+      DataPart(mimeType, imageBytes),
+    ]);
+    Future<GenerateContentResponse> callModel(GenerativeModel model) {
+      return model.generateContent([userContent]);
+    }
+    try {
+      final r = await callModel(_model);
+      _lastGenerateFailure = null;
+      return r;
+    } catch (e) {
+      final err = e.toString();
+      for (final modelName in _visionFallbackModels) {
+        try {
+          final model = GenerativeModel(model: modelName, apiKey: _apiKey);
+          final r = await callModel(model);
+          _lastGenerateFailure = null;
+          return r;
+        } catch (_) {
+          continue;
+        }
+      }
+      _lastGenerateFailure = err;
+      return null;
+    }
+  }
+
+  bool _looksValidRecipeImportJson(Map<String, dynamic> m) {
+    final ingredients = m['ingredients'];
+    final instructions = m['instructions'];
+    final hasIngredients = ingredients is List && ingredients.isNotEmpty;
+    final hasInstructions = instructions is List && instructions.isNotEmpty;
+    return hasIngredients || hasInstructions;
+  }
+
+  /// Reads model text without throwing when output is blocked (recitation/safety).
+  String? _safeResponseText(GenerateContentResponse response) {
+    if (response.candidates.isEmpty) {
+      final pf = response.promptFeedback;
+      if (pf != null) {
+        final br = pf.blockReason;
+        final msg = pf.blockReasonMessage;
+        _lastGenerateFailure = br != null
+            ? 'Prompt blocked: $br${msg != null && msg.isNotEmpty ? ' — $msg' : ''}'
+            : 'Prompt blocked.';
+      }
+      return null;
+    }
+    final c = response.candidates.first;
+    if (c.finishReason == FinishReason.recitation ||
+        c.finishReason == FinishReason.safety) {
+      _lastGenerateFailure = c.finishReason == FinishReason.recitation
+          ? 'First pass looked too close to published text (recitation). Trying a paraphrased extraction…'
+          : 'Output blocked for safety.';
+      return null;
+    }
+    try {
+      return c.text;
+    } on GenerativeAIException catch (e) {
+      _lastGenerateFailure = e.message;
+      return null;
+    }
+  }
+
+  /// Decodes Gemini output and returns a recipe map if ingredients or steps exist.
+  Map<String, dynamic>? _parseRecipeImportJsonFromModelText(String raw) {
+    final decoded = _decodeJsonSafe(raw.isEmpty ? '{}' : raw);
+    Map<String, dynamic>? asMap;
+    if (decoded is Map<String, dynamic>) {
+      asMap = decoded;
+    } else if (decoded is List) {
+      for (final item in decoded) {
+        if (item is Map<String, dynamic>) {
+          asMap = item;
+          break;
+        }
+        if (item is Map) {
+          asMap = Map<String, dynamic>.from(item);
+          break;
+        }
+      }
+    }
+    if (asMap != null && _looksValidRecipeImportJson(asMap)) {
+      return asMap;
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> generateWeeklyPlan({
@@ -273,50 +376,112 @@ Serving size guidance:
       return null;
     }
     final raw = (response.text ?? '').trim();
-    final decoded = _decodeJsonSafe(raw.isEmpty ? '{}' : raw);
-    Map<String, dynamic>? asMap;
-    if (decoded is Map<String, dynamic>) {
-      asMap = decoded;
-    } else if (decoded is List) {
-      for (final item in decoded) {
-        if (item is Map<String, dynamic>) {
-          asMap = item;
-          break;
-        }
-        if (item is Map) {
-          asMap = Map<String, dynamic>.from(item);
-          break;
-        }
-      }
-    }
-
-    bool looksValidRecipeJson(Map<String, dynamic> m) {
-      final ingredients = m['ingredients'];
-      final instructions = m['instructions'];
-      final hasIngredients = ingredients is List && ingredients.isNotEmpty;
-      final hasInstructions = instructions is List && instructions.isNotEmpty;
-      return hasIngredients || hasInstructions;
-    }
-
-    if (asMap != null && looksValidRecipeJson(asMap)) {
+    final asMap = _parseRecipeImportJsonFromModelText(raw);
+    if (asMap != null) {
       return asMap;
     }
 
+    final decoded = _decodeJsonSafe(raw.isEmpty ? '{}' : raw);
     // Truncated raw response (refusals, markdown, empty JSON, wrong shape).
     final snippet = raw.isEmpty
         ? '<empty response.text>'
         : (raw.length <= 800 ? raw : raw.substring(0, 800));
     debugPrint('Gemini Instagram import: invalid or empty recipe JSON.');
     debugPrint('Gemini raw (first 800 chars): $snippet');
-    if (asMap != null) {
+    final fallbackMap = decoded is Map<String, dynamic> ? decoded : null;
+    if (fallbackMap != null) {
       debugPrint(
-        'Gemini decoded keys: ${asMap.keys.toList()} '
+        'Gemini decoded keys: ${fallbackMap.keys.toList()} '
         '(ingredients/instructions missing or empty?)',
       );
     } else {
       debugPrint(
         'Gemini decode result type: ${decoded.runtimeType} (expected object or array of object)',
       );
+    }
+    return null;
+  }
+
+  static const String _kBookScanPromptPrimary = '''
+You are an expert chef and recipe extractor.
+Extract a complete, clean recipe from the attached photo of a cookbook page.
+Return ONLY valid JSON (no extra text) with these exact keys:
+{
+  "title": string,
+  "description": string (short summary if present),
+  "ingredients": array of objects [ { "name": string, "amount": string, "unit": string } ],
+  "instructions": array of strings (each step as one clean string),
+  "servings": number (default 2 if missing),
+  "prep_time": number (minutes, null if missing),
+  "cook_time": number (minutes, null if missing),
+  "meal_type": string (best guess: breakfast, lunch, dinner, snack, dessert),
+  "cuisine_tags": array of strings
+}
+Handle messy text, columns, handwriting, or poor lighting. Fix any OCR-like errors.
+Infer servings from yield language when visible; if uncertain, choose from {2, 3, 4, 6}.
+''';
+
+  /// Second pass when the API blocks verbatim transcription (recitation).
+  static const String _kBookScanPromptParaphrase = '''
+You help a home cook digitize their own recipe notes for personal use.
+Read the recipe in the photo and express it in your own words: paraphrase ingredient lines
+and cooking steps (do not reproduce long copyrighted passages verbatim).
+Return ONLY valid JSON (no extra text) with these exact keys:
+{
+  "title": string,
+  "description": string (short summary if present),
+  "ingredients": array of objects [ { "name": string, "amount": string, "unit": string } ],
+  "instructions": array of strings (each step as one clean string),
+  "servings": number (default 2 if missing),
+  "prep_time": number (minutes, null if missing),
+  "cook_time": number (minutes, null if missing),
+  "meal_type": string (best guess: breakfast, lunch, dinner, snack, dessert),
+  "cuisine_tags": array of strings
+}
+Infer servings from yield language when visible; if uncertain, choose from {2, 3, 4, 6}.
+''';
+
+  /// Cookbook page photo: returns decoded JSON map or null if Gemini is disabled or parsing fails.
+  Future<Map<String, dynamic>?> extractRecipeFromBookPhoto({
+    required Uint8List imageBytes,
+    required String mimeType,
+  }) async {
+    if (_model == null) return null;
+    if (imageBytes.isEmpty) return null;
+
+    const prompts = <String>[
+      _kBookScanPromptPrimary,
+      _kBookScanPromptParaphrase,
+    ];
+
+    for (var attempt = 0; attempt < prompts.length; attempt++) {
+      final response = await _generateMultimodalWithFallback(
+        prompt: prompts[attempt],
+        imageBytes: imageBytes,
+        mimeType: mimeType,
+      );
+      if (response == null) {
+        debugPrint(
+          'Gemini book scan: attempt ${attempt + 1} generateContent returned null.',
+        );
+        continue;
+      }
+      final raw = _safeResponseText(response)?.trim();
+      if (raw == null || raw.isEmpty) {
+        debugPrint(
+          'Gemini book scan: attempt ${attempt + 1} blocked or empty text.',
+        );
+        continue;
+      }
+      final asMap = _parseRecipeImportJsonFromModelText(raw);
+      if (asMap != null) {
+        return asMap;
+      }
+      final snippet =
+          raw.length <= 800 ? raw : raw.substring(0, 800);
+      debugPrint('Gemini book scan: attempt ${attempt + 1} invalid JSON.');
+      debugPrint('Gemini raw (first 800 chars): $snippet');
+      _lastGenerateFailure = 'Could not parse recipe from model output.';
     }
     return null;
   }

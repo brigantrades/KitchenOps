@@ -897,12 +897,62 @@ Future<Recipe?> pickRecipeForPlannerSlot(
   required String slotDisplayLabel,
   required List<Recipe> recipes,
 }) {
-  if (recipes.isEmpty) return Future.value(null);
   return showPlannerRecipePicker(
     context,
     slotDisplayLabel: slotDisplayLabel,
     allRecipes: recipes,
   );
+}
+
+Future<bool> _plannerAddMealSlotFlow(
+  BuildContext context,
+  WidgetRef ref, {
+  required DateTime day,
+  required List<Recipe> recipes,
+}) async {
+  final label = await showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) => const _AddMealOrSnackSheet(),
+  );
+  if (label == null || label.trim().isEmpty) return false;
+  if (!context.mounted) return false;
+  final pickerLabel = plannerNewSlotRecipePickerTitleLabel(label);
+  final picked = await pickRecipeForPlannerSlot(
+    context,
+    slotDisplayLabel: pickerLabel,
+    recipes: recipes,
+  );
+  if (!context.mounted) return false;
+  final user = ref.read(currentUserProvider);
+  if (user == null) return false;
+  final dayOnly = plannerDateOnly(day);
+  final storageWeek = weekStartMondayForDate(dayOnly);
+  final storageDow = dartWeekdayToStartDay(dayOnly.weekday);
+  try {
+    final nextOrder = await ref.read(plannerRepositoryProvider).nextSlotOrder(
+          userId: user.id,
+          weekStart: storageWeek,
+          dayOfWeek: storageDow,
+        );
+    await ref.read(plannerRepositoryProvider).addSlot(
+          userId: user.id,
+          weekStart: storageWeek,
+          dayOfWeek: storageDow,
+          mealLabel: label,
+          slotOrder: nextOrder,
+          recipeId: picked?.id,
+        );
+    invalidatePlannerSlotCaches(ref, dayOnly);
+    return true;
+  } on PostgrestException catch (error) {
+    if (!context.mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text('Could not add meal slot: ${error.message}')),
+    );
+    return false;
+  }
 }
 
 /// Same meal editor as the planner; saves on confirm. Does not navigate away.
@@ -953,7 +1003,6 @@ Future<void> showPlannerDayDetailSheet(
   required String? currentUserId,
   required bool showMemberAssignment,
   required PlannerEditSlotGroceryFn onEditSlotGroceryItems,
-  required Future<String?> Function(BuildContext context) onPickNewMealLabel,
 }) async {
   final dayOnly = plannerDateOnly(day);
   final storageWeek = weekStartMondayForDate(dayOnly);
@@ -1076,38 +1125,14 @@ Future<void> showPlannerDayDetailSheet(
                     const SizedBox(height: 8),
                     FilledButton.tonalIcon(
                       onPressed: () async {
-                        final label = await onPickNewMealLabel(context);
-                        if (label == null || label.trim().isEmpty) return;
-                        final user = ref.read(currentUserProvider);
-                        if (user == null) return;
-                        try {
-                          final nextOrder = await ref
-                              .read(plannerRepositoryProvider)
-                              .nextSlotOrder(
-                                userId: user.id,
-                                weekStart: storageWeek,
-                                dayOfWeek: storageDow,
-                              );
-                          await ref.read(plannerRepositoryProvider).addSlot(
-                                userId: user.id,
-                                weekStart: storageWeek,
-                                dayOfWeek: storageDow,
-                                mealLabel: label,
-                                slotOrder: nextOrder,
-                              );
-                          invalidatePlannerSlotCaches(ref, dayOnly);
-                          if (context.mounted) {
-                            Navigator.of(sheetCtx).pop();
-                          }
-                        } on PostgrestException catch (error) {
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Could not add meal slot: ${error.message}',
-                              ),
-                            ),
-                          );
+                        final added = await _plannerAddMealSlotFlow(
+                          context,
+                          ref,
+                          day: dayOnly,
+                          recipes: recipes,
+                        );
+                        if (added && context.mounted) {
+                          Navigator.of(sheetCtx).pop();
                         }
                       },
                       icon: const Icon(Icons.add_circle_outline),
@@ -1132,7 +1157,6 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
     required this.stepDays,
     required this.onShowLoadingShell,
     required this.onEditSlotGroceryItems,
-    required this.onPickNewMealLabel,
     required this.onOpenPlannerWindowSettings,
   });
 
@@ -1141,7 +1165,6 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
   final int stepDays;
   final Widget Function() onShowLoadingShell;
   final PlannerEditSlotGroceryFn onEditSlotGroceryItems;
-  final Future<String?> Function(BuildContext context) onPickNewMealLabel;
   final VoidCallback onOpenPlannerWindowSettings;
 
   static const int _maxLinesPerDay = 5;
@@ -1292,7 +1315,6 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                                       showMemberAssignment: showMemberAssignment,
                                       onEditSlotGroceryItems:
                                           onEditSlotGroceryItems,
-                                      onPickNewMealLabel: onPickNewMealLabel,
                                     ),
                                   );
                                 },
@@ -2171,14 +2193,6 @@ class PlannerScreen extends ConsumerWidget {
     );
   }
 
-  Future<String?> _pickNewMealLabel(BuildContext context) {
-    return showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => const _AddMealOrSnackSheet(),
-    );
-  }
-
   Future<List<_GroceryEditDraft>?> _editPlannerSlotGroceryItems(
     BuildContext context, {
     required MealPlanSlot slot,
@@ -2416,7 +2430,6 @@ class PlannerScreen extends ConsumerWidget {
                       recipe: recipe,
                       groceryItems: groceryItems,
                     ),
-                    onPickNewMealLabel: _pickNewMealLabel,
                     onOpenPlannerWindowSettings: () =>
                         showPlannerWindowSettingsSheet(context, ref),
                   )
@@ -2681,34 +2694,12 @@ class PlannerScreen extends ConsumerWidget {
                         const SizedBox(height: 4),
                         FilledButton.tonalIcon(
                           onPressed: () async {
-                            final label = await _pickNewMealLabel(context);
-                            if (label == null || label.trim().isEmpty) return;
-                            final user = ref.read(currentUserProvider);
-                            if (user == null) return;
-                            try {
-                              final nextOrder = await ref
-                                  .read(plannerRepositoryProvider)
-                                  .nextSlotOrder(
-                                    userId: user.id,
-                                    weekStart: storageWeek,
-                                    dayOfWeek: storageDow,
-                                  );
-                              await ref.read(plannerRepositoryProvider).addSlot(
-                                    userId: user.id,
-                                    weekStart: storageWeek,
-                                    dayOfWeek: storageDow,
-                                    mealLabel: label,
-                                    slotOrder: nextOrder,
-                                  );
-                              invalidatePlannerSlotCaches(ref, selectedDate);
-                            } on PostgrestException catch (error) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                    content: Text(
-                                        'Could not add meal slot: ${error.message}')),
-                              );
-                            }
+                            await _plannerAddMealSlotFlow(
+                              context,
+                              ref,
+                              day: selectedDate,
+                              recipes: recipes,
+                            );
                           },
                           icon: const Icon(Icons.add_circle_outline),
                           label: const Text('Add meal or snack'),
