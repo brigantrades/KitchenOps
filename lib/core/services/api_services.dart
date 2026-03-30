@@ -355,6 +355,10 @@ Return ONLY valid JSON with these keys:
   "meal_type": "dinner" or "lunch" etc (best guess),
   "cuisine_tags": array of strings
 }
+Ingredient rules (strict):
+- "name": ingredient name only — no leading quantities or units.
+- "amount": numeric quantity only (a number or numeric string like "1 1/2" or "2.5") — do not put unit words here.
+- "unit": a single canonical token when possible, chosen from: g, kg, mg, ml, l, cup, tbsp, tsp, oz, lb, fl oz, pt, qt, gal, piece. Use "" for qualitative lines (e.g. "to taste") or when unclear.
 Title guidance:
 - The app may use the first line of the caption as the recipe name when it is clear.
 - For "title", provide a short fallback dish name only when the caption does not clearly name the recipe (otherwise a simple descriptive name is fine).
@@ -417,6 +421,10 @@ Return ONLY valid JSON (no extra text) with these exact keys:
   "meal_type": string (best guess: breakfast, lunch, dinner, snack, dessert),
   "cuisine_tags": array of strings
 }
+Ingredient rules (strict):
+- "name": ingredient name only — no leading quantities or units.
+- "amount": numeric quantity only (a number or numeric string) — no unit words in this field.
+- "unit": one canonical token when possible from: g, kg, mg, ml, l, cup, tbsp, tsp, oz, lb, fl oz, pt, qt, gal, piece. Use "" for qualitative lines or when unclear.
 Handle messy text, columns, handwriting, or poor lighting. Fix any OCR-like errors.
 Infer servings from yield language when visible; if uncertain, choose from {2, 3, 4, 6}.
 ''';
@@ -438,6 +446,10 @@ Return ONLY valid JSON (no extra text) with these exact keys:
   "meal_type": string (best guess: breakfast, lunch, dinner, snack, dessert),
   "cuisine_tags": array of strings
 }
+Ingredient rules (strict):
+- "name": ingredient name only — no leading quantities or units.
+- "amount": numeric quantity only — no unit words in this field.
+- "unit": one canonical token when possible from: g, kg, mg, ml, l, cup, tbsp, tsp, oz, lb, fl oz, pt, qt, gal, piece. Use "" for qualitative lines or when unclear.
 Infer servings from yield language when visible; if uncertain, choose from {2, 3, 4, 6}.
 ''';
 

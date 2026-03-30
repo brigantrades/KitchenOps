@@ -4,6 +4,12 @@ import 'package:plateplan/core/measurement/measurement_system.dart';
 import 'package:plateplan/core/models/app_models.dart';
 
 void main() {
+  test('normalizeIngredientUnitKey strips trailing punctuation from OCR', () {
+    expect(normalizeIngredientUnitKey('Tbsp.'), 'tbsp');
+    expect(normalizeIngredientUnitKey('tsp,'), 'tsp');
+    expect(normalizeIngredientUnitKey('ml.'), 'ml');
+  });
+
   test('1 kg converts to lb in US customary display', () {
     final ing = Ingredient(
       name: 'flour',

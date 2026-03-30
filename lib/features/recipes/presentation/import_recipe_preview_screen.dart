@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/models/instagram_recipe_import.dart';
+import 'package:plateplan/core/measurement/ingredient_unit_profile.dart';
+import 'package:plateplan/core/measurement/measurement_system_provider.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -14,6 +16,16 @@ import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+/// Matches recipe editor qualitative presets ([recipes_screen]).
+const _kImportQualitativePresets = [
+  'to taste',
+  'as needed',
+  'pinch',
+  '1 tsp',
+  '1 tbsp',
+  '½ tsp',
+];
 
 /// Passed via [GoRouterState.extra] when opening [ImportRecipePreviewScreen].
 class ImportRecipePreviewArgs {
@@ -838,6 +850,7 @@ class _ImportRecipePreviewScreenState
     BuildContext context, {
     Ingredient? initial,
   }) async {
+    final system = ref.read(measurementSystemProvider);
     final nameCtrl = TextEditingController(text: initial?.name ?? '');
     final amountCtrl = TextEditingController(
       text: initial == null
@@ -846,12 +859,58 @@ class _ImportRecipePreviewScreenState
               ? ''
               : formatIngredientAmount(initial.amount),
     );
-    final unitCtrl = TextEditingController(text: initial?.unit ?? '');
+    final customUnitCtrl = TextEditingController();
+    final qualitativeCustomCtrl = TextEditingController();
+
+    var profile = detectUnitProfile(nameCtrl.text.trim(), system);
+    var unitOptions = List<String>.from(profile.options);
+    var selectedUnit = profile.defaultUnit;
+    var qualitativePreset = 'to taste';
+
     var qualitative = initial?.qualitative ?? false;
+    if (initial != null) {
+      if (initial.qualitative) {
+        final t = initial.unit.trim();
+        if (t.isEmpty) {
+          qualitativePreset = 'to taste';
+        } else if (_kImportQualitativePresets.contains(t)) {
+          qualitativePreset = t;
+        } else {
+          qualitativePreset = 'custom';
+          qualitativeCustomCtrl.text = t;
+        }
+      } else {
+        profile = detectUnitProfile(initial.name, system);
+        unitOptions = List<String>.from(profile.options);
+        final nu = initial.unit.trim().toLowerCase();
+        final isCustom =
+            !profile.options.any((o) => o.toLowerCase() == nu);
+        if (isCustom) {
+          selectedUnit = 'custom';
+          customUnitCtrl.text = initial.unit;
+        } else {
+          selectedUnit =
+              matchUnitOption(profile.options, initial.unit) ??
+                  profile.defaultUnit;
+        }
+      }
+    }
+
     final result = await showDialog<Ingredient>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setLocal) {
+          void onNameChanged() {
+            setLocal(() {
+              profile = detectUnitProfile(nameCtrl.text.trim(), system);
+              unitOptions = List<String>.from(profile.options);
+              if (selectedUnit != 'custom' &&
+                  !unitOptions.contains(selectedUnit)) {
+                selectedUnit = profile.defaultUnit;
+              }
+            });
+          }
+
           return AlertDialog(
             title: Text(initial == null ? 'Add ingredient' : 'Edit ingredient'),
             content: SingleChildScrollView(
@@ -864,17 +923,64 @@ class _ImportRecipePreviewScreenState
                       labelText: 'Ingredient',
                       border: OutlineInputBorder(),
                     ),
+                    onChanged: (_) => onNameChanged(),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     value: qualitative,
-                    onChanged: (v) => setLocal(() => qualitative = v),
+                    onChanged: (v) => setLocal(() {
+                      qualitative = v;
+                      if (!v) {
+                        profile =
+                            detectUnitProfile(nameCtrl.text.trim(), system);
+                        unitOptions = List<String>.from(profile.options);
+                        selectedUnit = profile.defaultUnit;
+                        customUnitCtrl.clear();
+                      }
+                    }),
                     title: const Text('Free-text amount'),
                     subtitle: const Text('Use for “to taste”, “pinch”, etc.'),
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  if (!qualitative)
+                  if (qualitative) ...[
+                    DropdownButtonFormField<String>(
+                      key: ValueKey<String>(qualitativePreset),
+                      initialValue: qualitativePreset,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        ..._kImportQualitativePresets.map(
+                          (p) => DropdownMenuItem<String>(
+                            value: p,
+                            child: Text(p),
+                          ),
+                        ),
+                        const DropdownMenuItem<String>(
+                          value: 'custom',
+                          child: Text('Custom…'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setLocal(() => qualitativePreset = value);
+                      },
+                    ),
+                    if (qualitativePreset == 'custom') ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      TextField(
+                        controller: qualitativeCustomCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Custom amount text',
+                          border: OutlineInputBorder(),
+                        ),
+                        textCapitalization: TextCapitalization.sentences,
+                      ),
+                    ],
+                  ] else ...[
                     TextField(
                       controller: amountCtrl,
                       keyboardType: const TextInputType.numberWithOptions(
@@ -885,14 +991,55 @@ class _ImportRecipePreviewScreenState
                         border: OutlineInputBorder(),
                       ),
                     ),
-                  if (!qualitative) const SizedBox(height: AppSpacing.sm),
-                  TextField(
-                    controller: unitCtrl,
-                    decoration: InputDecoration(
-                      labelText: qualitative ? 'Amount text' : 'Unit',
-                      border: const OutlineInputBorder(),
+                    const SizedBox(height: AppSpacing.sm),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            key: ValueKey(
+                              '${unitOptions.join('|')}_$selectedUnit',
+                            ),
+                            initialValue: unitOptions.contains(selectedUnit)
+                                ? selectedUnit
+                                : unitOptions.last,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Unit',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: unitOptions
+                                .map(
+                                  (u) => DropdownMenuItem<String>(
+                                    value: u,
+                                    child: Text(u),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              if (value == null) return;
+                              setLocal(() {
+                                selectedUnit = value;
+                                if (value != 'custom') {
+                                  customUnitCtrl.clear();
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+                    if (selectedUnit == 'custom') ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      TextField(
+                        controller: customUnitCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Custom unit',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ],
                 ],
               ),
             ),
@@ -905,21 +1052,31 @@ class _ImportRecipePreviewScreenState
                 onPressed: () {
                   final name = nameCtrl.text.trim();
                   if (name.isEmpty) return;
-                  final unit = unitCtrl.text.trim();
                   if (qualitative) {
+                    String qUnit;
+                    if (qualitativePreset == 'custom') {
+                      qUnit = qualitativeCustomCtrl.text.trim();
+                    } else {
+                      qUnit = qualitativePreset;
+                    }
                     Navigator.pop(
                       ctx,
                       Ingredient(
                         name: name,
                         amount: 0,
-                        unit: unit,
+                        unit: qUnit,
                         category: GroceryCategory.other,
                         qualitative: true,
                       ),
                     );
                     return;
                   }
-                  final amount = _tryParseAmountText(amountCtrl.text.trim()) ?? 0;
+                  final amount =
+                      _tryParseAmountText(amountCtrl.text.trim()) ?? 0;
+                  final unit = selectedUnit == 'custom'
+                      ? customUnitCtrl.text.trim()
+                      : selectedUnit;
+                  if (unit.isEmpty) return;
                   Navigator.pop(
                     ctx,
                     Ingredient(
@@ -940,7 +1097,8 @@ class _ImportRecipePreviewScreenState
     );
     nameCtrl.dispose();
     amountCtrl.dispose();
-    unitCtrl.dispose();
+    customUnitCtrl.dispose();
+    qualitativeCustomCtrl.dispose();
     return result;
   }
 

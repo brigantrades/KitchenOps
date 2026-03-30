@@ -8,6 +8,10 @@ String? normalizeIngredientUnitKey(String raw) {
   var s = raw.trim().toLowerCase();
   if (s.isEmpty) return null;
   s = s.replaceAll(RegExp(r'\s+'), ' ');
+  // Gemini/OCR often append sentence punctuation (e.g. "Tbsp.") which would
+  // otherwise miss the map and show as a custom unit in dropdowns.
+  s = s.replaceAll(RegExp(r'[.,;]+$'), '');
+  if (s.isEmpty) return null;
   if (s == 'fl oz' ||
       s == 'floz' ||
       s == 'fluid oz' ||

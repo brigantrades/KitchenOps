@@ -1,6 +1,9 @@
 import 'dart:math';
 
+import 'package:plateplan/core/measurement/ingredient_display_units.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/recipes/ingredient_line_parser.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 
 /// Maps Gemini / Instagram labels like "dinner" to [MealType] without using [_mealTypeFromDb].
 MealType mealTypeFromInstagramLabel(String? raw) {
@@ -89,6 +92,132 @@ Ingredient _ingredientFromInstagramJson(Map<String, dynamic> json) {
     category: GroceryCategory.other,
     qualitative: true,
   );
+}
+
+Ingredient _ingredientWith(
+  Ingredient base, {
+  required String name,
+  required double amount,
+  required String unit,
+  required bool qualitative,
+}) {
+  return Ingredient(
+    name: name,
+    amount: amount,
+    unit: unit,
+    category: base.category,
+    qualitative: qualitative,
+    fdcId: base.fdcId,
+    fdcDescription: base.fdcDescription,
+    lineNutrition: base.lineNutrition,
+    fdcNutritionEstimated: base.fdcNutritionEstimated,
+    fdcTypicalAverage: base.fdcTypicalAverage,
+  );
+}
+
+/// Normalizes Gemini/book-scan [Ingredient] rows to canonical unit keys and
+/// recovers amount/unit/name splits when the model merged fields.
+Ingredient normalizeImportedIngredient(Ingredient i) {
+  if (i.qualitative) {
+    final combined = [i.unit, i.name]
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .join(' ');
+    final parsed = tryParseMeasuredIngredientLine(combined);
+    if (parsed != null) {
+      final u = normalizeIngredientUnitKey(parsed.unit) ?? parsed.unit;
+      return _ingredientWith(
+        i,
+        name: parsed.name,
+        amount: parsed.amount,
+        unit: u,
+        qualitative: false,
+      );
+    }
+    return i;
+  }
+
+  var name = i.name.trim();
+  var amount = i.amount;
+  var unit = i.unit.trim();
+
+  // Model puts the whole line in [name] (e.g. "Vinegar 2 Tbsp.") with empty amount/unit.
+  if (amount <= 0 && unit.isEmpty && name.isNotEmpty) {
+    final leading = tryParseMeasuredIngredientLine(name);
+    if (leading != null) {
+      final u = normalizeIngredientUnitKey(leading.unit) ?? leading.unit;
+      return _ingredientWith(
+        i,
+        name: leading.name,
+        amount: leading.amount,
+        unit: u,
+        qualitative: false,
+      );
+    }
+    final trailing = RegExp(
+      r'^(.+?)\s+([\d\s.,/\-–—½¼¾⅓⅔⅛⅜⅝⅞]+)\s+(.+)$',
+    ).firstMatch(name);
+    if (trailing != null) {
+      final namePart = trailing.group(1)!.trim();
+      final amountPart = trailing.group(2)!.trim();
+      final unitPart = trailing.group(3)!.trim();
+      final amt = _parseAmountToken(amountPart);
+      final u = normalizeIngredientUnitKey(unitPart);
+      if (amt != null && amt > 0 && u != null && namePart.isNotEmpty) {
+        return _ingredientWith(
+          i,
+          name: namePart,
+          amount: amt,
+          unit: u,
+          qualitative: false,
+        );
+      }
+    }
+  }
+
+  if (name.isEmpty && amount <= 0 && unit.isEmpty) {
+    return i;
+  }
+
+  final direct = normalizeIngredientUnitKey(unit);
+  if (direct != null) {
+    return _ingredientWith(i, name: name, amount: amount, unit: direct, qualitative: false);
+  }
+
+  final unitParts =
+      unit.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+  if (unitParts.length > 1) {
+    final firstKey = normalizeIngredientUnitKey(unitParts.first);
+    if (firstKey != null) {
+      final rest = unitParts.skip(1).join(' ');
+      final newName =
+          rest.isEmpty ? name : (name.isEmpty ? rest : '$rest $name').trim();
+      return _ingredientWith(
+        i,
+        name: newName,
+        amount: amount,
+        unit: firstKey,
+        qualitative: false,
+      );
+    }
+  }
+
+  if (amount > 0 && name.isNotEmpty) {
+    final line = '${formatIngredientAmount(amount)} $unit $name'.trim();
+    final parsed = tryParseMeasuredIngredientLine(line);
+    if (parsed != null) {
+      final u = normalizeIngredientUnitKey(parsed.unit) ?? parsed.unit;
+      return _ingredientWith(
+        i,
+        name: parsed.name,
+        amount: parsed.amount,
+        unit: u,
+        qualitative: false,
+      );
+    }
+  }
+
+  return i;
 }
 
 double? _parseAmountToken(String token) {
@@ -262,6 +391,7 @@ Recipe recipeFromInstagramGeminiMap(
   final ingredients = (json['ingredients'] as List?)
           ?.whereType<Map>()
           .map((e) => _ingredientFromInstagramJson(Map<String, dynamic>.from(e)))
+          .map(normalizeImportedIngredient)
           .where((i) => i.name.isNotEmpty)
           .toList() ??
       const <Ingredient>[];

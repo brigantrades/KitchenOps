@@ -16,6 +16,7 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
 import 'package:plateplan/core/measurement/ingredient_display_units.dart';
+import 'package:plateplan/core/measurement/ingredient_unit_profile.dart';
 import 'package:plateplan/core/measurement/measurement_system.dart';
 import 'package:plateplan/core/measurement/measurement_system_provider.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
@@ -871,13 +872,6 @@ class _IngredientInput {
   }
 }
 
-class _UnitProfile {
-  const _UnitProfile({required this.options, required this.defaultUnit});
-
-  final List<String> options;
-  final String defaultUnit;
-}
-
 class _DirectionDraft {
   _DirectionDraft({String? text}) {
     if (text != null) textCtrl.text = text;
@@ -1085,7 +1079,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _ingredients.clear();
     for (final ingredient in initial.ingredients) {
       if (ingredient.qualitative) {
-        final profile = _detectUnitProfile(ingredient.name, system);
+        final profile = detectUnitProfile(ingredient.name, system);
         _ingredients.add(
           _IngredientInput(
             name: ingredient.name,
@@ -1097,7 +1091,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         );
         continue;
       }
-      final profile = _detectUnitProfile(ingredient.name, system);
+      final profile = detectUnitProfile(ingredient.name, system);
       final normalizedUnit = ingredient.unit.trim().toLowerCase();
       final isCustom = !profile.options.contains(normalizedUnit);
       // profile.options already ends with 'custom'; do not append again or the
@@ -1200,97 +1194,11 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     setState(() {});
   }
 
-  _UnitProfile _detectUnitProfile(String ingredientName, MeasurementSystem system) {
-    final lower = ingredientName.toLowerCase();
-    const liquidWords = [
-      'milk',
-      'oil',
-      'broth',
-      'sauce',
-      'water',
-      'juice',
-      'vinegar',
-      'stock'
-    ];
-    const powderWords = [
-      'flour',
-      'sugar',
-      'salt',
-      'pepper',
-      'paprika',
-      'cumin',
-      'spice'
-    ];
-    if (liquidWords.any(lower.contains)) {
-      return switch (system) {
-        MeasurementSystem.metric => const _UnitProfile(
-            options: ['ml', 'l', 'tsp', 'tbsp', 'custom'],
-            defaultUnit: 'ml',
-          ),
-        MeasurementSystem.imperial => const _UnitProfile(
-            options: [
-              'fl oz',
-              'cup',
-              'tbsp',
-              'tsp',
-              'pt',
-              'qt',
-              'gal',
-              'custom',
-            ],
-            defaultUnit: 'fl oz',
-          ),
-      };
-    }
-    if (powderWords.any(lower.contains)) {
-      return switch (system) {
-        MeasurementSystem.metric => const _UnitProfile(
-            options: ['tsp', 'tbsp', 'g', 'kg', 'mg', 'custom'],
-            defaultUnit: 'tsp',
-          ),
-        MeasurementSystem.imperial => const _UnitProfile(
-            options: ['tsp', 'tbsp', 'oz', 'cup', 'custom'],
-            defaultUnit: 'tsp',
-          ),
-      };
-    }
-    return switch (system) {
-      MeasurementSystem.metric => const _UnitProfile(
-          options: ['g', 'kg', 'mg', 'ml', 'l', 'tsp', 'tbsp', 'piece', 'custom'],
-          defaultUnit: 'g',
-        ),
-      MeasurementSystem.imperial => const _UnitProfile(
-          options: [
-            'oz',
-            'lb',
-            'fl oz',
-            'cup',
-            'tbsp',
-            'tsp',
-            'pt',
-            'qt',
-            'gal',
-            'piece',
-            'custom',
-          ],
-          defaultUnit: 'oz',
-        ),
-    };
-  }
-
-  String? _matchUnitOption(List<String> options, String unit) {
-    final t = unit.trim().toLowerCase();
-    for (final o in options) {
-      if (o.toLowerCase() == t) return o;
-    }
-    return null;
-  }
-
   void _applyMeasurementSystem(MeasurementSystem next) {
     ref.read(measurementSystemProvider.notifier).setSystem(next);
     setState(() {
       for (final row in _ingredients) {
-        final profile = _detectUnitProfile(row.nameCtrl.text, next);
+        final profile = detectUnitProfile(row.nameCtrl.text, next);
         row.unitOptions
           ..clear()
           ..addAll(profile.options);
@@ -1306,7 +1214,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           target: next,
         );
         if (conv != null) {
-          final matched = _matchUnitOption(row.unitOptions, conv.unit);
+          final matched = matchUnitOption(row.unitOptions, conv.unit);
           if (matched != null) {
             row.selectedUnit = matched;
             row.customUnitCtrl.clear();
@@ -1316,7 +1224,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           }
           row.amountCtrl.text = formatIngredientAmount(conv.amount);
         } else {
-          final matched = _matchUnitOption(row.unitOptions, unit);
+          final matched = matchUnitOption(row.unitOptions, unit);
           if (matched != null) {
             row.selectedUnit = matched;
             row.customUnitCtrl.clear();
@@ -3070,7 +2978,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   Future<void> _addIngredientAndOpenModal() async {
     if (!_canAddAnotherIngredient) return;
     FocusScope.of(context).unfocus();
-    final profile = _detectUnitProfile(
+    final profile = detectUnitProfile(
       '',
       ref.read(measurementSystemProvider),
     );
