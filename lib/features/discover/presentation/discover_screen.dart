@@ -16,6 +16,7 @@ import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_household_copy.dart';
 
 class DiscoverScreen extends ConsumerStatefulWidget {
   const DiscoverScreen({super.key});
@@ -266,6 +267,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
 
   Widget _buildQuickDinnerGrid(AsyncValue<List<Recipe>> recipesAsync) {
     final savedRecipes = ref.watch(recipesProvider).valueOrNull ?? const <Recipe>[];
+    final userId = ref.watch(currentUserProvider)?.id;
     return recipesAsync.when(
       data: (recipes) {
         final quickRecipes = recipes.take(8).toList();
@@ -278,7 +280,6 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (context, index) {
               final recipe = quickRecipes[index];
-              final isSaved = _isRecipeSaved(recipe, savedRecipes);
               final imageUrl = recipe.imageUrl?.isNotEmpty == true
                   ? _normalizeImageUrl(recipe.imageUrl!) ?? recipe.imageUrl!
                   : _fallbackFoodImage(index + 10);
@@ -313,26 +314,13 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                           Row(
                             children: [
                               const Spacer(),
-                              Container(
-                                padding: const EdgeInsets.all(6),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFC8D3C2)
-                                      .withValues(alpha: 0.9),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: InkWell(
-                                  onTap: () => _showSaveDestinationModal(recipe),
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Icon(
-                                    isSaved
-                                        ? Icons.bookmark_rounded
-                                        : Icons.bookmark_border_rounded,
-                                    size: 18,
-                                    color: isSaved
-                                        ? const Color(0xFF2F6B46)
-                                        : const Color(0xFF2D342F),
-                                  ),
-                                ),
+                              _discoverSaveAffordance(
+                                context: context,
+                                recipe: recipe,
+                                savedRecipes: savedRecipes,
+                                userId: userId,
+                                onOpenSheet: () =>
+                                    _showSaveDestinationModal(recipe),
                               ),
                             ],
                           ),
@@ -461,7 +449,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Future<void> _showPublicRecipeDetail(Recipe recipe) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _DiscoverRecipeDetailPage(recipe: recipe),
+        builder: (_) => _DiscoverRecipeDetailPage(
+          recipe: recipe,
+          onSaveTo: _showSaveDestinationModal,
+        ),
       ),
     );
   }
@@ -684,33 +675,53 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   }
 
   Future<void> _showSaveDestinationModal(Recipe recipe) async {
-    var saveToFavorites = false;
-    var saveToTry = false;
-    var saveToHousehold = false;
-    var householdFavorite = false;
-    var householdToTry = false;
+    final savedRecipes = ref.read(recipesProvider).valueOrNull ?? [];
+    final user = ref.read(currentUserProvider);
+    final hasSharedHousehold =
+        ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+    final summary = _discoverSaveSummary(recipe, savedRecipes, user?.id);
+
+    var saveToFavorites = summary.myFavorite;
+    var saveToTry = summary.myToTry;
+    var saveToHousehold = hasSharedHousehold && summary.onHousehold;
+    var householdFavorite = summary.onHousehold
+        ? summary.householdFavorite
+        : summary.myFavorite;
+    var householdToTry =
+        summary.onHousehold ? summary.householdToTry : summary.myToTry;
 
     final shouldSave = await showModalBottomSheet<bool>(
       context: context,
+      showDragHandle: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Save Recipe',
+                  'Save to…',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
+                Text(
+                  'My Recipes',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 4),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   secondary: const Icon(Icons.favorite_border_rounded),
-                  title: const Text('My Favorites'),
+                  title: const Text('Favorite'),
+                  subtitle: const Text(
+                    'Show under Favorites on My Recipes.',
+                  ),
                   value: saveToFavorites,
                   onChanged: (value) {
                     setModalState(() => saveToFavorites = value);
@@ -720,56 +731,72 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   contentPadding: EdgeInsets.zero,
                   secondary: const Icon(Icons.bookmark_border_rounded),
                   title: const Text('To Try'),
+                  subtitle: const Text(
+                    'Show under To Try on My Recipes.',
+                  ),
                   value: saveToTry,
                   onChanged: (value) {
                     setModalState(() => saveToTry = value);
                   },
                 ),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  secondary: const Icon(Icons.home_outlined),
-                  title: const Text('Household'),
-                  value: saveToHousehold,
-                  onChanged: (value) {
-                    setModalState(() {
-                      saveToHousehold = value;
-                      if (value) {
-                        householdFavorite = saveToFavorites;
-                        householdToTry = saveToTry;
-                      }
-                    });
-                  },
-                ),
-                if (saveToHousehold) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8, top: 4),
-                    child: Text(
-                      'Household copy',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                  ),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    secondary: const Icon(Icons.favorite_border_rounded),
-                    title: const Text('Favorite on Household Recipes'),
-                    value: householdFavorite,
-                    onChanged: (value) {
-                      setModalState(() => householdFavorite = value);
-                    },
-                  ),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    secondary: const Icon(Icons.bookmark_border_rounded),
-                    title: const Text('To Try on Household Recipes'),
-                    value: householdToTry,
-                    onChanged: (value) {
-                      setModalState(() => householdToTry = value);
-                    },
-                  ),
-                ],
                 const SizedBox(height: 8),
+                Text(
+                  'Household',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                if (!hasSharedHousehold)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.home_outlined),
+                    title: const Text('Share with household'),
+                    subtitle: const Text(
+                      'Create or join a household in Settings to share recipes.',
+                    ),
+                  )
+                else ...[
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.groups_2_outlined),
+                    title: const Text('Save to Household'),
+                    subtitle: const Text(
+                      'Adds a copy everyone in your household can open.',
+                    ),
+                    value: saveToHousehold,
+                    onChanged: (value) {
+                      setModalState(() {
+                        saveToHousehold = value;
+                        if (value) {
+                          householdFavorite = saveToFavorites;
+                          householdToTry = saveToTry;
+                        }
+                      });
+                    },
+                  ),
+                  if (saveToHousehold) ...[
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.favorite_border_rounded),
+                      title: const Text('Favorite on Household Recipes'),
+                      value: householdFavorite,
+                      onChanged: (value) {
+                        setModalState(() => householdFavorite = value);
+                      },
+                    ),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.bookmark_border_rounded),
+                      title: const Text('To Try on Household Recipes'),
+                      value: householdToTry,
+                      onChanged: (value) {
+                        setModalState(() => householdToTry = value);
+                      },
+                    ),
+                  ],
+                ],
+                const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
@@ -1108,6 +1135,7 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                       final savedRecipes =
                           ref.watch(recipesProvider).valueOrNull ??
                               const <Recipe>[];
+                      final userId = ref.watch(currentUserProvider)?.id;
                       final selectedMealTypes =
                           ref.watch(discoverSelectedMealTypesProvider);
                       final selectedRecipeMealTypes = selectedMealTypes
@@ -1137,7 +1165,6 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                         ),
                         itemBuilder: (context, index) {
                           final recipe = filtered[index];
-                          final isSaved = _isRecipeSaved(recipe, savedRecipes);
                           final imageUrl = recipe.imageUrl?.isNotEmpty == true
                               ? _normalizeImageUrl(recipe.imageUrl!) ??
                                   recipe.imageUrl!
@@ -1171,28 +1198,13 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                                     Row(
                                       children: [
                                         const Spacer(),
-                                        Container(
-                                          padding: const EdgeInsets.all(6),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFC8D3C2)
-                                                .withValues(alpha: 0.9),
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                          child: InkWell(
-                                            onTap: () => onSaveRecipe(recipe),
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                            child: Icon(
-                                              isSaved
-                                                  ? Icons.bookmark_rounded
-                                                  : Icons.bookmark_border_rounded,
-                                              size: 18,
-                                              color: isSaved
-                                                  ? const Color(0xFF2F6B46)
-                                                  : const Color(0xFF2D342F),
-                                            ),
-                                          ),
+                                        _discoverSaveAffordance(
+                                          context: context,
+                                          recipe: recipe,
+                                          savedRecipes: savedRecipes,
+                                          userId: userId,
+                                          onOpenSheet: () =>
+                                              onSaveRecipe(recipe),
                                         ),
                                       ],
                                     ),
@@ -1521,33 +1533,124 @@ bool _hasAny(String haystack, List<String> needles) {
   return false;
 }
 
-bool _isRecipeSaved(Recipe discoverRecipe, List<Recipe> savedRecipes) {
+bool _savedRecipeMatchesDiscover(Recipe discoverRecipe, Recipe saved) {
   final discoverSourceUrl = (discoverRecipe.sourceUrl ?? '').trim();
   final discoverApiId = (discoverRecipe.apiId ?? '').trim();
   final discoverTitle = discoverRecipe.title.trim().toLowerCase();
   final discoverMealType = discoverRecipe.mealType.name;
 
-  for (final saved in savedRecipes) {
-    final savedSourceUrl = (saved.sourceUrl ?? '').trim();
-    final savedApiId = (saved.apiId ?? '').trim();
-    if (discoverSourceUrl.isNotEmpty && discoverSourceUrl == savedSourceUrl) {
-      return true;
-    }
-    if (discoverApiId.isNotEmpty && discoverApiId == savedApiId) {
-      return true;
-    }
-    if (saved.title.trim().toLowerCase() == discoverTitle &&
-        saved.mealType.name == discoverMealType) {
-      return true;
-    }
+  final savedSourceUrl = (saved.sourceUrl ?? '').trim();
+  final savedApiId = (saved.apiId ?? '').trim();
+  if (discoverSourceUrl.isNotEmpty && discoverSourceUrl == savedSourceUrl) {
+    return true;
+  }
+  if (discoverApiId.isNotEmpty && discoverApiId == savedApiId) {
+    return true;
+  }
+  if (saved.title.trim().toLowerCase() == discoverTitle &&
+      saved.mealType.name == discoverMealType) {
+    return true;
   }
   return false;
 }
 
+/// First personal row matching [discoverRecipe] (URL, api id, or title+meal), in list order.
+Recipe? _findPersonalSavedDiscoverRecipe(
+  Recipe discoverRecipe,
+  List<Recipe> savedRecipes,
+) {
+  for (final saved in savedRecipes) {
+    if (saved.visibility != RecipeVisibility.personal) continue;
+    if (_savedRecipeMatchesDiscover(discoverRecipe, saved)) return saved;
+  }
+  return null;
+}
+
+class _DiscoverSaveSummary {
+  const _DiscoverSaveSummary({
+    required this.personal,
+    required this.householdCopy,
+  });
+
+  final Recipe? personal;
+  final Recipe? householdCopy;
+
+  bool get onHousehold => householdCopy != null;
+  bool get myFavorite => personal?.isFavorite ?? false;
+  bool get myToTry => personal?.isToTry ?? false;
+  bool get householdFavorite => householdCopy?.isFavorite ?? false;
+  bool get householdToTry => householdCopy?.isToTry ?? false;
+  bool get hasPersonal => personal != null;
+  bool get hasAnyDestination => hasPersonal || onHousehold;
+}
+
+_DiscoverSaveSummary _discoverSaveSummary(
+  Recipe discoverRecipe,
+  List<Recipe> savedRecipes,
+  String? currentUserId,
+) {
+  final personal =
+      _findPersonalSavedDiscoverRecipe(discoverRecipe, savedRecipes);
+  final householdCopy = personal != null && currentUserId != null
+      ? householdCopyRecipeForPersonal(
+          personal: personal,
+          allRecipes: savedRecipes,
+          currentUserId: currentUserId,
+        )
+      : null;
+  return _DiscoverSaveSummary(
+    personal: personal,
+    householdCopy: householdCopy,
+  );
+}
+
+String _formatDiscoverSaveSummary(_DiscoverSaveSummary s) {
+  if (!s.hasAnyDestination) return 'Not saved yet';
+  final parts = <String>[];
+  if (s.myFavorite) parts.add('Favorites');
+  if (s.myToTry) parts.add('To Try');
+  if (s.onHousehold) parts.add('Household');
+  if (parts.isEmpty) return 'In My Recipes';
+  return parts.join(' · ');
+}
+
+Widget _discoverSaveAffordance({
+  required BuildContext context,
+  required Recipe recipe,
+  required List<Recipe> savedRecipes,
+  required String? userId,
+  required VoidCallback onOpenSheet,
+}) {
+  final summary = _discoverSaveSummary(recipe, savedRecipes, userId);
+  const active = Color(0xFF2F6B46);
+  const dim = Color(0xFF2D342F);
+  final saved = summary.hasAnyDestination;
+  return Material(
+    color: const Color(0xFFC8D3C2).withValues(alpha: 0.9),
+    borderRadius: BorderRadius.circular(10),
+    child: InkWell(
+      onTap: onOpenSheet,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Icon(
+          saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+          size: 18,
+          color: saved ? active : dim,
+        ),
+      ),
+    ),
+  );
+}
+
 class _DiscoverRecipeDetailPage extends ConsumerStatefulWidget {
-  const _DiscoverRecipeDetailPage({required this.recipe});
+  const _DiscoverRecipeDetailPage({
+    required this.recipe,
+    required this.onSaveTo,
+  });
 
   final Recipe recipe;
+  final Future<void> Function(Recipe recipe) onSaveTo;
 
   @override
   ConsumerState<_DiscoverRecipeDetailPage> createState() =>
@@ -1557,12 +1660,16 @@ class _DiscoverRecipeDetailPage extends ConsumerStatefulWidget {
 class _DiscoverRecipeDetailPageState
     extends ConsumerState<_DiscoverRecipeDetailPage> {
   _DiscoverDetailSection _selectedSection = _DiscoverDetailSection.ingredients;
-  late bool _isFavorite = widget.recipe.isFavorite;
-  late bool _isToTry = widget.recipe.isToTry;
 
   @override
   Widget build(BuildContext context) {
     final recipe = widget.recipe;
+    final savedRecipes = ref.watch(recipesProvider).valueOrNull ?? [];
+    final user = ref.watch(currentUserProvider);
+    final summary = _discoverSaveSummary(recipe, savedRecipes, user?.id);
+    final subtitle = _formatDiscoverSaveSummary(summary);
+    final titleLabel = summary.hasAnyDestination ? 'Saved' : 'Save to…';
+
     return Scaffold(
       body: CustomScrollView(
         slivers: [
@@ -1658,28 +1765,53 @@ class _DiscoverRecipeDetailPageState
       ),
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () => _setRecipeFlag(favorite: !_isFavorite),
-                icon: Icon(
-                  _isFavorite
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_border_rounded,
+        child: FilledButton(
+          onPressed: () => widget.onSaveTo(recipe),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(52),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    summary.hasAnyDestination
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.library_add_check_rounded,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    titleLabel,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onPrimary.withValues(
+                        alpha: 0.92,
+                      ),
                 ),
-                label: Text(_isFavorite ? 'Favorited' : 'Favorite'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: () => _setRecipeFlag(toTry: !_isToTry),
-                icon: const Icon(Icons.bookmark_add_outlined),
-                label: Text(_isToTry ? 'In To Try' : 'To Try'),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1922,35 +2054,6 @@ class _DiscoverRecipeDetailPageState
         ],
       ),
     );
-  }
-
-  Future<void> _setRecipeFlag({bool? favorite, bool? toTry}) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final user = ref.read(currentUserProvider);
-      if (user == null) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Sign in required.')),
-        );
-        return;
-      }
-      final repository = ref.read(discoverRepositoryProvider);
-      await repository.saveDiscoverRecipeForUser(
-        userId: user.id,
-        recipe: widget.recipe,
-        favorite: favorite,
-        toTry: toTry,
-      );
-      if (favorite != null) setState(() => _isFavorite = favorite);
-      if (toTry != null) setState(() => _isToTry = toTry);
-      ref.invalidate(discoverPublicRecipesProvider);
-      ref.invalidate(recipesProvider);
-      messenger.showSnackBar(const SnackBar(content: Text('Saved.')));
-    } catch (error) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Could not update recipe: $error')),
-      );
-    }
   }
 
   String _totalTimeLabel(Recipe recipe) {

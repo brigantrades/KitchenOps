@@ -283,6 +283,24 @@ class RecipesRepository {
     });
   }
 
+  /// Linked household copy row for this personal recipe, if any.
+  Future<String?> householdCopyIdForPersonalRecipe({
+    required String userId,
+    required String personalRecipeId,
+  }) async {
+    final householdId = await _householdForUser(userId);
+    if (householdId == null || householdId.isEmpty) return null;
+    final row = await _client
+        .from('recipes')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('household_id', householdId)
+        .eq('visibility', RecipeVisibility.household.name)
+        .eq('copied_from_personal_recipe_id', personalRecipeId)
+        .maybeSingle();
+    return row?['id']?.toString();
+  }
+
   /// Deletes the most recent household recipe row you created whose title matches
   /// this personal recipe (same pairing as [copyPersonalRecipeToHousehold]).
   /// Returns true if a row was deleted. No DB link between copies — matching is by title.

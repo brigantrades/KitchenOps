@@ -27,10 +27,26 @@ import 'package:plateplan/features/grocery/presentation/grocery_item_suggestions
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// When true, Step 5 shows per-ingredient USDA/Gemini breakdown (dev / diagnostics).
 const bool _kShowNutritionIngredientBreakdown = false;
+
+/// Result of saving from [_RecipeBuilderSheet] (create or edit).
+class RecipeBuilderSaveResult {
+  const RecipeBuilderSaveResult({
+    required this.recipe,
+    this.copyToHousehold = false,
+    this.householdFavorite = false,
+    this.householdToTry = false,
+  });
+
+  final Recipe recipe;
+  final bool copyToHousehold;
+  final bool householdFavorite;
+  final bool householdToTry;
+}
 
 /// Create / Edit Recipe wizard header gradient & saved ingredient chips (step 3).
 const Color _kCreateRecipeBlueLight = Color(0xFFD7EEFF);
@@ -69,7 +85,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       return;
     }
 
-    final recipe = await showModalBottomSheet<Recipe>(
+    final result = await showModalBottomSheet<RecipeBuilderSaveResult>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -78,47 +94,23 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       builder: (context) => const _RecipeBuilderSheet(),
     );
 
-    if (recipe == null) return;
+    if (result == null) return;
+    final recipe = result.recipe;
 
     try {
-      final isHousehold = recipe.visibility == RecipeVisibility.household;
       final repo = ref.read(recipesRepositoryProvider);
-      if (isHousehold) {
-        // Household-only insert would skip a personal row; My Recipes → Favorites
-        // lists personal recipes only. Match the Share flow: personal first, then copy.
-        final personalDraft = Recipe(
-          id: recipe.id,
-          title: recipe.title,
-          description: recipe.description,
-          servings: recipe.servings,
-          prepTime: recipe.prepTime,
-          cookTime: recipe.cookTime,
-          mealType: recipe.mealType,
-          cuisineTags: recipe.cuisineTags,
-          ingredients: recipe.ingredients,
-          instructions: recipe.instructions,
-          imageUrl: recipe.imageUrl,
-          nutrition: recipe.nutrition,
-          isFavorite: recipe.isFavorite,
-          isToTry: recipe.isToTry,
-          source: recipe.source,
-          userId: recipe.userId,
-          householdId: null,
-          visibility: RecipeVisibility.personal,
-          apiId: recipe.apiId,
-          nutritionSource: recipe.nutritionSource,
-        );
+      if (result.copyToHousehold) {
         final personalId = await repo.create(
           user.id,
-          personalDraft,
+          recipe,
           shareWithHousehold: false,
           visibilityOverride: RecipeVisibility.personal,
         );
         await repo.copyPersonalRecipeToHousehold(
           userId: user.id,
           recipeId: personalId,
-          householdFavorite: personalDraft.isFavorite,
-          householdToTry: personalDraft.isToTry,
+          householdFavorite: result.householdFavorite,
+          householdToTry: result.householdToTry,
         );
       } else {
         await repo.create(
@@ -130,11 +122,12 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       }
       ref.invalidate(recipesProvider);
       if (!mounted) return;
-      final dest = switch (recipe.visibility) {
-        RecipeVisibility.household => 'My Recipes and Household Recipes',
-        RecipeVisibility.public => 'My Recipes (public)',
-        _ => 'My Recipes',
-      };
+      final dest = result.copyToHousehold
+          ? 'My Recipes and Household Recipes'
+          : switch (recipe.visibility) {
+              RecipeVisibility.public => 'My Recipes (public)',
+              _ => 'My Recipes',
+            };
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Recipe "${recipe.title}" saved to $dest.')),
       );
@@ -152,7 +145,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   }
 
   Future<void> _editRecipe(Recipe recipe) async {
-    final updated = await showModalBottomSheet<Recipe>(
+    final result = await showModalBottomSheet<RecipeBuilderSaveResult>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -160,7 +153,8 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       enableDrag: false,
       builder: (context) => _RecipeBuilderSheet(initialRecipe: recipe),
     );
-    if (updated == null) return;
+    if (result == null) return;
+    final updated = result.recipe;
     try {
       await ref
           .read(recipesRepositoryProvider)
@@ -614,525 +608,17 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
   }
 }
 
-Future<void> _confirmAndDeleteRecipe(
-  BuildContext context,
-  Recipe recipe,
-) async {
-  if (!context.mounted) return;
-  final container = ProviderScope.containerOf(context, listen: false);
-  final repo = container.read(recipesRepositoryProvider);
-  final removesForHousehold = recipe.visibility == RecipeVisibility.household;
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) {
-      final scheme = Theme.of(dialogContext).colorScheme;
-      return AlertDialog(
-        title: const Text('Remove recipe permanently?'),
-        content: Text(
-          removesForHousehold
-              ? 'This will permanently remove "${recipe.title}" '
-                  'from Household Recipes for everyone in your household.'
-              : 'This will permanently delete "${recipe.title}" '
-                  'from your recipes only. If you shared a copy to '
-                  'Household Recipes, that copy stays until you remove '
-                  'it from the Household tab.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: TextButton.styleFrom(foregroundColor: scheme.error),
-            child: const Text('Remove'),
-          ),
-        ],
-      );
-    },
-  );
-  if (confirmed != true) return;
-  if (!context.mounted) return;
-  try {
-    await repo.deleteRecipe(recipe.id);
-    if (!context.mounted) return;
-    container.invalidate(recipesProvider);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          removesForHousehold
-              ? '"${recipe.title}" removed for your household.'
-              : '"${recipe.title}" deleted from your recipes.',
-        ),
-      ),
-    );
-  } on PostgrestException catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Could not remove recipe: ${error.message}'),
-      ),
-    );
-  } catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Could not remove recipe: $error')),
-    );
-  }
-}
-
-Future<void> _confirmAndRemoveHouseholdCopyOnly(
-  BuildContext context,
-  Recipe personalRecipe,
-) async {
-  if (!context.mounted) return;
-  final container = ProviderScope.containerOf(context, listen: false);
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) {
-      final scheme = Theme.of(dialogContext).colorScheme;
-      return AlertDialog(
-        title: const Text('Remove from household?'),
-        content: Text(
-          'Remove the shared household copy of "${personalRecipe.title}"? '
-          'Everyone in your household will lose access to that copy. '
-          'Your personal recipe stays in My Recipes.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: TextButton.styleFrom(foregroundColor: scheme.error),
-            child: const Text('Remove'),
-          ),
-        ],
-      );
-    },
-  );
-  if (confirmed != true) return;
-  if (!context.mounted) return;
-  final user = container.read(currentUserProvider);
-  if (user == null) return;
-  try {
-    final repo = container.read(recipesRepositoryProvider);
-    final deleted = await repo.deleteHouseholdCopyMatchingPersonal(
-      userId: user.id,
-      personalRecipeId: personalRecipe.id,
-    );
-    if (!context.mounted) return;
-    container.invalidate(recipesProvider);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted
-              ? 'Removed "${personalRecipe.title}" from Household Recipes.'
-              : 'No matching household copy found. It may already be removed, or the title changed after sharing.',
-        ),
-      ),
-    );
-  } on PostgrestException catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Could not remove household copy: ${error.message}'),
-      ),
-    );
-  } catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Could not remove household copy: $error')),
-    );
-  }
-}
-
-bool _hasLikelyHouseholdCopyForPersonal({
-  required Recipe personal,
-  required List<Recipe> allRecipes,
-  required String currentUserId,
-}) {
-  final t = personal.title.trim().toLowerCase();
-  return allRecipes.any(
-    (r) =>
-        r.id != personal.id &&
-        r.visibility == RecipeVisibility.household &&
-        (r.userId ?? '') == currentUserId &&
-        r.title.trim().toLowerCase() == t,
-  );
-}
-
 void _showRecipeCollectionsSheet({
   required BuildContext anchorContext,
   required String recipeId,
   required bool hasSharedHousehold,
 }) {
-  showModalBottomSheet<void>(
+  showRecipeListsSharingSheet(
     context: anchorContext,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (sheetContext) => _RecipeCollectionsSheet(
-      anchorContext: anchorContext,
-      recipeId: recipeId,
-      hasSharedHousehold: hasSharedHousehold,
-    ),
+    anchorContext: anchorContext,
+    recipeId: recipeId,
+    hasSharedHousehold: hasSharedHousehold,
   );
-}
-
-class _RecipeCollectionsSheet extends ConsumerStatefulWidget {
-  const _RecipeCollectionsSheet({
-    required this.anchorContext,
-    required this.recipeId,
-    required this.hasSharedHousehold,
-  });
-
-  final BuildContext anchorContext;
-  final String recipeId;
-  final bool hasSharedHousehold;
-
-  @override
-  ConsumerState<_RecipeCollectionsSheet> createState() =>
-      _RecipeCollectionsSheetState();
-}
-
-class _RecipeCollectionsSheetState
-    extends ConsumerState<_RecipeCollectionsSheet> {
-  bool _sharing = false;
-  bool _removingHouseholdCopy = false;
-  String? _appliedHouseholdShareDefaultsForRecipeId;
-  bool _householdFavoriteOnShare = false;
-  bool _householdToTryOnShare = false;
-
-  Future<void> _shareToHousehold(Recipe recipe) async {
-    final user = ref.read(currentUserProvider);
-    if (user == null) return;
-    final favorite = _appliedHouseholdShareDefaultsForRecipeId == recipe.id
-        ? _householdFavoriteOnShare
-        : recipe.isFavorite;
-    final toTry = _appliedHouseholdShareDefaultsForRecipeId == recipe.id
-        ? _householdToTryOnShare
-        : recipe.isToTry;
-    setState(() => _sharing = true);
-    try {
-      await ref.read(recipesRepositoryProvider).copyPersonalRecipeToHousehold(
-            userId: user.id,
-            recipeId: recipe.id,
-            householdFavorite: favorite,
-            householdToTry: toTry,
-          );
-      ref.invalidate(recipesProvider);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Shared "${recipe.title}" to Household Recipes.'),
-        ),
-      );
-    } on PostgrestException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not share recipe: ${error.message}'),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not share recipe: $error')),
-      );
-    } finally {
-      if (mounted) setState(() => _sharing = false);
-    }
-  }
-
-  Future<void> _removeHouseholdCopyOnly(Recipe personalRecipe) async {
-    if (_removingHouseholdCopy) return;
-    setState(() => _removingHouseholdCopy = true);
-    try {
-      await _confirmAndRemoveHouseholdCopyOnly(
-        widget.anchorContext,
-        personalRecipe,
-      );
-    } finally {
-      if (mounted) setState(() => _removingHouseholdCopy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final bottom = MediaQuery.viewInsetsOf(context).bottom;
-    final recipesAsync = ref.watch(recipesProvider);
-
-    return recipesAsync.when(
-      loading: () => Padding(
-        padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + bottom),
-        child: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => Padding(
-        padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + bottom),
-        child: Text('Could not load recipe: $e'),
-      ),
-      data: (recipes) {
-        final recipe = recipes.firstWhereOrNull((r) => r.id == widget.recipeId);
-        if (recipe == null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) Navigator.of(context).pop();
-          });
-          return const SizedBox.shrink();
-        }
-
-        final canSharePersonal = widget.hasSharedHousehold &&
-            recipe.visibility == RecipeVisibility.personal;
-        final user = ref.watch(currentUserProvider);
-        final hasLikelyHouseholdCopy = user != null &&
-            recipe.visibility == RecipeVisibility.personal &&
-            _hasLikelyHouseholdCopyForPersonal(
-              personal: recipe,
-              allRecipes: recipes,
-              currentUserId: user.id,
-            );
-
-        if (canSharePersonal && !hasLikelyHouseholdCopy) {
-          if (_appliedHouseholdShareDefaultsForRecipeId != recipe.id) {
-            final r = recipe;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              if (_appliedHouseholdShareDefaultsForRecipeId == r.id) return;
-              setState(() {
-                _appliedHouseholdShareDefaultsForRecipeId = r.id;
-                _householdFavoriteOnShare = r.isFavorite;
-                _householdToTryOnShare = r.isToTry;
-              });
-            });
-          }
-        }
-
-        return SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(8, 0, 8, 16 + bottom),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                child: Text(
-                  'Lists & Sharing',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Text(
-                  'Turn each option on or off to choose where "${recipe.title}" '
-                  'shows up. The recipe stays saved until you remove it permanently below.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-              // 1. Household
-              if (recipe.visibility == RecipeVisibility.household) ...[
-                ListTile(
-                  leading: Icon(Icons.home_outlined, color: scheme.primary),
-                  title: const Text('Household'),
-                  subtitle: const Text(
-                    'This copy is shared with everyone in your household.',
-                  ),
-                ),
-                SwitchListTile(
-                  secondary:
-                      Icon(Icons.favorite_outline, color: scheme.outline),
-                  title: const Text('My Favorites'),
-                  subtitle: const Text(
-                    'When on, this recipe appears on Household Recipes. '
-                    'Favorites on My Recipes lists only personal recipes — '
-                    'keep a personal copy favorited if you want it there after removing the household copy.',
-                  ),
-                  value: recipe.isFavorite,
-                  onChanged: (v) async {
-                    await ref.read(recipesRepositoryProvider).toggleFavorite(
-                          recipe.id,
-                          v,
-                        );
-                    ref.invalidate(recipesProvider);
-                  },
-                ),
-              ] else ...[
-                ListTile(
-                  leading: Icon(Icons.home_outlined, color: scheme.primary),
-                  title: const Text('Household'),
-                  subtitle: Text(
-                    canSharePersonal
-                        ? 'Add a copy everyone in your household can open and cook from.'
-                        : 'Create or join a household in Settings to share recipes.',
-                  ),
-                ),
-                if (canSharePersonal && !hasLikelyHouseholdCopy) ...[
-                  SwitchListTile(
-                    secondary:
-                        Icon(Icons.favorite_outline, color: scheme.outline),
-                    title: const Text('Favorite on Household Recipes'),
-                    subtitle: const Text(
-                      'Applies to the shared copy. My Favorites above is only for My Recipes.',
-                    ),
-                    value: _appliedHouseholdShareDefaultsForRecipeId == recipe.id
-                        ? _householdFavoriteOnShare
-                        : recipe.isFavorite,
-                    onChanged: (v) => setState(() {
-                      _appliedHouseholdShareDefaultsForRecipeId = recipe.id;
-                      _householdFavoriteOnShare = v;
-                    }),
-                  ),
-                  SwitchListTile(
-                    secondary:
-                        Icon(Icons.bookmark_outline, color: scheme.outline),
-                    title: const Text('To Try on Household Recipes'),
-                    subtitle: const Text(
-                      'Applies to the shared copy. To Try below is only for My Recipes.',
-                    ),
-                    value: _appliedHouseholdShareDefaultsForRecipeId == recipe.id
-                        ? _householdToTryOnShare
-                        : recipe.isToTry,
-                    onChanged: (v) => setState(() {
-                      _appliedHouseholdShareDefaultsForRecipeId = recipe.id;
-                      _householdToTryOnShare = v;
-                    }),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: _sharing
-                          ? const SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : FilledButton.tonal(
-                              onPressed: () => _shareToHousehold(recipe),
-                              child: const Text('Share'),
-                            ),
-                    ),
-                  ),
-                ],
-                if (canSharePersonal && hasLikelyHouseholdCopy)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: _removingHouseholdCopy
-                          ? const SizedBox(
-                              height: 36,
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                              ),
-                            )
-                          : TextButton(
-                              onPressed: () => _removeHouseholdCopyOnly(recipe),
-                              child: Text(
-                                'Remove from household',
-                                style: TextStyle(color: scheme.error),
-                              ),
-                            ),
-                    ),
-                  ),
-                SwitchListTile(
-                  secondary:
-                      Icon(Icons.favorite_outline, color: scheme.outline),
-                  title: const Text('My Favorites'),
-                  subtitle: const Text(
-                    'Show under Favorites on My Recipes.',
-                  ),
-                  value: recipe.isFavorite,
-                  onChanged: (v) async {
-                    await ref.read(recipesRepositoryProvider).toggleFavorite(
-                          recipe.id,
-                          v,
-                        );
-                    ref.invalidate(recipesProvider);
-                  },
-                ),
-              ],
-              // 3. To try (both personal and household rows can carry the flag)
-              SwitchListTile(
-                secondary: Icon(Icons.bookmark_outline, color: scheme.outline),
-                title: const Text('To Try'),
-                subtitle: Text(
-                  recipe.visibility == RecipeVisibility.personal
-                      ? 'Show under To Try on My Recipes.'
-                      : 'Used in Planner and Discover. To Try on My Recipes lists only personal recipes.',
-                ),
-                value: recipe.isToTry,
-                onChanged: (v) async {
-                  await ref.read(recipesRepositoryProvider).toggleToTry(
-                        recipe.id,
-                        v,
-                      );
-                  ref.invalidate(recipesProvider);
-                },
-              ),
-              const SizedBox(height: 8),
-              const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text(
-                  recipe.visibility == RecipeVisibility.household
-                      ? 'Remove from household'
-                      : 'Delete recipe',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                child: Text(
-                  recipe.visibility == RecipeVisibility.household
-                      ? 'This removes the shared recipe for every household member.'
-                      : 'This deletes only this recipe row (your personal copy).',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: TextButton(
-                  onPressed: () async {
-                    Navigator.of(context).pop();
-                    await Future<void>.delayed(Duration.zero);
-                    if (!widget.anchorContext.mounted) return;
-                    await _confirmAndDeleteRecipe(
-                      widget.anchorContext,
-                      recipe,
-                    );
-                  },
-                  child: Text(
-                    recipe.visibility == RecipeVisibility.household
-                        ? 'Remove for everyone…'
-                        : 'Delete my recipe permanently…',
-                    style: TextStyle(color: scheme.error),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 }
 
 class _RecipeRow extends ConsumerWidget {
@@ -1483,6 +969,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   bool _markToTry = false;
   bool _makePublic = false;
   bool _saveToHousehold = false;
+  bool _householdFavorite = false;
+  bool _householdToTry = false;
   bool _showCustomTag = false;
   int _step = 0;
   String? _validationMessage;
@@ -1609,9 +1097,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _selectedDirectionIndex = _directionDrafts.isEmpty ? null : 0;
   }
 
-  void _closeWizard([Recipe? recipe]) {
+  void _closeWizard([RecipeBuilderSaveResult? result]) {
     ref.read(recipeCreationGuardProvider.notifier).close();
-    Navigator.of(context).pop(recipe);
+    Navigator.of(context).pop(result);
   }
 
   Future<void> _confirmClose() async {
@@ -2923,7 +2411,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       isToTry: _markToTry,
       visibility: _makePublic
           ? RecipeVisibility.public
-          : _saveToHousehold
+          : (initial != null &&
+                  initial.visibility == RecipeVisibility.household)
               ? RecipeVisibility.household
               : RecipeVisibility.personal,
       source: initial?.source ?? 'user_created',
@@ -2985,7 +2474,19 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       _isSubmitting = true;
     });
 
-    _closeWizard(recipe);
+    final hasShared =
+        ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
+    final isCreate = widget.initialRecipe == null;
+    final copyToHousehold =
+        isCreate && hasShared && _saveToHousehold && !_makePublic;
+    _closeWizard(
+      RecipeBuilderSaveResult(
+        recipe: recipe,
+        copyToHousehold: copyToHousehold,
+        householdFavorite: _householdFavorite,
+        householdToTry: _householdToTry,
+      ),
+    );
   }
 
   Widget _buildNutritionStepPage() {
@@ -3869,87 +3370,176 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                           _buildNutritionStepPage(),
                           _StepCard(
                             title: 'Final touches',
-                            child: Column(
-                              children: [
-                                SwitchListTile.adaptive(
-                                  contentPadding: EdgeInsets.zero,
-                                  secondary: Icon(
-                                    _markFavorite
-                                        ? Icons.favorite_rounded
-                                        : Icons.favorite_border_rounded,
-                                    color: _markFavorite
-                                        ? scheme.primary
-                                        : scheme.onSurfaceVariant,
-                                  ),
-                                  title: const Text('Add to Favorites'),
-                                  subtitle: const Text(
-                                    'Quick access from your Favorites list.',
-                                  ),
-                                  value: _markFavorite,
-                                  onChanged: (value) =>
-                                      setState(() => _markFavorite = value),
-                                ),
-                                const Divider(height: 1),
-                                SwitchListTile.adaptive(
-                                  contentPadding: EdgeInsets.zero,
-                                  secondary: Icon(
-                                    _markToTry
-                                        ? Icons.flag_rounded
-                                        : Icons.outlined_flag_rounded,
-                                    color: _markToTry
-                                        ? scheme.primary
-                                        : scheme.onSurfaceVariant,
-                                  ),
-                                  title: const Text('Add to To Try'),
-                                  subtitle: const Text(
-                                    'Save to your To Try list for later.',
-                                  ),
-                                  value: _markToTry,
-                                  onChanged: (value) =>
-                                      setState(() => _markToTry = value),
-                                ),
-                                const Divider(height: 1),
-                                SwitchListTile.adaptive(
-                                  contentPadding: EdgeInsets.zero,
-                                  secondary: Icon(
-                                    _makePublic
-                                        ? Icons.public_rounded
-                                        : Icons.public_off_rounded,
-                                    color: _makePublic
-                                        ? scheme.primary
-                                        : scheme.onSurfaceVariant,
-                                  ),
-                                  title: const Text('Make public'),
-                                  subtitle: const Text(
-                                    'Public recipes appear in Discover for all users.',
-                                  ),
-                                  value: _makePublic,
-                                  onChanged: (value) =>
-                                      setState(() => _makePublic = value),
-                                ),
-                                if (ref
+                            child: Builder(
+                              builder: (context) {
+                                final isCreate = widget.initialRecipe == null;
+                                final hasShared = ref
                                         .watch(hasSharedHouseholdProvider)
                                         .valueOrNull ??
-                                    false) ...[
-                                  const Divider(height: 1),
-                                  SwitchListTile.adaptive(
-                                    contentPadding: EdgeInsets.zero,
-                                    secondary: Icon(
-                                      Icons.groups_2_outlined,
-                                      color: _saveToHousehold
-                                          ? scheme.primary
-                                          : scheme.onSurfaceVariant,
+                                    false;
+                                return Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      'My Recipes',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                     ),
-                                    title: const Text('Save to Household'),
-                                    subtitle: const Text(
-                                      'Share this recipe with your household members.',
+                                    const SizedBox(height: 4),
+                                    SwitchListTile.adaptive(
+                                      contentPadding: EdgeInsets.zero,
+                                      secondary: Icon(
+                                        _markFavorite
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        color: _markFavorite
+                                            ? scheme.primary
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                      title: const Text('Add to Favorites'),
+                                      subtitle: const Text(
+                                        'Show under Favorites on My Recipes.',
+                                      ),
+                                      value: _markFavorite,
+                                      onChanged: (value) => setState(
+                                          () => _markFavorite = value),
                                     ),
-                                    value: _saveToHousehold,
-                                    onChanged: (value) => setState(
-                                        () => _saveToHousehold = value),
-                                  ),
-                                ],
-                              ],
+                                    const Divider(height: 1),
+                                    SwitchListTile.adaptive(
+                                      contentPadding: EdgeInsets.zero,
+                                      secondary: Icon(
+                                        _markToTry
+                                            ? Icons.flag_rounded
+                                            : Icons.outlined_flag_rounded,
+                                        color: _markToTry
+                                            ? scheme.primary
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                      title: const Text('Add to To Try'),
+                                      subtitle: const Text(
+                                        'Show under To Try on My Recipes.',
+                                      ),
+                                      value: _markToTry,
+                                      onChanged: (value) =>
+                                          setState(() => _markToTry = value),
+                                    ),
+                                    if (hasShared && isCreate) ...[
+                                      const Divider(height: 1),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Household',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      SwitchListTile.adaptive(
+                                        contentPadding: EdgeInsets.zero,
+                                        secondary: Icon(
+                                          Icons.groups_2_outlined,
+                                          color: _saveToHousehold &&
+                                                  !_makePublic
+                                              ? scheme.primary
+                                              : scheme.onSurfaceVariant,
+                                        ),
+                                        title:
+                                            const Text('Save to Household'),
+                                        subtitle: Text(
+                                          _makePublic
+                                              ? 'Turn off Make public to also save a household copy.'
+                                              : 'Creates your recipe in My Recipes and a shared copy for your household.',
+                                        ),
+                                        value: _saveToHousehold,
+                                        onChanged: _makePublic
+                                            ? null
+                                            : (value) => setState(() {
+                                                  _saveToHousehold = value;
+                                                  if (value) {
+                                                    _householdFavorite =
+                                                        _markFavorite;
+                                                    _householdToTry =
+                                                        _markToTry;
+                                                  }
+                                                }),
+                                      ),
+                                      if (_saveToHousehold && !_makePublic) ...[
+                                        SwitchListTile.adaptive(
+                                          contentPadding: EdgeInsets.zero,
+                                          secondary: Icon(
+                                            _householdFavorite
+                                                ? Icons.favorite_rounded
+                                                : Icons.favorite_border_rounded,
+                                            color: _householdFavorite
+                                                ? scheme.primary
+                                                : scheme.onSurfaceVariant,
+                                          ),
+                                          title: const Text(
+                                            'Favorite on Household Recipes',
+                                          ),
+                                          subtitle: const Text(
+                                            'Applies to the shared household copy.',
+                                          ),
+                                          value: _householdFavorite,
+                                          onChanged: (value) => setState(() =>
+                                              _householdFavorite = value),
+                                        ),
+                                        const Divider(height: 1),
+                                        SwitchListTile.adaptive(
+                                          contentPadding: EdgeInsets.zero,
+                                          secondary: Icon(
+                                            _householdToTry
+                                                ? Icons.flag_rounded
+                                                : Icons.outlined_flag_rounded,
+                                            color: _householdToTry
+                                                ? scheme.primary
+                                                : scheme.onSurfaceVariant,
+                                          ),
+                                          title: const Text(
+                                            'To Try on Household Recipes',
+                                          ),
+                                          subtitle: const Text(
+                                            'Applies to the shared household copy.',
+                                          ),
+                                          value: _householdToTry,
+                                          onChanged: (value) => setState(
+                                              () => _householdToTry = value),
+                                        ),
+                                      ],
+                                    ],
+                                    const Divider(height: 1),
+                                    SwitchListTile.adaptive(
+                                      contentPadding: EdgeInsets.zero,
+                                      secondary: Icon(
+                                        _makePublic
+                                            ? Icons.public_rounded
+                                            : Icons.public_off_rounded,
+                                        color: _makePublic
+                                            ? scheme.primary
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                      title: const Text('Make public'),
+                                      subtitle: const Text(
+                                        'Public recipes appear in Discover for all users.',
+                                      ),
+                                      value: _makePublic,
+                                      onChanged: (value) => setState(() {
+                                        _makePublic = value;
+                                        if (value) {
+                                          _saveToHousehold = false;
+                                        }
+                                      }),
+                                    ),
+                                  ],
+                                );
+                              },
                             ),
                           ),
                         ],

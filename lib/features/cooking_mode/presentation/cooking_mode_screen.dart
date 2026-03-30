@@ -10,10 +10,10 @@ import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
-import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class CookingModeScreen extends ConsumerStatefulWidget {
@@ -62,208 +62,14 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     }
   }
 
-  Future<void> _presentShareToHouseholdSheet(Recipe recipe) async {
-    final scheme = Theme.of(context).colorScheme;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetCtx) {
-        var householdFavorite = recipe.isFavorite;
-        var householdToTry = recipe.isToTry;
-        var sharing = false;
-        return StatefulBuilder(
-          builder: (sheetCtx, setSheetState) {
-            Future<void> submitShare() async {
-              if (sharing) return;
-              final user = ref.read(currentUserProvider);
-              if (user == null) return;
-              setSheetState(() => sharing = true);
-              try {
-                await ref
-                    .read(recipesRepositoryProvider)
-                    .copyPersonalRecipeToHousehold(
-                      userId: user.id,
-                      recipeId: recipe.id,
-                      householdFavorite: householdFavorite,
-                      householdToTry: householdToTry,
-                    );
-                ref.invalidate(recipesProvider);
-                if (sheetCtx.mounted) {
-                  Navigator.of(sheetCtx).pop();
-                }
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Shared to household.')),
-                  );
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Could not share recipe: $e')),
-                  );
-                }
-              } finally {
-                if (sheetCtx.mounted) {
-                  setSheetState(() => sharing = false);
-                }
-              }
-            }
-
-            final bottom = MediaQuery.viewInsetsOf(sheetCtx).bottom;
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 8, 20, 16 + bottom),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Share to household',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Choose how the shared copy appears under Household Recipes.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: const Icon(Icons.favorite_outline),
-                      title: const Text('Favorite on Household Recipes'),
-                      value: householdFavorite,
-                      onChanged: sharing
-                          ? null
-                          : (v) => setSheetState(() => householdFavorite = v),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: const Icon(Icons.bookmark_outline),
-                      title: const Text('To Try on Household Recipes'),
-                      value: householdToTry,
-                      onChanged: sharing
-                          ? null
-                          : (v) => setSheetState(() => householdToTry = v),
-                    ),
-                    const SizedBox(height: 8),
-                    FilledButton(
-                      onPressed: sharing ? null : submitShare,
-                      child: sharing
-                          ? const SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Share'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _openListsAndSharingSheet(Recipe recipe) async {
-    final scheme = Theme.of(context).colorScheme;
+  Future<void> _openListsAndSharingSheet() async {
     final hasSharedHousehold =
         ref.read(hasSharedHouseholdProvider).valueOrNull ?? false;
-    final canSharePersonal =
-        hasSharedHousehold && recipe.visibility == RecipeVisibility.personal;
-
-    await showModalBottomSheet<void>(
+    showRecipeListsSharingSheet(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
-        var localFavorite = recipe.isFavorite;
-        var localToTry = recipe.isToTry;
-        return StatefulBuilder(
-          builder: (ctx, setLocalState) {
-            Future<void> toggleFavorite(bool value) async {
-              await ref
-                  .read(recipesRepositoryProvider)
-                  .toggleFavorite(recipe.id, value);
-              ref.invalidate(recipesProvider);
-              setLocalState(() => localFavorite = value);
-            }
-
-            Future<void> toggleToTry(bool value) async {
-              await ref.read(recipesRepositoryProvider).toggleToTry(
-                    recipe.id,
-                    value,
-                  );
-              ref.invalidate(recipesProvider);
-              setLocalState(() => localToTry = value);
-            }
-
-            void openHouseholdShareFlow() {
-              Navigator.of(ctx).pop();
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  _presentShareToHouseholdSheet(recipe);
-                }
-              });
-            }
-
-            return SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + bottom),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Lists & Sharing',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Choose where this recipe appears.',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (canSharePersonal)
-                    ListTile(
-                      leading: const Icon(Icons.home_outlined),
-                      title: const Text('Share to household'),
-                      subtitle: const Text(
-                        'Create a copy everyone in your household can access.',
-                      ),
-                      trailing: FilledButton.tonal(
-                        onPressed: openHouseholdShareFlow,
-                        child: const Text('Share'),
-                      ),
-                    ),
-                  SwitchListTile(
-                    secondary: const Icon(Icons.favorite_outline),
-                    title: const Text('My Favorites'),
-                    subtitle: const Text('Show under Favorites on My Recipes.'),
-                    value: localFavorite,
-                    onChanged: (v) => toggleFavorite(v),
-                  ),
-                  SwitchListTile(
-                    secondary: const Icon(Icons.bookmark_outline),
-                    title: const Text('To Try'),
-                    subtitle: const Text('Show under To Try on My Recipes.'),
-                    value: localToTry,
-                    onChanged: (v) => toggleToTry(v),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      anchorContext: context,
+      recipeId: widget.recipeId,
+      hasSharedHousehold: hasSharedHousehold,
     );
   }
 
@@ -654,7 +460,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                 (r) => r.id == widget.recipeId,
               );
               if (recipe == null) return;
-              _openListsAndSharingSheet(recipe);
+              _openListsAndSharingSheet();
             },
             icon: const Icon(Icons.library_books_outlined),
           ),
