@@ -238,7 +238,8 @@ class PlannerRepository {
         .whereType<Map<String, dynamic>>()
         .map(MealPlanSlot.fromJson)
         .toList();
-    return _hydrateSlotsWithAssignments(slots);
+    final hydrated = await _hydrateSlotsWithAssignments(slots);
+    return dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(hydrated);
   }
 
   Stream<List<MealPlanSlot>> streamSlots(
@@ -280,7 +281,7 @@ class PlannerRepository {
         }
       }
     }
-    return byId.values.toList();
+    return dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(byId.values);
   }
 
   Stream<List<MealPlanSlot>> streamPlannerWindowSlots(
@@ -325,7 +326,7 @@ class PlannerRepository {
         }
       }
     }
-    return byId.values.toList();
+    return dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(byId.values);
   }
 
   Stream<List<MealPlanSlot>> streamPlannerDatesSlots(
@@ -374,7 +375,7 @@ class PlannerRepository {
         }
       }
     }
-    return byId.values.toList();
+    return dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(byId.values);
   }
 
   Stream<List<MealPlanSlot>> streamPlannerMonthSlots(
@@ -626,12 +627,13 @@ class PlannerRepository {
     required String slotId,
     DateTime? reminderAt,
     String? message,
-  }) {
+  }) async {
     final trimmed = message?.trim();
-    return _client.from('meal_plan_slots').update({
+    final payload = <String, dynamic>{
       'reminder_at': reminderAt?.toUtc().toIso8601String(),
       'reminder_message': trimmed == null || trimmed.isEmpty ? null : trimmed,
-    }).eq('id', slotId);
+    };
+    await _client.from('meal_plan_slots').update(payload).eq('id', slotId);
   }
 
   Future<void> addSlot({
@@ -807,7 +809,8 @@ final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
   final cachedRaw = cache.loadPlannerSlotList(cacheKey);
   if (cachedRaw != null && cachedRaw.isNotEmpty) {
     try {
-      yield cachedRaw.map(MealPlanSlot.fromJson).toList();
+      final slots = cachedRaw.map(MealPlanSlot.fromJson).toList();
+      yield dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(slots);
     } catch (_) {
       // Stale or incompatible cache — wait for network.
     }
@@ -824,13 +827,14 @@ final plannerSlotsProvider = StreamProvider<List<MealPlanSlot>>((ref) async* {
   );
   await for (final slots
       in repo.streamPlannerWindowSlots(user.id, anchor, pref)) {
+    final deduped = dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(slots);
     unawaited(
       cache.savePlannerSlotList(
         cacheKey,
-        slots.map((s) => s.toJson()).toList(),
+        deduped.map((s) => s.toJson()).toList(),
       ),
     );
-    yield slots;
+    yield deduped;
   }
 });
 
@@ -848,7 +852,8 @@ final plannerThreeDayOutlookSlotsProvider =
   final cachedRaw = cache.loadPlannerSlotList(cacheKey);
   if (cachedRaw != null && cachedRaw.isNotEmpty) {
     try {
-      yield cachedRaw.map(MealPlanSlot.fromJson).toList();
+      final slots = cachedRaw.map(MealPlanSlot.fromJson).toList();
+      yield dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(slots);
     } catch (_) {
       // Stale cache
     }
@@ -861,13 +866,14 @@ final plannerThreeDayOutlookSlotsProvider =
     ),
   );
   await for (final slots in repo.streamPlannerDatesSlots(user.id, dates)) {
+    final deduped = dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(slots);
     unawaited(
       cache.savePlannerSlotList(
         cacheKey,
-        slots.map((s) => s.toJson()).toList(),
+        deduped.map((s) => s.toJson()).toList(),
       ),
     );
-    yield slots;
+    yield deduped;
   }
 });
 
@@ -916,6 +922,26 @@ void invalidatePlannerSlotCaches(WidgetRef ref, DateTime calendarDate) {
   );
 }
 
+/// Clears Hive-backed planner slot lists so invalidated streams do not immediately
+/// re-emit stale rows (e.g. after meal reminder save/delete).
+Future<void> clearPlannerHiveCachesForSlotMutation({
+  required LocalCache cache,
+  required String userId,
+  required DateTime anchor,
+  required PlannerWindowPreference pref,
+  required DateTime calendarDate,
+}) async {
+  await cache.clearPlannerSlotList(
+    plannerWindowSlotsCacheKey(userId, anchor, pref),
+  );
+  await cache.clearPlannerSlotList(
+    plannerMonthSlotsCacheKey(userId, firstDayOfPlannerMonth(calendarDate)),
+  );
+  await cache.clearPlannerSlotList(
+    plannerOutlookSlotsCacheKey(userId, plannerOutlookDates(DateTime.now())),
+  );
+}
+
 final plannerMonthSlotsProvider = StreamProvider.autoDispose
     .family<List<MealPlanSlot>, DateTime>((ref, monthStart) async* {
   final user = ref.watch(currentUserProvider);
@@ -929,7 +955,8 @@ final plannerMonthSlotsProvider = StreamProvider.autoDispose
   final cachedRaw = cache.loadPlannerSlotList(cacheKey);
   if (cachedRaw != null && cachedRaw.isNotEmpty) {
     try {
-      yield cachedRaw.map(MealPlanSlot.fromJson).toList();
+      final slots = cachedRaw.map(MealPlanSlot.fromJson).toList();
+      yield dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(slots);
     } catch (_) {
       // Stale cache
     }
@@ -942,12 +969,13 @@ final plannerMonthSlotsProvider = StreamProvider.autoDispose
     ),
   );
   await for (final slots in repo.streamPlannerMonthSlots(user.id, month)) {
+    final deduped = dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(slots);
     unawaited(
       cache.savePlannerSlotList(
         cacheKey,
-        slots.map((s) => s.toJson()).toList(),
+        deduped.map((s) => s.toJson()).toList(),
       ),
     );
-    yield slots;
+    yield deduped;
   }
 });

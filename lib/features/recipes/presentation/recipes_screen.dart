@@ -1008,7 +1008,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   String? _validationMessage;
   bool _isSubmitting = false;
   int? _selectedIngredientIndex;
-  int? _selectedDirectionIndex = 0;
 
   static const int _kNutritionStepIndex = 4;
 
@@ -1019,6 +1018,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   String? _loadedNutritionFingerprint;
   List<IngredientNutritionBreakdownLine> _nutritionBreakdown = const [];
   bool _nutritionShowPerServing = false;
+  /// When true, the nutrition step shows a prompt and [Calculate] only (no auto-sync).
+  bool _nutritionAwaitingManualCalculate = true;
 
   void _onEditFormControllerChanged() {
     if (!mounted) return;
@@ -1126,7 +1127,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             ? [_DirectionDraft()]
             : initial.instructions.map((step) => _DirectionDraft(text: step)),
       );
-    _selectedDirectionIndex = _directionDrafts.isEmpty ? null : 0;
+    _loadedNutritionFingerprint = _computeNutritionFingerprint();
   }
 
   void _closeWizard([RecipeBuilderSaveResult? result]) {
@@ -1369,6 +1370,22 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       }
     });
     dialogSetState?.call(() {});
+  }
+
+  void _onIngredientsReorder(int oldIndex, int newIndex) {
+    setState(() {
+      final selectedId = _selectedIngredientIndex != null
+          ? _ingredients[_selectedIngredientIndex!].reorderId
+          : null;
+      if (newIndex > oldIndex) newIndex--;
+      final item = _ingredients.removeAt(oldIndex);
+      _ingredients.insert(newIndex, item);
+      if (selectedId != null) {
+        final i = _ingredients.indexWhere((e) => e.reorderId == selectedId);
+        _selectedIngredientIndex = i >= 0 ? i : null;
+      }
+      _validationMessage = null;
+    });
   }
 
   /// First ingredient can always be added; further rows require the row last
@@ -1736,7 +1753,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                           ),
                       decoration: _ingredientInputDecoration(
                         context,
-                        hintText: 'Enter amount',
+                        hintText: 'Amount',
                         hintStyle:
                             Theme.of(context).textTheme.bodyLarge?.copyWith(
                                   fontStyle: FontStyle.italic,
@@ -1757,6 +1774,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: DropdownButtonFormField<String>(
+                      key: ValueKey(
+                        '${row.reorderId}_${row.unitOptions.join('|')}_${row.selectedUnit}',
+                      ),
                       initialValue: row.unitOptions.contains(row.selectedUnit)
                           ? row.selectedUnit
                           : row.unitOptions.first,
@@ -1789,6 +1809,21 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                   ),
                 ],
               ),
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: 132 + AppSpacing.sm,
+                  top: AppSpacing.sm,
+                ),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: MeasurementSystemToggle(
+                    onChanged: (s) {
+                      _applyMeasurementSystem(s);
+                      dialogSetState?.call(() {});
+                    },
+                  ),
+                ),
+              ),
               if (row.selectedUnit == 'custom') ...[
                 const SizedBox(height: AppSpacing.xs),
                 TextField(
@@ -1820,24 +1855,183 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       final removed = _directionDrafts.removeAt(idx);
       removed.dispose();
       _validationMessage = null;
-      if (_selectedDirectionIndex != null) {
-        final sel = _selectedDirectionIndex!;
-        if (idx < sel) {
-          _selectedDirectionIndex = sel - 1;
-        } else if (idx == sel) {
-          _selectedDirectionIndex = idx.clamp(0, _directionDrafts.length - 1);
-        }
-      }
     });
   }
 
-  void _addDirectionStep() {
-    if (!_canAddAnotherDirection) return;
+  void _onDirectionsReorder(int oldIndex, int newIndex) {
     setState(() {
-      _directionDrafts.add(_DirectionDraft());
-      _selectedDirectionIndex = _directionDrafts.length - 1;
+      if (newIndex > oldIndex) newIndex -= 1;
+      final moved = _directionDrafts.removeAt(oldIndex);
+      _directionDrafts.insert(newIndex, moved);
       _validationMessage = null;
     });
+  }
+
+  bool _isDirectionStepComplete(_DirectionDraft draft) {
+    return draft.textCtrl.text.trim().isNotEmpty;
+  }
+
+  Future<void> _addDirectionAndOpenModal() async {
+    if (!_canAddAnotherDirection) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _directionDrafts.add(_DirectionDraft());
+      _validationMessage = null;
+    });
+    final newIndex = _directionDrafts.length - 1;
+    await _showDirectionEditorModal(
+      index: newIndex,
+      isNewDraft: true,
+    );
+  }
+
+  Future<void> _editDirectionAt(int i) async {
+    if (i < 0 || i >= _directionDrafts.length) return;
+    FocusScope.of(context).unfocus();
+    await _showDirectionEditorModal(
+      index: i,
+      isNewDraft: false,
+    );
+  }
+
+  Future<void> _showDirectionEditorModal({
+    required int index,
+    required bool isNewDraft,
+  }) async {
+    if (!mounted) return;
+    FocusScope.of(context).unfocus();
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            if (index < 0 || index >= _directionDrafts.length) {
+              return const SizedBox.shrink();
+            }
+            final draft = _directionDrafts[index];
+            final topPad = MediaQuery.paddingOf(dialogCtx).top + 8;
+            final maxH = MediaQuery.sizeOf(dialogCtx).height - topPad - 16;
+            final width = MediaQuery.sizeOf(dialogCtx).width;
+            void popDialog() {
+              FocusScope.of(dialogCtx).unfocus();
+              Navigator.of(dialogCtx).pop();
+            }
+
+            void onCancel() {
+              popDialog();
+            }
+
+            void onSave() {
+              FocusScope.of(dialogCtx).unfocus();
+              if (!_isDirectionStepComplete(draft)) return;
+              popDialog();
+            }
+
+            void removeThenClose() {
+              popDialog();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                if (index >= 0 && index < _directionDrafts.length) {
+                  _removeDirectionAt(index);
+                }
+              });
+            }
+
+            return Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: EdgeInsets.only(top: topPad, left: 12, right: 12),
+                child: Material(
+                  elevation: 8,
+                  shadowColor: Colors.black45,
+                  borderRadius: BorderRadius.circular(20),
+                  clipBehavior: Clip.antiAlias,
+                  color: Theme.of(dialogCtx).colorScheme.surface,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: 560, maxHeight: maxH),
+                    child: SizedBox(
+                      width: width - 24,
+                      child: Theme(
+                        data: _themeForIngredientModal(this.context),
+                        child: Scaffold(
+                          resizeToAvoidBottomInset: false,
+                          appBar: AppBar(
+                            title: Text(
+                              isNewDraft
+                                  ? 'Add step'
+                                  : 'Step ${index + 1}',
+                            ),
+                            leading: IconButton(
+                              icon: const Icon(Icons.close_rounded),
+                              tooltip: 'Cancel',
+                              onPressed: onCancel,
+                            ),
+                          ),
+                          body: SingleChildScrollView(
+                            padding: EdgeInsets.fromLTRB(
+                              16,
+                              8,
+                              16,
+                              16 +
+                                  MediaQuery.viewInsetsOf(dialogCtx).bottom,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildExpandedDirectionRow(
+                                  dialogCtx,
+                                  index,
+                                  draft,
+                                  dialogSetState: setModalState,
+                                  onRemovePressed: removeThenClose,
+                                  cardMargin: EdgeInsets.zero,
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: onCancel,
+                                        child: const Text('Cancel'),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: FilledButton(
+                                        onPressed: _isDirectionStepComplete(
+                                                draft)
+                                            ? onSave
+                                            : null,
+                                        child: const Text('Save'),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (!mounted) return;
+    if (isNewDraft &&
+        index >= 0 &&
+        index < _directionDrafts.length &&
+        !_isDirectionStepComplete(_directionDrafts[index])) {
+      _removeDirectionAt(index);
+    }
+    setState(() {});
   }
 
   bool get _canAddAnotherDirection {
@@ -1956,76 +2150,88 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   Widget _buildCondensedDirectionRow(
     BuildContext context,
     int idx,
-    _DirectionDraft draft,
-  ) {
+    _DirectionDraft draft, {
+    bool wrapWithBottomPadding = true,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: () => setState(() => _selectedDirectionIndex = idx),
-          child: Ink(
-            decoration: BoxDecoration(
-              color: _kCreateRecipeBlueLight,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: _kCreateRecipeBlueMid),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.format_list_numbered_rounded,
-                    size: 18,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Expanded(
-                    child: Text(
-                      'Step ${idx + 1}: ${_directionSummary(draft)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
-                      ),
+    final chip = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => unawaited(_editDirectionAt(idx)),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: _kCreateRecipeBlueLight,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: _kCreateRecipeBlueMid),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.format_list_numbered_rounded,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    'Step ${idx + 1}: ${_directionSummary(draft)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                  Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: scheme.onSurfaceVariant,
+                ),
+                Icon(
+                  Icons.edit_outlined,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                IconButton(
+                  onPressed: () => _removeDirectionAt(idx),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  tooltip: 'Remove',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
                   ),
-                  IconButton(
-                    onPressed: () => _removeDirectionAt(idx),
-                    icon: const Icon(Icons.close_rounded, size: 20),
-                    tooltip: 'Remove',
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
       ),
+    );
+    if (!wrapWithBottomPadding) return chip;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: chip,
     );
   }
 
   Widget _buildExpandedDirectionRow(
     BuildContext context,
     int idx,
-    _DirectionDraft draft,
-  ) {
+    _DirectionDraft draft, {
+    StateSetter? dialogSetState,
+    VoidCallback? onRemovePressed,
+    EdgeInsetsGeometry cardMargin =
+        const EdgeInsets.only(bottom: AppSpacing.sm),
+  }) {
     final scheme = Theme.of(context).colorScheme;
+    void notifyUi() {
+      dialogSetState?.call(() {});
+      if (dialogSetState == null) setState(() {});
+    }
+
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      margin: cardMargin,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.sm,
         AppSpacing.sm,
@@ -2063,7 +2269,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
               const Spacer(),
               if (_directionDrafts.length > 1)
                 IconButton(
-                  onPressed: () => _removeDirectionAt(idx),
+                  onPressed: onRemovePressed ?? () => _removeDirectionAt(idx),
                   icon: const Icon(Icons.delete_outline_rounded),
                   tooltip: 'Remove step',
                   visualDensity: VisualDensity.compact,
@@ -2077,7 +2283,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             textCapitalization: TextCapitalization.sentences,
             onTapOutside: (_) => FocusScope.of(context).unfocus(),
             decoration: _directionInstructionDecoration(context),
-            onChanged: (_) => setState(() {}),
+            onChanged: (_) => notifyUi(),
           ),
         ],
       ),
@@ -2137,13 +2343,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     final servings = _parseIntOrNull(_servingsCtrl.text) ?? 2;
     final lines = _ingredientLinesForNutrition();
     return '$servings|\u001e${lines.join('\u001e')}';
-  }
-
-  void _scheduleNutritionSync() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _step != _kNutritionStepIndex) return;
-      unawaited(_syncNutritionEstimate());
-    });
   }
 
   Future<void> _syncNutritionEstimate() async {
@@ -2462,30 +2661,34 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       _submit();
       return;
     }
-    setState(() => _step += 1);
+    setState(() {
+      _step += 1;
+      if (_step == _kNutritionStepIndex) {
+        _nutritionAwaitingManualCalculate = true;
+      }
+    });
     ref.read(recipeCreationGuardProvider.notifier).setStep(_step);
     _stepCtrl.animateToPage(
       _step,
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
     );
-    if (_step == _kNutritionStepIndex) {
-      _scheduleNutritionSync();
-    }
   }
 
   void _prevStep() {
     if (_step == 0) return;
-    setState(() => _step -= 1);
+    setState(() {
+      _step -= 1;
+      if (_step == _kNutritionStepIndex) {
+        _nutritionAwaitingManualCalculate = true;
+      }
+    });
     ref.read(recipeCreationGuardProvider.notifier).setStep(_step);
     _stepCtrl.animateToPage(
       _step,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
-    if (_step == _kNutritionStepIndex) {
-      _scheduleNutritionSync();
-    }
   }
 
   void _submit() {
@@ -2576,11 +2779,32 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             child: SectionCard(
               title: 'Nutrition estimate',
               subtitle:
-                  'Approximate totals for the full recipe (all servings). Not medical advice.',
+                  'Approximate totals for the full recipe (all servings). Tap '
+                  'Calculate to estimate, or Next to skip. Not medical advice.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_nutritionLoading)
+                  if (_nutritionAwaitingManualCalculate) ...[
+                    Text(
+                      'We can estimate calories and macros from your '
+                      'ingredient list. This is optional—use Next to continue '
+                      'without estimating.',
+                      style: textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _nutritionAwaitingManualCalculate = false;
+                        });
+                        unawaited(_syncNutritionEstimate());
+                      },
+                      icon: const Icon(Icons.calculate_rounded, size: 20),
+                      label: const Text('Calculate'),
+                    ),
+                  ] else if (_nutritionLoading)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 24),
                       child: Center(child: CircularProgressIndicator()),
@@ -2723,6 +2947,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                     ),
                   ],
                   if (_kShowNutritionIngredientBreakdown &&
+                      !_nutritionAwaitingManualCalculate &&
                       !_nutritionLoading &&
                       _nutritionError == null &&
                       _nutritionBreakdown.isNotEmpty)
@@ -3029,9 +3254,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           onChanged: _applyMeasurementSystem,
         ),
         subtitle:
-            'Tap a chip to edit, or Add ingredient. Use Save in the editor '
-            'when you are finished. Switching Metric / US converts amounts '
-            'and updates unit choices.',
+            'Tap a chip to edit, or Add ingredient. Drag the handle on the left '
+            'to reorder. Use Save in the editor when you are finished. '
+            'Switching Metric / US converts amounts and updates unit choices.',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3043,9 +3268,39 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                 ),
               )
             else
-              ...List.generate(
-                _ingredients.length,
-                (i) => _buildIngredientSavedChip(context, i),
+              ReorderableListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
+                onReorder: _onIngredientsReorder,
+                itemCount: _ingredients.length,
+                itemBuilder: (context, i) {
+                  return KeyedSubtree(
+                    key: ValueKey(_ingredients[i].reorderId),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Tooltip(
+                          message: 'Drag to reorder',
+                          child: ReorderableDragStartListener(
+                            index: i,
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Icon(
+                                Icons.drag_handle_rounded,
+                                size: 22,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: _buildIngredientSavedChip(context, i),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             const SizedBox(height: 16),
             OutlinedButton.icon(
@@ -3368,29 +3623,71 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                           _buildIngredientStepPage(),
                           _StepCard(
                             title: 'Directions',
+                            subtitle:
+                                'Tap a step to edit, or Add step. Drag the handle on '
+                                'the left to reorder steps. Use Save in the editor '
+                                'when you are finished.',
                             child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                for (var i = 0;
-                                    i < _directionDrafts.length;
-                                    i++)
-                                  if (_selectedDirectionIndex == i)
-                                    _buildExpandedDirectionRow(
-                                      context,
-                                      i,
-                                      _directionDrafts[i],
-                                    )
-                                  else
-                                    _buildCondensedDirectionRow(
-                                      context,
-                                      i,
-                                      _directionDrafts[i],
-                                    ),
+                                ReorderableListView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  buildDefaultDragHandles: false,
+                                  onReorder: _onDirectionsReorder,
+                                  itemCount: _directionDrafts.length,
+                                  itemBuilder: (context, i) {
+                                    final draft = _directionDrafts[i];
+                                    return KeyedSubtree(
+                                      key: ObjectKey(draft),
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: AppSpacing.xs,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            Tooltip(
+                                              message: 'Drag to reorder',
+                                              child:
+                                                  ReorderableDragStartListener(
+                                                index: i,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                    right: 6,
+                                                  ),
+                                                  child: Icon(
+                                                    Icons.drag_handle_rounded,
+                                                    size: 22,
+                                                    color: scheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child:
+                                                  _buildCondensedDirectionRow(
+                                                context,
+                                                i,
+                                                draft,
+                                                wrapWithBottomPadding: false,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
                                 const SizedBox(height: AppSpacing.xs),
                                 Align(
                                   alignment: Alignment.centerLeft,
                                   child: TextButton.icon(
                                     onPressed: _canAddAnotherDirection
-                                        ? _addDirectionStep
+                                        ? _addDirectionAndOpenModal
                                         : null,
                                     icon: const Icon(Icons.add),
                                     label: const Text('Add step'),

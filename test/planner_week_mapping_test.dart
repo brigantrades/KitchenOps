@@ -36,6 +36,52 @@ void main() {
     });
   });
 
+  group('MealPlanSlot week_start JSON', () {
+    test('calendarDateForSlot matches local day when API sends UTC midnight', () {
+      final slot = MealPlanSlot.fromJson({
+        'id': 'test-slot',
+        'week_start': '2026-03-30T00:00:00+00:00',
+        'day_of_week': 1,
+        'meal_type': 'meal',
+        'slot_order': 0,
+      });
+      expect(plannerDateOnly(calendarDateForSlot(slot)), DateTime(2026, 3, 31));
+    });
+
+    test('calendarDateForSlot uses calendar days (Mar 30 week Tue/Fri)', () {
+      final mon = DateTime(2026, 3, 30);
+      final tue = MealPlanSlot(
+        id: 'a',
+        weekStart: mon,
+        dayOfWeek: 1,
+        mealLabel: 'meal',
+        slotOrder: 0,
+      );
+      final fri = MealPlanSlot(
+        id: 'b',
+        weekStart: mon,
+        dayOfWeek: 4,
+        mealLabel: 'meal',
+        slotOrder: 0,
+      );
+      expect(plannerDateOnly(calendarDateForSlot(tue)), DateTime(2026, 3, 31));
+      expect(plannerDateOnly(calendarDateForSlot(fri)), DateTime(2026, 4, 3));
+    });
+
+    test('mealPlanSlotMatchesCalendarDay aligns with tapped day', () {
+      final mon = DateTime(2026, 3, 30);
+      final tue = MealPlanSlot(
+        id: 'a',
+        weekStart: mon,
+        dayOfWeek: 1,
+        mealLabel: 'meal',
+        slotOrder: 0,
+      );
+      expect(mealPlanSlotMatchesCalendarDay(tue, DateTime(2026, 3, 31)), isTrue);
+      expect(mealPlanSlotMatchesCalendarDay(tue, DateTime(2026, 4, 3)), isFalse);
+    });
+  });
+
   group('plannerAnchorMatchesPreference', () {
     test('returns false when anchor weekday does not match preference', () {
       const pref = PlannerWindowPreference(startDay: 1, dayCount: 7); // Tuesday
@@ -49,6 +95,33 @@ void main() {
       final tuesdayAnchor = DateTime(2026, 3, 24); // Tuesday
 
       expect(plannerAnchorMatchesPreference(tuesdayAnchor, pref), isTrue);
+    });
+  });
+
+  group('dedupeMealPlannerSlotsByCalendarDayAndSlotOrder', () {
+    test('merges duplicate slot positions and prefers planned content', () {
+      final mon = DateTime(2026, 3, 30);
+      final withText = MealPlanSlot(
+        id: 'a',
+        weekStart: mon,
+        dayOfWeek: 1,
+        mealLabel: 'meal',
+        slotOrder: 0,
+        mealText: 'Leftover Roast',
+      );
+      final empty = MealPlanSlot(
+        id: 'b',
+        weekStart: mon,
+        dayOfWeek: 1,
+        mealLabel: 'meal',
+        slotOrder: 0,
+      );
+      final out = dedupeMealPlannerSlotsByCalendarDayAndSlotOrder([
+        withText,
+        empty,
+      ]);
+      expect(out.length, 1);
+      expect(out.single.id, 'a');
     });
   });
 }

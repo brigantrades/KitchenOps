@@ -12,6 +12,7 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/core/services/meal_reminder_notification_service.dart';
+import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/core/ui/action_pill.dart';
 import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
@@ -297,7 +298,11 @@ Future<void> showPlannerWindowSettingsSheet(
   );
 }
 
-enum _SlotCardAction { editMeal, clearMeal, deleteSlot }
+enum _SlotCardAction {
+  editMeal,
+  clearMeal,
+  deleteSlot,
+}
 
 class _GroceryEditDraft {
   _GroceryEditDraft({
@@ -564,6 +569,21 @@ Widget buildPlannerDaySlotCard({
   final assignmentLabel = allSelected
       ? 'Assigned: All'
       : (assignedNames.isEmpty ? 'Assigned: Unknown' : 'Assigned: ${assignedNames.join(', ')}');
+  final slotCalendarDate =
+      plannerDateOnly(slot.weekStart).add(Duration(days: slot.dayOfWeek));
+  final showSourceChips = hasTypedSource && hasRecipeSource;
+  final metaParts = <String>[];
+  if (mealSource == 'Recipe') {
+    metaParts.add(hasSlotNutrition ? slotNutritionLabel : 'Nutrition unavailable');
+  }
+  if (mealSource == 'Typed' && !showSourceChips) {
+    metaParts.add('Nutrition unavailable');
+  }
+  if (slot.hasPlannedContent) {
+    metaParts.add(assignmentLabel);
+  }
+  final hasReminder = (slot.reminderMessage?.trim().isNotEmpty ?? false) &&
+      slot.reminderAt != null;
   final scheme = Theme.of(context).colorScheme;
   Future<void> editSlotPlan() async {
     final draft = await onEditSlotPlan(
@@ -677,6 +697,29 @@ Widget buildPlannerDaySlotCard({
     }
   }
 
+  Future<void> openReminderModal() async {
+    final changed = await _openPlannerSlotReminderEditor(
+      context,
+      slot: slot,
+      slotDate: slotCalendarDate,
+    );
+    if (changed) {
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        final anchor = ref.read(weekStartProvider);
+        final pref = ref.read(effectivePlannerWindowProvider);
+        await clearPlannerHiveCachesForSlotMutation(
+          cache: ref.read(localCacheProvider),
+          userId: user.id,
+          anchor: anchor,
+          pref: pref,
+          calendarDate: slotCalendarDate,
+        );
+      }
+      invalidatePlannerSlotCaches(ref, slotCalendarDate);
+    }
+  }
+
   return Container(
     key: ValueKey(slot.id),
     margin: const EdgeInsets.only(bottom: 10),
@@ -737,32 +780,28 @@ Widget buildPlannerDaySlotCard({
                                 : (recipe?.title ?? 'Tap to plan meal'),
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
-                          if (mealSource == 'Recipe')
-                            Text(
-                              hasSlotNutrition
-                                  ? slotNutritionLabel
-                                  : 'Nutrition unavailable for this recipe.',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                  ),
+                          if (showSourceChips)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  _sourceChip(context, 'Typed'),
+                                  _sourceChip(context, 'Recipe'),
+                                ],
+                              ),
                             ),
-                          if (mealSource == 'Typed')
+                          if (metaParts.isNotEmpty)
                             Text(
-                              'Nutrition unavailable for typed meal.',
+                              metaParts.join(' · '),
                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: scheme.onSurfaceVariant,
                                   ),
                             ),
                           if (openRecipeOnTap && recipe == null)
                             Text(
-                              'No recipe linked. Tap this row or use the menu (⋮).',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          if (slot.hasPlannedContent)
-                            Text(
-                              assignmentLabel,
+                              'No recipe linked',
                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: scheme.onSurfaceVariant,
                                   ),
@@ -839,53 +878,89 @@ Widget buildPlannerDaySlotCard({
           ),
         ),
         if (slot.hasPlannedContent)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              if (canAddToGrocery)
-                IconButton(
-                  tooltip: hasPlannerGroceryItems
-                      ? 'Items already on grocery list'
-                      : 'Add to grocery list',
-                  icon: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.add_shopping_cart_rounded),
-                      if (hasPlannerGroceryItems)
-                        const Positioned(
-                          right: -2,
-                          bottom: -2,
-                          child: Icon(
-                            Icons.check_circle_rounded,
-                            size: 14,
-                            color: Color(0xFF4ECDC4),
-                          ),
-                        ),
-                    ],
-                  ),
-                  onPressed: hasPlannerGroceryItems ? editGroceryItems : addToGrocery,
-                ),
-              Flexible(
-                fit: FlexFit.loose,
-                child: _PlannerSlotReminderRow(
-                  slot: slot,
-                  slotDate: plannerDateOnly(slot.weekStart).add(Duration(days: slot.dayOfWeek)),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: scheme.outlineVariant.withValues(alpha: 0.35),
                 ),
               ),
-              const Spacer(),
-              if (hasTypedSource || hasRecipeSource)
-                Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      if (hasTypedSource) _sourceChip(context, 'Typed'),
-                      if (hasRecipeSource) _sourceChip(context, 'Recipe'),
-                    ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 4, 8, 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (canAddToGrocery)
+                    IconButton(
+                      tooltip: hasPlannerGroceryItems
+                          ? 'Items already on grocery list'
+                          : 'Add to grocery list',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
+                      icon: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Icon(
+                            Icons.add_shopping_cart_rounded,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          if (hasPlannerGroceryItems)
+                            const Positioned(
+                              right: -2,
+                              bottom: -2,
+                              child: Icon(
+                                Icons.check_circle_rounded,
+                                size: 14,
+                                color: Color(0xFF4ECDC4),
+                              ),
+                            ),
+                        ],
+                      ),
+                      onPressed:
+                          hasPlannerGroceryItems ? editGroceryItems : addToGrocery,
+                    ),
+                  Tooltip(
+                    message: hasReminder
+                        ? 'Edit or delete reminder'
+                        : 'Meal reminder',
+                    child: IconButton(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
+                      icon: Icon(
+                        hasReminder
+                            ? Icons.notifications_active_rounded
+                            : Icons.notifications_none_rounded,
+                        color: hasReminder
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                      onPressed: () => unawaited(openReminderModal()),
+                    ),
                   ),
-                ),
-            ],
+                  if (hasReminder)
+                    Expanded(
+                      child: Text(
+                        DateFormat.jm().format(slot.reminderAt!.toLocal()),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
       ],
     ),
@@ -908,6 +983,7 @@ Future<bool> _plannerAddMealSlotFlow(
   BuildContext context,
   WidgetRef ref, {
   required DateTime day,
+  required List<MealPlanSlot> daySlots,
   required List<Recipe> recipes,
 }) async {
   final label = await showModalBottomSheet<String>(
@@ -917,7 +993,31 @@ Future<bool> _plannerAddMealSlotFlow(
   );
   if (label == null || label.trim().isEmpty) return false;
   if (!context.mounted) return false;
-  final pickerLabel = plannerNewSlotRecipePickerTitleLabel(label);
+  final dayOnly = plannerDateOnly(day);
+  final storageWeek = weekStartMondayForDate(dayOnly);
+  // Consumer [daySlots] can be empty or stale while the sheet is open (bootstrap
+  // race). Refresh from the same source as [nextSlotOrder] so the picker title
+  // matches how many meal/snack rows already exist for this calendar day.
+  var slotsForOrdinal = daySlots;
+  final userPreview = ref.read(currentUserProvider);
+  if (userPreview != null) {
+    try {
+      final weekSlots =
+          await ref.read(plannerRepositoryProvider).listSlots(
+                userPreview.id,
+                storageWeek,
+              );
+      final freshDay = weekSlots
+          .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
+          .toList()
+        ..sort((a, b) => a.slotOrder.compareTo(b.slotOrder));
+      slotsForOrdinal = freshDay.isNotEmpty ? freshDay : daySlots;
+    } catch (_) {}
+  }
+  if (!context.mounted) return false;
+  final ordinal = nextNewSlotDisplayOrdinal(slotsForOrdinal, label);
+  final pickerLabel =
+      plannerNewSlotRecipePickerDisplayLabel(label, ordinal);
   final picked = await pickRecipeForPlannerSlot(
     context,
     slotDisplayLabel: pickerLabel,
@@ -926,8 +1026,6 @@ Future<bool> _plannerAddMealSlotFlow(
   if (!context.mounted) return false;
   final user = ref.read(currentUserProvider);
   if (user == null) return false;
-  final dayOnly = plannerDateOnly(day);
-  final storageWeek = weekStartMondayForDate(dayOnly);
   final storageDow = dartWeekdayToStartDay(dayOnly.weekday);
   try {
     final nextOrder = await ref.read(plannerRepositoryProvider).nextSlotOrder(
@@ -935,12 +1033,16 @@ Future<bool> _plannerAddMealSlotFlow(
           weekStart: storageWeek,
           dayOfWeek: storageDow,
         );
+    final localMaxOrder = slotsForOrdinal.isEmpty
+        ? -1
+        : slotsForOrdinal.map((s) => s.slotOrder).reduce(math.max);
+    final slotOrder = math.max(nextOrder, localMaxOrder + 1);
     await ref.read(plannerRepositoryProvider).addSlot(
           userId: user.id,
           weekStart: storageWeek,
           dayOfWeek: storageDow,
           mealLabel: label,
-          slotOrder: nextOrder,
+          slotOrder: slotOrder,
           recipeId: picked?.id,
         );
     invalidatePlannerSlotCaches(ref, dayOnly);
@@ -1048,6 +1150,30 @@ Future<void> showPlannerDayDetailSheet(
     }
   }
 
+  // Default slots are normally seeded in the background (see [plannerSlotsProvider]).
+  // If the user opens this sheet before that finishes, [daySlotsNow] was empty and no
+  // meal rows appeared. Await seeding + a fresh month query so the reorder list
+  // always has the default Meal 1–3 rows when the DB allows it.
+  var effectiveMonthSlots = monthSlots;
+  var weekSlotsForFallback = <MealPlanSlot>[];
+  final user = ref.read(currentUserProvider);
+  if (user != null) {
+    final repo = ref.read(plannerRepositoryProvider);
+    try {
+      await repo.ensureDefaultSlots(user.id, storageWeek);
+      effectiveMonthSlots = await repo.listPlannerMonthSlots(
+        user.id,
+        firstDayOfPlannerMonth(dayOnly),
+      );
+      invalidatePlannerSlotCaches(ref, dayOnly);
+    } catch (_) {
+      // Keep [monthSlots]; streams may still update after background ensure.
+    }
+    try {
+      weekSlotsForFallback = await repo.listSlots(user.id, storageWeek);
+    } catch (_) {}
+  }
+
   if (!context.mounted) return;
   await showModalBottomSheet<void>(
     context: context,
@@ -1067,13 +1193,27 @@ Future<void> showPlannerDayDetailSheet(
               final monthAsync = ref.watch(
                 plannerMonthSlotsProvider(firstDayOfPlannerMonth(dayOnly)),
               );
-              final resolvedSlots =
-                  monthAsync.valueOrNull ?? monthSlots;
-              final daySlotsNow = resolvedSlots
-                  .where((s) =>
-                      plannerDateOnly(calendarDateForSlot(s)) == dayOnly)
+              // Prefer a completed month snapshot when it exists. While loading (or
+              // before first emission), keep [effectiveMonthSlots] from the awaited
+              // bootstrap so we never show an empty reorder list just because
+              // [valueOrNull] is [] from cache/stale state (AsyncData([]) is not null).
+              final asyncVal = monthAsync.valueOrNull;
+              final resolvedSlots = monthAsync.hasValue
+                  ? (asyncVal ?? const <MealPlanSlot>[])
+                  : (effectiveMonthSlots.isNotEmpty
+                      ? effectiveMonthSlots
+                      : (asyncVal ?? const <MealPlanSlot>[]));
+              var daySlotsNow = resolvedSlots
+                  .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
                   .sorted((a, b) => a.slotOrder.compareTo(b.slotOrder))
                   .toList();
+              if (daySlotsNow.isEmpty && weekSlotsForFallback.isNotEmpty) {
+                daySlotsNow = weekSlotsForFallback
+                    .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
+                    .sorted((a, b) => a.slotOrder.compareTo(b.slotOrder))
+                    .toList();
+              }
+
               return SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1129,6 +1269,7 @@ Future<void> showPlannerDayDetailSheet(
                           context,
                           ref,
                           day: dayOnly,
+                          daySlots: daySlotsNow,
                           recipes: recipes,
                         );
                         if (added && context.mounted) {
@@ -1265,35 +1406,8 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                             SizedBox(
                               width: tileW,
                               height: tileH,
-                              child: PlannerMagazineDayCard(
-                                date: calendarDateForPlannerUiDay(
-                                  anchor,
-                                  dayIndex,
-                                  pref,
-                                ),
-                                isToday: plannerDateOnly(
-                                      calendarDateForPlannerUiDay(
-                                        anchor,
-                                        dayIndex,
-                                        pref,
-                                      ),
-                                    ) ==
-                                    today,
-                                daySlots: effectiveSlots
-                                    .where((s) =>
-                                        plannerUiDayIndexForSlot(
-                                              s,
-                                              anchor,
-                                              pref,
-                                            ) ==
-                                            dayIndex)
-                                    .sorted(
-                                      (a, b) =>
-                                          a.slotOrder.compareTo(b.slotOrder),
-                                    )
-                                    .toList(),
-                                recipes: recipes,
-                                maxVisibleSlots: _maxLinesPerDay,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
                                 onTap: () {
                                   unawaited(
                                     showPlannerDayDetailSheet(
@@ -1310,12 +1424,46 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                                       activeMembers: activeMembers,
                                       memberNameById: memberNameById,
                                       currentUserId: currentUser?.id,
-                                      showMemberAssignment: showMemberAssignment,
+                                      showMemberAssignment:
+                                          showMemberAssignment,
                                       onEditSlotGroceryItems:
                                           onEditSlotGroceryItems,
                                     ),
                                   );
                                 },
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: PlannerMagazineDayCard(
+                                    date: calendarDateForPlannerUiDay(
+                                      anchor,
+                                      dayIndex,
+                                      pref,
+                                    ),
+                                    isToday: plannerDateOnly(
+                                          calendarDateForPlannerUiDay(
+                                            anchor,
+                                            dayIndex,
+                                            pref,
+                                          ),
+                                        ) ==
+                                        today,
+                                    daySlots: effectiveSlots
+                                        .where((s) =>
+                                            plannerUiDayIndexForSlot(
+                                                  s,
+                                                  anchor,
+                                                  pref,
+                                                ) ==
+                                                dayIndex)
+                                        .sorted(
+                                          (a, b) =>
+                                              a.slotOrder.compareTo(b.slotOrder),
+                                        )
+                                        .toList(),
+                                    recipes: recipes,
+                                    maxVisibleSlots: _maxLinesPerDay,
+                                  ),
+                                ),
                               ),
                             ),
                         ],
@@ -2707,6 +2855,7 @@ class PlannerScreen extends ConsumerWidget {
                               context,
                               ref,
                               day: selectedDate,
+                              daySlots: daySlots,
                               recipes: recipes,
                             );
                           },
@@ -2990,8 +3139,36 @@ Future<_MealReminderPermissionDialogAction> _showMealReminderPermissionDialog(
   return result ?? _MealReminderPermissionDialogAction.cancelled;
 }
 
-class _PlannerSlotReminderRow extends ConsumerStatefulWidget {
-  const _PlannerSlotReminderRow({
+TimeOfDay? _reminderTimeOfDayFromSlot(MealPlanSlot slot) {
+  final at = slot.reminderAt;
+  if (at == null) return null;
+  final local = at.toLocal();
+  return TimeOfDay(hour: local.hour, minute: local.minute);
+}
+
+/// Returns true if the reminder was saved or cleared. Caller may invalidate
+/// [plannerSlotsProvider] only after this future completes (dialog fully gone).
+Future<bool> _openPlannerSlotReminderEditor(
+  BuildContext context, {
+  required MealPlanSlot slot,
+  required DateTime slotDate,
+}) async {
+  // Let the PopupMenu route finish closing before pushing a dialog route.
+  await Future<void>.delayed(Duration.zero);
+  if (!context.mounted) return false;
+  final result = await showDialog<bool>(
+    context: context,
+    useRootNavigator: true,
+    builder: (dialogContext) => _MealReminderEditorDialog(
+      slot: slot,
+      slotDate: slotDate,
+    ),
+  );
+  return result ?? false;
+}
+
+class _MealReminderEditorDialog extends ConsumerStatefulWidget {
+  const _MealReminderEditorDialog({
     required this.slot,
     required this.slotDate,
   });
@@ -3000,12 +3177,12 @@ class _PlannerSlotReminderRow extends ConsumerStatefulWidget {
   final DateTime slotDate;
 
   @override
-  ConsumerState<_PlannerSlotReminderRow> createState() =>
-      _PlannerSlotReminderRowState();
+  ConsumerState<_MealReminderEditorDialog> createState() =>
+      _MealReminderEditorDialogState();
 }
 
-class _PlannerSlotReminderRowState
-    extends ConsumerState<_PlannerSlotReminderRow> {
+class _MealReminderEditorDialogState
+    extends ConsumerState<_MealReminderEditorDialog> {
   late TextEditingController _messageCtrl;
   TimeOfDay? _time;
 
@@ -3014,32 +3191,7 @@ class _PlannerSlotReminderRowState
     super.initState();
     _messageCtrl =
         TextEditingController(text: widget.slot.reminderMessage?.trim() ?? '');
-    _applyTimeFromSlot();
-  }
-
-  void _applyTimeFromSlot() {
-    final at = widget.slot.reminderAt;
-    if (at != null) {
-      final local = at.toLocal();
-      _time = TimeOfDay(hour: local.hour, minute: local.minute);
-    } else {
-      _time = null;
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant _PlannerSlotReminderRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.slot.id != oldWidget.slot.id) {
-      _messageCtrl.text = widget.slot.reminderMessage?.trim() ?? '';
-      _applyTimeFromSlot();
-      return;
-    }
-    if (widget.slot.reminderAt != oldWidget.slot.reminderAt ||
-        widget.slot.reminderMessage != oldWidget.slot.reminderMessage) {
-      _messageCtrl.text = widget.slot.reminderMessage?.trim() ?? '';
-      _applyTimeFromSlot();
-    }
+    _time = _reminderTimeOfDayFromSlot(widget.slot);
   }
 
   @override
@@ -3048,12 +3200,27 @@ class _PlannerSlotReminderRowState
     super.dispose();
   }
 
-  bool get _hasReminder {
-    final m = widget.slot.reminderMessage?.trim() ?? '';
-    return m.isNotEmpty && widget.slot.reminderAt != null;
+  Future<void> _onDelete() async {
+    try {
+      await ref.read(plannerRepositoryProvider).updateSlotReminder(
+            slotId: widget.slot.id,
+            reminderAt: null,
+            message: null,
+          );
+      await ref
+          .read(mealReminderNotificationServiceProvider)
+          .cancelScheduledReminderForSlot(widget.slot.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not clear reminder: ${e.message}')),
+      );
+    }
   }
 
-  Future<void> _save() async {
+  Future<void> _onSave() async {
     final msg = _messageCtrl.text.trim();
     if (msg.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3110,7 +3277,8 @@ class _PlannerSlotReminderRowState
             reminderAt: local.toUtc(),
             message: msg,
           );
-      ref.invalidate(plannerSlotsProvider);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
     } on PostgrestException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3119,136 +3287,56 @@ class _PlannerSlotReminderRowState
     }
   }
 
-  Future<void> _clear() async {
-    try {
-      await ref.read(plannerRepositoryProvider).updateSlotReminder(
-            slotId: widget.slot.id,
-            reminderAt: null,
-            message: null,
-          );
-      ref.invalidate(plannerSlotsProvider);
-      if (mounted) {
-        _messageCtrl.clear();
-        setState(() {
-          _time = null;
-        });
-      }
-    } on PostgrestException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not clear reminder: ${e.message}')),
-      );
-    }
-  }
-
-  Future<void> _openReminderDialog() async {
-    final draftCtrl = TextEditingController(text: _messageCtrl.text);
-    var draftTime = _time;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Meal reminder'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: draftCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Reminder',
-                  hintText: 'e.g. Lay out chicken',
-                  isDense: true,
-                ),
-                textCapitalization: TextCapitalization.sentences,
-                maxLines: 2,
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.tonal(
-                  onPressed: () async {
-                    final picked = await showTimePicker(
-                      context: dialogContext,
-                      initialTime:
-                          draftTime ?? const TimeOfDay(hour: 12, minute: 30),
-                    );
-                    if (picked == null) return;
-                    setDialogState(() => draftTime = picked);
-                  },
-                  child: Text(
-                    draftTime == null
-                        ? 'Pick time'
-                        : draftTime!.format(context),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                _messageCtrl.text = '';
-                _time = null;
-                await _clear();
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-              },
-              child: const Text('Delete'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                _messageCtrl.text = draftCtrl.text;
-                _time = draftTime;
-                await _save();
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    draftCtrl.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final timeFmt = DateFormat.jm();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+    return AlertDialog(
+      title: const Text('Meal reminder'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            tooltip: 'Reminder',
-            icon: Icon(
-              _hasReminder
-                  ? Icons.notifications_active_rounded
-                  : Icons.notifications_none_rounded,
-              color: _hasReminder ? scheme.primary : scheme.outline,
+          TextField(
+            controller: _messageCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Reminder',
+              hintText: 'e.g. Lay out chicken',
+              isDense: true,
             ),
-            onPressed: _openReminderDialog,
+            textCapitalization: TextCapitalization.sentences,
+            maxLines: 2,
           ),
-          if (_hasReminder)
-            Text(
-              timeFmt.format(widget.slot.reminderAt!.toLocal()),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.primary,
-                  ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonal(
+              onPressed: () async {
+                final picked = await showTimePicker(
+                  context: context,
+                  initialTime: _time ?? const TimeOfDay(hour: 12, minute: 30),
+                );
+                if (picked == null) return;
+                setState(() => _time = picked);
+              },
+              child: Text(
+                _time == null ? 'Pick time' : _time!.format(context),
+              ),
             ),
+          ),
         ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: _onDelete,
+          child: const Text('Delete'),
+        ),
+        FilledButton(
+          onPressed: _onSave,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

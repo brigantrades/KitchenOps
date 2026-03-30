@@ -67,6 +67,17 @@ class MealReminderNotificationService {
     }
   }
 
+  /// Cancels the scheduled local notification for this slot, if any.
+  Future<void> cancelScheduledReminderForSlot(String slotId) async {
+    if (!_canSchedule) return;
+    if (!_initialized) {
+      await init();
+    }
+    if (!_initialized) return;
+    await _plugin.cancel(id: notificationIdForSlot(slotId));
+    _scheduledSlotIds.remove(slotId);
+  }
+
   Future<void> init() async {
     if (!_canSchedule || _initialized) return;
 

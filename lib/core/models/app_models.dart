@@ -460,6 +460,41 @@ class PlannerSlotSideItem {
       items.where((e) => !e.isEmpty).map((e) => e.toJson()).toList();
 }
 
+/// Parses Postgres [`meal_plan_slots.week_start`] as a **local calendar date**.
+///
+/// Supabase often returns `YYYY-MM-DDT00:00:00Z`. Using [DateTime.parse] alone
+/// makes [weekStart] UTC midnight, and [plannerDateOnly] then shifts to the
+/// previous calendar day in negative UTC offsets — so [calendarDateForSlot]
+/// maps slots to the wrong day and UI filters hide every row for the tapped day.
+DateTime mealPlanWeekStartFromJson(dynamic raw) {
+  final s = raw.toString();
+  final head = s.split('T').first;
+  final parts = head.split('-');
+  if (parts.length == 3) {
+    return DateTime(
+      int.parse(parts[0]),
+      int.parse(parts[1]),
+      int.parse(parts[2]),
+    );
+  }
+  final dt = DateTime.parse(s);
+  final l = dt.toLocal();
+  return DateTime(l.year, l.month, l.day);
+}
+
+/// Coerces [`meal_plan_slots.meal_type`] from PostgREST (almost always a [String]).
+/// In edge cases a nested value can surface as [Map]; avoid `toString()` map blobs.
+String mealPlanSlotMealLabelFromJson(dynamic value) {
+  if (value == null) return 'meal';
+  if (value is String) return value;
+  if (value is Map) {
+    final inner = value['meal_type'] ?? value['label'] ?? value['value'];
+    if (inner is String) return inner;
+    if (inner != null) return inner.toString();
+  }
+  return value.toString();
+}
+
 class MealPlanSlot {
   const MealPlanSlot({
     required this.id,
@@ -535,9 +570,9 @@ class MealPlanSlot {
 
   factory MealPlanSlot.fromJson(Map<String, dynamic> json) => MealPlanSlot(
         id: json['id'].toString(),
-        weekStart: DateTime.parse(json['week_start'].toString()),
+        weekStart: mealPlanWeekStartFromJson(json['week_start']),
         dayOfWeek: (json['day_of_week'] as num).toInt(),
-        mealLabel: json['meal_type']?.toString() ?? 'meal',
+        mealLabel: mealPlanSlotMealLabelFromJson(json['meal_type']),
         recipeId: json['recipe_id']?.toString(),
         mealText: json['meal_text']?.toString(),
         sideRecipeId: json['side_recipe_id']?.toString(),

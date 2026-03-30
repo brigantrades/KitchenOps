@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/planner_week_mapping.dart';
+import 'package:plateplan/core/storage/local_cache.dart';
+import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -78,6 +81,21 @@ class _PlannerOptimisticDayReorderListState
     final repo = ref.read(plannerRepositoryProvider);
     try {
       await repo.reorderSlots(optimistic);
+      if (!mounted) return;
+      final day = plannerDateOnly(calendarDateForSlot(optimistic.first));
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        final anchor = ref.read(weekStartProvider);
+        final pref = ref.read(effectivePlannerWindowProvider);
+        await clearPlannerHiveCachesForSlotMutation(
+          cache: ref.read(localCacheProvider),
+          userId: user.id,
+          anchor: anchor,
+          pref: pref,
+          calendarDate: day,
+        );
+      }
+      invalidatePlannerSlotCaches(ref, day);
     } on PostgrestException catch (error) {
       if (!mounted) return;
       setState(() => _optimistic = null);

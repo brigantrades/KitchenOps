@@ -148,6 +148,13 @@ class LocalCache {
     if (decoded is! List) return null;
     return decoded.whereType<Map<String, dynamic>>().toList();
   }
+
+  /// Clears cached slot rows so [plannerSlotsProvider] does not re-emit stale
+  /// data immediately after invalidate (e.g. after reminder delete).
+  Future<void> clearPlannerSlotList(String cacheKey) async {
+    final box = Hive.box<String>(_discoverBox);
+    await box.delete('$_plannerSlotsKeyPrefix$cacheKey');
+  }
 }
 
 final localCacheProvider = Provider<LocalCache>((ref) => LocalCache());

@@ -11,7 +11,9 @@ DateTime plannerDateOnly(DateTime d) {
 /// Monday (local) of the ISO week containing [date]; time cleared.
 DateTime weekStartMondayForDate(DateTime date) {
   final d = plannerDateOnly(date);
-  return d.subtract(Duration(days: date.weekday - DateTime.monday));
+  // Use [d.weekday] (the normalized calendar day), not [date.weekday], so the
+  // offset matches the same local date as [d] when [date] is a UTC instant.
+  return d.subtract(Duration(days: d.weekday - DateTime.monday));
 }
 
 /// Dart `DateTime.weekday` (1=Mon..7=Sun) to planner index 0..6 (Mon..Sun).
@@ -36,8 +38,26 @@ bool plannerAnchorMatchesPreference(
 }
 
 /// Calendar date of a slot row (`week_start` Monday + `day_of_week` 0..6).
+///
+/// Uses calendar day rollover ([DateTime] y/m/d arithmetic) instead of
+/// [Duration] so adding days cannot cross a DST transition and land on the
+/// wrong **date** (e.g. Tuesday Mar 31 mistaken for Apr 1). That bug removed
+/// slots from [listPlannerMonthSlots] for March while they still appeared in
+/// April, and hid rows for the Mar 31 day sheet.
 DateTime calendarDateForSlot(MealPlanSlot slot) {
-  return plannerDateOnly(slot.weekStart).add(Duration(days: slot.dayOfWeek));
+  final monday = plannerDateOnly(slot.weekStart);
+  return DateTime(monday.year, monday.month, monday.day + slot.dayOfWeek);
+}
+
+/// True when [slot] belongs to [dayOnly] using DB storage keys (ISO Monday
+/// [MealPlanSlot.weekStart] + [MealPlanSlot.dayOfWeek]). Prefer over comparing
+/// [calendarDateForSlot] when filtering rows for a tapped day.
+bool mealPlanSlotMatchesCalendarDay(MealPlanSlot slot, DateTime dayOnly) {
+  final d = plannerDateOnly(dayOnly);
+  final storageWeek = weekStartMondayForDate(d);
+  final storageDow = dartWeekdayToStartDay(d.weekday);
+  return plannerDateOnly(slot.weekStart) == plannerDateOnly(storageWeek) &&
+      slot.dayOfWeek == storageDow;
 }
 
 /// Anchor = first calendar day of the visible window. Picks the window that
@@ -207,4 +227,53 @@ String plannerMagazineWindowTitle(
   final a = DateFormat('MMM d').format(first).toUpperCase();
   final b = DateFormat('MMM d').format(last).toUpperCase();
   return '$a — $b';
+}
+
+/// Collapses duplicate [MealPlanSlot] rows for the same logical slot
+/// `(week_start local date, day_of_week, slot_order)` — the same key as
+/// `meal_plan_slots_household_week_day_order_uidx` (different ids).
+///
+/// Uses storage keys instead of [calendarDateForSlot] so two rows that
+/// disagree on derived calendar math still merge.
+///
+/// Prefers the row with planned content, then a recipe-backed row, then stable id order.
+List<MealPlanSlot> dedupeMealPlannerSlotsByCalendarDayAndSlotOrder(
+  Iterable<MealPlanSlot> slots,
+) {
+  final byKey = <String, MealPlanSlot>{};
+  for (final s in slots) {
+    final key = _mealPlanSlotDedupeKey(s);
+    final existing = byKey[key];
+    if (existing == null) {
+      byKey[key] = s;
+    } else {
+      byKey[key] = _preferMealPlanSlotWhenDuplicate(existing, s);
+    }
+  }
+  final out = byKey.values.toList();
+  out.sort((a, b) {
+    final da = plannerDateOnly(calendarDateForSlot(a));
+    final db = plannerDateOnly(calendarDateForSlot(b));
+    final c = da.compareTo(db);
+    if (c != 0) return c;
+    return a.slotOrder.compareTo(b.slotOrder);
+  });
+  return out;
+}
+
+String _mealPlanSlotDedupeKey(MealPlanSlot s) {
+  final ws = plannerDateOnly(s.weekStart);
+  return '${ws.year}|${ws.month}|${ws.day}|${s.dayOfWeek}|${s.slotOrder}';
+}
+
+MealPlanSlot _preferMealPlanSlotWhenDuplicate(MealPlanSlot a, MealPlanSlot b) {
+  if (a.hasPlannedContent != b.hasPlannedContent) {
+    return a.hasPlannedContent ? a : b;
+  }
+  final aRecipe = (a.recipeId?.trim().isNotEmpty ?? false);
+  final bRecipe = (b.recipeId?.trim().isNotEmpty ?? false);
+  if (aRecipe != bRecipe) {
+    return aRecipe ? a : b;
+  }
+  return a.id.compareTo(b.id) <= 0 ? a : b;
 }

@@ -6,6 +6,10 @@ import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
 
 /// Magazine-style day cell for the planner grid (reference UI).
+///
+/// When [onTap] is null, the card is display-only (no inner [InkWell]); use a
+/// parent [InkWell]/[GestureDetector] with [HitTestBehavior.opaque] so empty
+/// days still receive taps reliably.
 class PlannerMagazineDayCard extends StatelessWidget {
   const PlannerMagazineDayCard({
     super.key,
@@ -14,7 +18,7 @@ class PlannerMagazineDayCard extends StatelessWidget {
     required this.daySlots,
     required this.recipes,
     required this.maxVisibleSlots,
-    required this.onTap,
+    this.onTap,
   });
 
   final DateTime date;
@@ -22,7 +26,7 @@ class PlannerMagazineDayCard extends StatelessWidget {
   final List<MealPlanSlot> daySlots;
   final List<Recipe> recipes;
   final int maxVisibleSlots;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   static const BorderRadius cardRadius = BorderRadius.all(Radius.circular(20));
 
@@ -82,136 +86,140 @@ class PlannerMagazineDayCard extends StatelessWidget {
     final visible = daySlots.take(maxVisibleSlots).toList();
     final extra = daySlots.length - visible.length;
 
+    final inkChild = Ink(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: cardRadius,
+        border: Border.all(color: borderColor, width: borderW),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withValues(alpha: isDark ? 0.12 : 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: cardRadius,
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              DateFormat('EEE').format(date).toUpperCase(),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    letterSpacing: 0.8,
+                                    fontWeight: FontWeight.w600,
+                                    color: weekdayColor,
+                                  ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${date.day}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.05,
+                                    color: dayNumColor,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: daySlots.isEmpty
+                        ? Align(
+                            alignment: Alignment.topLeft,
+                            child: Text(
+                              'NO SLOTS',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: weekdayColor,
+                                    fontStyle: FontStyle.italic,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          )
+                        : SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final slot in visible)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: _slotRow(
+                                      context,
+                                      slot: slot,
+                                      bodyColor: bodyColor,
+                                      mutedColor: weekdayColor,
+                                    ),
+                                  ),
+                                if (extra > 0)
+                                  Text(
+                                    '+$extra more',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: weekdayColor,
+                                          fontStyle: FontStyle.italic,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            if (isToday)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Icon(
+                  Icons.star_rounded,
+                  size: 18,
+                  color: starColor,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (onTap == null) {
+      return inkChild;
+    }
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: cardRadius,
-        child: Ink(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: cardRadius,
-            border: Border.all(color: borderColor, width: borderW),
-            boxShadow: [
-              BoxShadow(
-                color: scheme.shadow.withValues(alpha: isDark ? 0.12 : 0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: cardRadius,
-            child: Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  DateFormat('EEE').format(date).toUpperCase(),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(
-                                        letterSpacing: 0.8,
-                                        fontWeight: FontWeight.w600,
-                                        color: weekdayColor,
-                                      ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${date.day}',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium
-                                      ?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                        height: 1.05,
-                                        color: dayNumColor,
-                                      ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: daySlots.isEmpty
-                            ? Align(
-                                alignment: Alignment.topLeft,
-                                child: Text(
-                                  'NO SLOTS',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(
-                                        color: weekdayColor,
-                                        fontStyle: FontStyle.italic,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                ),
-                              )
-                            : SingleChildScrollView(
-                                physics: const BouncingScrollPhysics(),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    for (final slot in visible)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 8),
-                                        child: _slotRow(
-                                          context,
-                                          slot: slot,
-                                          bodyColor: bodyColor,
-                                          mutedColor: weekdayColor,
-                                        ),
-                                      ),
-                                    if (extra > 0)
-                                      Text(
-                                        '+$extra more',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                              color: weekdayColor,
-                                              fontStyle: FontStyle.italic,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (isToday)
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Icon(
-                      Icons.star_rounded,
-                      size: 18,
-                      color: starColor,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
+        child: inkChild,
       ),
     );
   }
