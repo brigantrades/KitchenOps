@@ -16,6 +16,7 @@ Future<Recipe?> showPlannerRecipePicker(
   return showModalBottomSheet<Recipe>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     builder: (context) => PlannerRecipePickerSheet(
       slotDisplayLabel: slotDisplayLabel,
       allRecipes: allRecipes,

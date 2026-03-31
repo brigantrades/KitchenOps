@@ -32,21 +32,42 @@ void main() {
       );
     });
 
-    test('returns null when first block is Ingredients section', () {
+    test('returns null when caption is only section headers and measured ingredients', () {
       expect(
         inferInstagramRecipeTitle(
-          'Ingredients:\n2 cups flour\n1 egg',
+          'Ingredients:\n2 cups flour\n1 egg\n1 tbsp salt',
         ),
         isNull,
       );
     });
 
-    test('returns null for ingredient-like first line', () {
+    test('uses second line when first line is a measured ingredient', () {
       expect(
         inferInstagramRecipeTitle(
-          '2 cups all-purpose flour\nMore text here',
+          '2 cups all-purpose flour\nBeef Stroganoff',
         ),
-        isNull,
+        'Beef Stroganoff',
+      );
+    });
+
+    test('infers title when URL and dish name are on the same line', () {
+      expect(
+        inferInstagramRecipeTitle(
+          'https://www.instagram.com/reel/AbCdEfGhIjK Bok Choy and Mushroom stir-fry\n\n'
+          'Ingredients:\n1 lb bok choy',
+        ),
+        'Bok Choy and Mushroom stir-fry',
+      );
+    });
+
+    test('uses headline before first Ingredients block (fish caption shape)', () {
+      final caption = 'Lemon Butter Fish Bites with Garlic Aioli (Full Recipe)\n'
+          'For the Fish Bites\n\n'
+          'Ingredients:\n'
+          '500g white fish fillets';
+      expect(
+        inferInstagramRecipeTitle(caption),
+        'Lemon Butter Fish Bites with Garlic Aioli (Full Recipe)',
       );
     });
 
@@ -78,6 +99,22 @@ void main() {
       expect(r.title, 'Caption Headline');
     });
 
+    test('replaces hallucinated Gemini title when caption names a different dish', () {
+      final r = recipeFromInstagramGeminiMap(
+        {
+          'title': 'Creamy Pesto Chicken',
+          'ingredients': [
+            {'name': 'bok choy', 'amount': '1', 'unit': 'lb'},
+          ],
+          'instructions': ['Stir-fry.'],
+        },
+        sharedContent:
+            'https://www.instagram.com/reel/AbCdEfGhIjK Bok Choy and Mushroom stir-fry\n\n'
+            'Ingredients:\n1 lb bok choy',
+      );
+      expect(r.title, 'Bok Choy and Mushroom stir-fry');
+    });
+
     test('falls back to Gemini title when inference yields null', () {
       final r = recipeFromInstagramGeminiMap(
         minimalJson,
@@ -89,6 +126,23 @@ void main() {
     test('without sharedContent uses Gemini title only', () {
       final r = recipeFromInstagramGeminiMap(minimalJson);
       expect(r.title, 'Gemini Chosen Title');
+    });
+
+    test('drops carb ingredient when name token not in shared caption', () {
+      final r = recipeFromInstagramGeminiMap(
+        {
+          'title': 'Wrong',
+          'ingredients': [
+            {'name': 'salmon fillet', 'amount': 1, 'unit': 'lb'},
+            {'name': 'penne pasta', 'amount': 8, 'unit': 'oz'},
+          ],
+          'instructions': ['Cook.'],
+        },
+        sharedContent:
+            'Salmon bowl\n\nIngredients:\n1 lb salmon fillet\nlemon',
+      );
+      expect(r.ingredients, hasLength(1));
+      expect(r.ingredients.first.name, 'salmon fillet');
     });
 
     test('normalizes units with trailing punctuation from models', () {
@@ -184,6 +238,61 @@ void main() {
       expect(i.amount, 2);
       expect(i.unit, 'cup');
       expect(i.name, 'sugar');
+    });
+  });
+
+  group('captionForInstagramGemini', () {
+    test('returns stripped text when URL and caption are present', () {
+      expect(
+        captionForInstagramGemini(
+          'https://www.instagram.com/reel/AbCdEfGhIjK/\n\n'
+          'Bok choy stir fry\n\nIngredients:\n1 tsp oil',
+        ),
+        'Bok choy stir fry\nIngredients:\n1 tsp oil',
+      );
+    });
+
+    test('falls back to raw share when strip is empty but text looks like a recipe', () {
+      // Simulates over-aggressive strip edge case: long letter-only payload with ingredient + digit.
+      final raw = '${'x' * 30} Ingredients: 2 cups flour';
+      expect(stripInstagramUrlsForCaption(raw), raw);
+      expect(captionForInstagramGemini(raw), raw);
+    });
+
+    test('URL-only reel share from device still yields text for Gemini (regression: no empty caption)', () {
+      const u =
+          'https://www.instagram.com/reel/DVl0Os5DEUz/?igsh=MTd6anpna200eW93Yg==';
+      expect(stripInstagramUrlsForCaption(u), '');
+      expect(captionForInstagramGemini(u), u);
+    });
+  });
+
+  group('stripInstagramUrlsForCaption', () {
+    test('removes reel URL with trailing slash without leaving a lone slash before caption', () {
+      expect(
+        stripInstagramUrlsForCaption(
+          'https://www.instagram.com/reel/AbCdEfGhIjK/\n\nBok choy',
+        ),
+        'Bok choy',
+      );
+    });
+
+    test('preserves caption fused to reel URL without space after shortcode', () {
+      expect(
+        stripInstagramUrlsForCaption(
+          'https://www.instagram.com/reel/AbCdEfGhIjKSalmon bites',
+        ),
+        'Salmon bites',
+      );
+    });
+
+    test('returns empty when text is reel URL only', () {
+      expect(
+        stripInstagramUrlsForCaption(
+          'https://www.instagram.com/reel/AbCdEfGhIjK',
+        ),
+        '',
+      );
     });
   });
 }

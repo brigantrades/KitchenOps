@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:plateplan/core/config/env.dart';
+import 'package:plateplan/core/debug/share_import_debug_log.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/models/instagram_recipe_import.dart';
 import 'package:plateplan/core/services/recipe_image_storage.dart';
@@ -121,6 +124,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     }
   }
 
+
   void clearSnack() {
     if (state.snackMessage != null) {
       state = state.copyWith(clearSnack: true);
@@ -130,16 +134,23 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
   /// After login, process deferred share payload.
   void flushPendingAfterLogin() {
     final pending = state.pendingCombined;
-    if (pending == null || pending.trim().isEmpty) return;
     final img = state.pendingImagePath;
+    final text = pending?.trim() ?? '';
+    final hasText = text.isNotEmpty;
+    final hasImg = img != null && img.trim().isNotEmpty;
+    if (!hasText && !hasImg) return;
     state = state.copyWith(clearPending: true);
-    unawaited(_runImport(pending, img));
+    unawaited(_runImport(text, img));
   }
 
   Future<void> retryLastImport() async {
     final payload = state.lastCombinedPayload;
-    if (payload == null || payload.trim().isEmpty) return;
-    await _runImport(payload, state.lastImagePath);
+    final img = state.lastImagePath;
+    final text = payload?.trim() ?? '';
+    final hasText = text.isNotEmpty;
+    final hasImg = img != null && img.trim().isNotEmpty;
+    if (!hasText && !hasImg) return;
+    await _runImport(text, img);
   }
 
   /// Manual test: paste an Instagram post URL (and optional caption). Skips
@@ -219,18 +230,32 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
 
   Future<void> _handleMediaBatch(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
-    final combined = _combineSharedFiles(files);
+    debugPrint(
+      'Share import: received ${files.length} item(s): '
+      '${files.map((f) => '{type:${f.type.value}, mime:${f.mimeType}, pathLen:${f.path.length}, hasMsg:${(f.message ?? '').trim().isNotEmpty}}').join(', ')}',
+    );
+    // Prefer the share-sheet message (text/URL/caption) over file paths.
+    // Paths are not useful input for Gemini and can confuse heuristics.
+    final combined = _combineSharedPayload(files);
     final imagePath = _firstImagePath(files);
     await _considerImport(combined, imagePath);
   }
 
-  String _combineSharedFiles(List<SharedMediaFile> files) {
+  String _combineSharedPayload(List<SharedMediaFile> files) {
     final parts = <String>[];
     for (final f in files) {
-      final p = f.path.trim();
-      if (p.isNotEmpty) parts.add(p);
+      // Android: text shares arrive in `path` with type=text (message is iOS-only).
+      // iOS: caption/message may arrive in `message`.
       final msg = f.message?.trim();
       if (msg != null && msg.isNotEmpty) parts.add(msg);
+
+      if (f.type == SharedMediaType.text || f.type == SharedMediaType.url) {
+        final p = f.path.trim();
+        if (p.isNotEmpty) parts.add(p);
+      } else if ((f.mimeType ?? '').startsWith('text/')) {
+        final p = f.path.trim();
+        if (p.isNotEmpty) parts.add(p);
+      }
     }
     return parts.join('\n\n');
   }
@@ -244,9 +269,14 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     return null;
   }
 
-  bool _shouldAttemptImport(String combined) {
+  bool _shouldAttemptImport(String combined, String? imagePath) {
+    // Instagram often shares an image without a helpful caption payload. If we
+    // have an image path, attempt an import (Gemini vision fallback handles it).
+    // This prevents false "No recipe content detected." for image-only shares.
+    if (imagePath != null && imagePath.trim().isNotEmpty) return true;
     final lower = combined.toLowerCase();
     if (lower.contains('instagram.com')) return true;
+    if (lower.contains('ig.me')) return true;
     for (final k in ['ingredients', 'recipe', 'instructions']) {
       if (lower.contains(k)) return true;
     }
@@ -271,6 +301,9 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
 
   Future<void> _considerImport(String combined, String? imagePath) async {
     final trimmed = combined.trim();
+    debugPrint(
+      'Share import: considerImport textLen=${trimmed.length} imagePath=${imagePath == null ? '<null>' : (imagePath.isEmpty ? '<empty>' : '<set>')}',
+    );
     if (_looksLikeAuthOrAppRouting(trimmed)) {
       return;
     }
@@ -280,7 +313,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       );
       return;
     }
-    if (!_shouldAttemptImport(trimmed)) {
+    if (!_shouldAttemptImport(trimmed, imagePath)) {
       state = state.copyWith(
         snackMessage: 'No recipe content detected.',
       );
@@ -299,7 +332,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     final user = ref.read(currentUserProvider);
     if (user == null) {
       state = state.copyWith(
-        pendingCombined: trimmed,
+        pendingCombined: trimmed.isEmpty ? null : trimmed,
         pendingImagePath: imagePath,
         snackMessage: 'Sign in to finish importing this recipe.',
       );
@@ -320,8 +353,77 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     );
 
     try {
+      // When the payload is URL-only (no caption text from the share intent),
+      // fetch the Instagram page and extract the caption from OG meta tags.
+      var textForGemini = combined;
+      final stripped = captionForInstagramGemini(combined).trim();
+      final isUrlOnly =
+          stripped.isEmpty || stripped == combined.trim();
+      if (isUrlOnly) {
+        final url = _extractFirstInstagramUrl(combined);
+        if (url != null) {
+          debugPrint('Share import: URL-only payload detected, fetching $url');
+          final fetched = await _fetchInstagramCaption(url);
+          if (fetched != null && fetched.trim().isNotEmpty) {
+            textForGemini = '$url\n\n$fetched';
+            debugPrint(
+              'Share import: enriched payload with fetched caption '
+              '(${fetched.length} chars)',
+            );
+          }
+        }
+      }
+
+      // #region agent log
+      final low = textForGemini.toLowerCase();
+      final captionPreview = captionForInstagramGemini(textForGemini);
+      agentDebugLogShareImport(
+        hypothesisId: 'H1',
+        location: 'share_handler_service._runImport',
+        message: 'payload_before_gemini',
+        data: {
+          'combinedLen': textForGemini.length,
+          'captionLen': captionPreview.length,
+          'captionEmptyAfterStrip': captionPreview.trim().isEmpty,
+          'urlOnlyDetected': isUrlOnly,
+          'captionHasFishKw': [
+            'fish',
+            'cod',
+            'tilapia',
+            'haddock',
+            'salmon',
+            'fillet',
+          ].any((k) => low.contains(k)),
+          'captionHasChickenKw': low.contains('chicken'),
+        },
+      );
+      // #endregion
       final gemini = ref.read(geminiServiceProvider);
-      final map = await gemini.extractRecipeFromInstagramContent(combined);
+      Map<String, dynamic>? map;
+      if (textForGemini.trim().isNotEmpty) {
+        map = await gemini.extractRecipeFromInstagramContent(textForGemini);
+      }
+
+      // If Instagram share payload contains no usable caption text, fall back to
+      // Gemini vision using the shared image (when available).
+      if ((map == null || map.isEmpty) &&
+          imagePath != null &&
+          imagePath.trim().isNotEmpty) {
+        try {
+          final file = File(imagePath);
+          if (await file.exists()) {
+            final mime = _mimeFromPath(imagePath);
+            final bytes = await file.readAsBytes();
+            map = await gemini.extractRecipeFromInstagramShareImage(
+              imageBytes: bytes,
+              mimeType: mime ?? 'image/jpeg',
+              sharedTextHint: textForGemini,
+            );
+          }
+        } catch (_) {
+          // If vision fallback fails, continue into the existing error path.
+        }
+      }
       if (map == null || map.isEmpty) {
         final failure = gemini.lastGenerateFailure ?? '';
         if (failure.toLowerCase().contains('quota exceeded')) {
@@ -334,20 +436,29 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
             'Gemini model mismatch for this API key/project. Update to a supported model or key configuration.',
           );
         }
-        final lower = combined.trim().toLowerCase();
-        final looksLikeUrlOnly = (lower.startsWith('http') ||
-                lower.startsWith('www.') ||
-                lower.contains('instagram.com')) &&
-            !(lower.contains('ingredients') ||
-                lower.contains('instructions') ||
-                lower.contains('recipe'));
-        if (looksLikeUrlOnly) {
-          throw Exception(
-            'Could not extract a recipe from the URL alone. Paste the caption (ingredients/instructions) too, then retry.',
-          );
-        }
+        final captionCheck = captionForInstagramGemini(textForGemini);
+        // #region agent log
+        final lineCount = textForGemini
+            .split(RegExp(r'\r?\n'))
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .length;
+        agentDebugLogShareImport(
+          hypothesisId: 'H5',
+          location: 'share_handler_service._runImport',
+          message: 'gemini_map_null_branch',
+          data: {
+            'captionEmptyAfterStrip': captionCheck.trim().isEmpty,
+            'captionLen': captionCheck.length,
+            'combinedLen': textForGemini.length,
+            'nonEmptyLineCount': lineCount,
+          },
+        );
+        // #endregion
         throw Exception(
-          'Gemini did not return valid recipe JSON. Tap Retry, or add more text from the post.',
+          'Could not import this recipe. Instagram often does not include the full caption in share '
+          'payloads. Open the post, use Copy caption (or copy the recipe text), then paste it into '
+          "the app's import screen. Otherwise tap Retry.",
         );
       }
 
@@ -355,8 +466,29 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       var recipe = recipeFromInstagramGeminiMap(
         map,
         sourceUrl: sourceUrl,
-        sharedContent: combined,
+        sharedContent: textForGemini,
       );
+      // #region agent log
+      final nameLowers =
+          recipe.ingredients.map((e) => e.name.toLowerCase()).toList();
+      agentDebugLogShareImport(
+        hypothesisId: 'H3',
+        location: 'share_handler_service._runImport',
+        message: 'recipe_after_gemini_map',
+        data: {
+          'finalIngCount': recipe.ingredients.length,
+          'finalHasFish': nameLowers.any(
+            (n) =>
+                n.contains('fish') ||
+                n.contains('cod') ||
+                n.contains('tilapia') ||
+                n.contains('haddock') ||
+                n.contains('salmon'),
+          ),
+          'finalHasChicken': nameLowers.any((n) => n.contains('chicken')),
+        },
+      );
+      // #endregion
 
       if (imagePath != null && imagePath.isNotEmpty) {
         final file = File(imagePath);
@@ -379,7 +511,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       state = state.copyWith(
         isLoading: false,
         recipeToNavigate: recipe,
-        navigationSourcePayload: combined,
+        navigationSourcePayload: textForGemini,
         clearError: true,
         canRetry: false,
       );
@@ -419,5 +551,35 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       if (isInstagram) return parsed.toString();
     }
     return null;
+  }
+
+  /// Fetches the Instagram post caption via the public oEmbed API.
+  /// Returns null on any failure (network, private post, 404).
+  Future<String?> _fetchInstagramCaption(String url) async {
+    try {
+      final oembedUri = Uri.parse(
+        'https://www.instagram.com/api/v1/oembed/?url=${Uri.encodeComponent(url)}',
+      );
+      final response = await http.get(
+        oembedUri,
+        headers: {'User-Agent': 'Mozilla/5.0'},
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) {
+        debugPrint(
+          'Share import: oEmbed returned ${response.statusCode}',
+        );
+        return null;
+      }
+      final json = jsonDecode(response.body);
+      if (json is! Map<String, dynamic>) return null;
+      final title = json['title']?.toString().trim();
+      debugPrint(
+        'Share import: oEmbed caption ${title == null ? 'missing' : '${title.length} chars'}',
+      );
+      return (title != null && title.isNotEmpty) ? title : null;
+    } catch (e) {
+      debugPrint('Share import: oEmbed fetch failed: $e');
+      return null;
+    }
   }
 }

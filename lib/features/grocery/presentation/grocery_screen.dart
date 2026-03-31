@@ -110,6 +110,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     }
   }
 
+  Future<void> _onGroceryItemPrimaryTap(GroceryItem item) async {
+    return _removeItem(item);
+  }
+
 
   Future<void> _addFromRecent(
     RecentGroceryEntry entry,
@@ -895,7 +899,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                     showNewBadge: showNewBadge,
                                     reorderEditMode: _groceryReorderMode,
                                     reorderJiggle: _groceryReorderMode,
-                                    onPrimaryTap: _toggleGroceryItemDone,
+                                    onPrimaryTap: _onGroceryItemPrimaryTap,
                                     onLongPressMenu: () =>
                                         _openGroceryItemActions(item),
                                   );
@@ -1606,6 +1610,8 @@ class _GroceryItemCard extends StatelessWidget {
                   final ultraCompact = availableHeight < 126;
                   final compact = availableHeight < 150;
                   const iconSize = 38.0;
+                  final showsExtraFooterRow =
+                      (hasMultipleQuantity) || (item.fromPlanner && !compact);
                   final iconChild = foodAsset != null
                       ? Image.asset(
                           foodAsset,
@@ -1647,15 +1653,17 @@ class _GroceryItemCard extends StatelessWidget {
                             height: ultraCompact ? 4 : (compact ? 6 : 8),
                           ),
                           SizedBox(
-                          width: double.infinity,
-                          child: Text(
-                            item.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: nameStyle,
+                            width: double.infinity,
+                            child: Text(
+                              item.name,
+                              // Prevent overflow when the card also shows quantity / planner badge.
+                              // Those add vertical rows; keep the name compact in that case.
+                              maxLines: showsExtraFooterRow ? 1 : 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: nameStyle,
+                            ),
                           ),
-                        ),
                         if (ultraCompact && hasMultipleQuantity) ...[
                           const SizedBox(height: 2),
                           SizedBox(

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -13,6 +14,7 @@ class LocalCache {
   static const _plannerLayoutModeKey = 'planner_layout_mode';
   static const _measurementSystemKey = 'measurement_system';
   static const _plannerSlotsKeyPrefix = 'planner_slots_json_';
+  static const _viewedRecipesKey = 'viewed_recipe_ids';
 
   static Future<void> init() async {
     await Hive.initFlutter();
@@ -154,6 +156,27 @@ class LocalCache {
   Future<void> clearPlannerSlotList(String cacheKey) async {
     final box = Hive.box<String>(_discoverBox);
     await box.delete('$_plannerSlotsKeyPrefix$cacheKey');
+  }
+
+  Set<String> loadViewedRecipeIds() {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get(_viewedRecipesKey);
+    if (raw == null || raw.isEmpty) return <String>{};
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return <String>{};
+    return decoded.map((e) => e.toString()).where((e) => e.isNotEmpty).toSet();
+  }
+
+  Future<void> recordViewedRecipeId(String recipeId) async {
+    final id = recipeId.trim();
+    if (id.isEmpty) return;
+    final box = Hive.box<String>(_discoverBox);
+    final current = loadViewedRecipeIds()..add(id);
+    await box.put(_viewedRecipesKey, jsonEncode(current.toList()));
+  }
+
+  ValueListenable<Box<String>> viewedRecipesListenable() {
+    return Hive.box<String>(_discoverBox).listenable(keys: [_viewedRecipesKey]);
   }
 }
 

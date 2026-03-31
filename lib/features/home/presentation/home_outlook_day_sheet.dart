@@ -39,6 +39,7 @@ Future<void> showHomeOutlookDayDetailSheet({
     showDragHandle: false,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    useSafeArea: true,
     builder: (sheetContext) {
       void goToPlannerForDay() {
         Navigator.of(sheetContext).pop();

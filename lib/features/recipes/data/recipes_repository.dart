@@ -377,6 +377,46 @@ class RecipesRepository {
       );
     }).toList();
   }
+
+  Future<String> createRecipeShare({
+    required String userId,
+    required Recipe recipe,
+  }) async {
+    final payload = Map<String, dynamic>.from(recipe.toJson())
+      ..remove('id')
+      ..remove('user_id')
+      ..remove('household_id')
+      ..remove('visibility');
+    final inserted = await _client
+        .from('recipe_shares')
+        .insert({
+          'created_by': userId,
+          'source_recipe_id': recipe.id,
+          'payload': payload,
+        })
+        .select('id')
+        .single();
+    return inserted['id'].toString();
+  }
+
+  String recipeShareUrl(String shareId) => 'https://leckerly.app/r/$shareId';
+
+  Future<Recipe?> fetchSharedRecipePayload({
+    required String shareId,
+  }) async {
+    final row = await _client
+        .from('recipe_shares')
+        .select('payload')
+        .eq('id', shareId)
+        .maybeSingle();
+    final payload = row?['payload'];
+    if (payload is! Map) return null;
+    final map = Map<String, dynamic>.from(payload);
+    // Provide a placeholder id; recipients will create a new row on save.
+    map['id'] = 'share:$shareId';
+    map['visibility'] = RecipeVisibility.personal.name;
+    return Recipe.fromJson(map);
+  }
 }
 
 final spoonacularServiceProvider = Provider<SpoonacularService>((ref) {

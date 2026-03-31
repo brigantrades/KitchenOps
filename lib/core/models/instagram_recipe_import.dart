@@ -5,6 +5,100 @@ import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/recipes/ingredient_line_parser.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 
+/// Removes Instagram / reel / ig.me URL tokens line-by-line. Preserves newlines
+/// so the first non-empty line stays the natural recipe title.
+///
+/// **Important:** A naive `https?://[^\s]+` removes the entire whitespace token. Shares
+/// often fuse caption text to the URL with **no space** (e.g. `.../reel/AbCdEfGhIjKSalmon`).
+/// We strip Instagram paths with a **bounded** media id first, then other https links.
+String stripInstagramUrlsForCaption(String input) {
+  // Instagram media shortcodes are 11 chars (base64url). Stopping here preserves fused caption.
+  // Optional slash after shortcode so we do not leave a lone "/" on the line before the caption.
+  final igReelPostTv = RegExp(
+    r'https?://(?:www\.)?(?:m\.)?instagram\.com/(?:reel|reels|p|tv)/[A-Za-z0-9_-]{11}(?:/(?:\?[^\s]*)?|\?[^\s]*)?',
+    caseSensitive: false,
+  );
+  // Older or test URLs may use shorter post ids; lookahead ensures we do not eat fused caption
+  // (next char after the id must be /, ?, whitespace, or end — not a continuation of the dish name).
+  // Do NOT use $ in the lookahead: at end-of-line, greedy {3,20} can absorb a fused caption
+  // (letters after the real shortcode) and then $ matches, wiping the whole line → false "URL only".
+  final igReelPostTvLoose = RegExp(
+    r'https?://(?:www\.)?(?:m\.)?instagram\.com/(?:reel|reels|p|tv)/[A-Za-z0-9_-]{3,20}(?=/|\?|\s)',
+    caseSensitive: false,
+  );
+  // Stories: /stories/<user>/<id>/...
+  final igStories = RegExp(
+    r'https?://(?:www\.)?(?:m\.)?instagram\.com/stories/[^/\s]+/[^/\s]+(?:/[^\s]*)?/?(?:\?[^\s]*)?',
+    caseSensitive: false,
+  );
+  final igShort = RegExp(
+    r'https?://(?:www\.)?ig\.me/[^\s]+',
+    caseSensitive: false,
+  );
+  final lInstagram = RegExp(
+    r'https?://l\.instagram\.com/[^\s]+',
+    caseSensitive: false,
+  );
+  // Do not match instagram.com / ig.me — a failed narrow reel match must not fall through
+  // to stripping the whole https token (that would swallow caption fused without a space).
+  final genericHttps = RegExp(
+    r'https?://(?!www\.instagram\.com|m\.instagram\.com|instagram\.com|l\.instagram\.com|ig\.me)[^\s]+',
+    caseSensitive: false,
+  );
+  // Shares that omit "https://" — same bounded path as [igReelPostTv], not [^\s]+.
+  final bareIgReelPostTv = RegExp(
+    r'(?:www\.)?(?:m\.)?instagram\.com/(?:reel|reels|p|tv)/[A-Za-z0-9_-]{11}(?:/(?:\?[^\s]*)?|\?[^\s]*)?',
+    caseSensitive: false,
+  );
+  final bareIgReelPostTvLoose = RegExp(
+    r'(?:www\.)?(?:m\.)?instagram\.com/(?:reel|reels|p|tv)/[A-Za-z0-9_-]{3,20}(?=/|\?|\s)',
+    caseSensitive: false,
+  );
+  final bareIgStories = RegExp(
+    r'(?:www\.)?(?:m\.)?instagram\.com/stories/[^/\s]+/[^/\s]+(?:\?[^\s]*)?',
+    caseSensitive: false,
+  );
+  final bareIgMe = RegExp(
+    r'(?:www\.)?ig\.me/[^\s]+',
+    caseSensitive: false,
+  );
+
+  String stripLine(String line) {
+    var s = line.replaceAll(igReelPostTv, ' ');
+    s = s.replaceAll(igReelPostTvLoose, ' ');
+    s = s.replaceAll(igStories, ' ');
+    s = s.replaceAll(igShort, ' ');
+    s = s.replaceAll(lInstagram, ' ');
+    s = s.replaceAll(genericHttps, ' ');
+    s = s.replaceAll(bareIgReelPostTv, ' ');
+    s = s.replaceAll(bareIgReelPostTvLoose, ' ');
+    s = s.replaceAll(bareIgStories, ' ');
+    s = s.replaceAll(bareIgMe, ' ');
+    return s.replaceAll(RegExp(r' +'), ' ').trim();
+  }
+
+  return input
+      .split(RegExp(r'\r?\n'))
+      .map(stripLine)
+      .where((line) => line.isNotEmpty)
+      .join('\n')
+      .trim();
+}
+
+/// Text sent to Gemini after URL stripping.
+///
+/// If stripping removes everything (URL-only share, short `ig.me` links, or regex edge cases),
+/// we still pass the **full raw** trimmed share so the model always receives what the OS gave
+/// us. The previous heuristic could return `''` for short Instagram links (no digits / low
+/// letter count), which incorrectly triggered "URL alone" even though Gemini had been called.
+String captionForInstagramGemini(String sharedContent) {
+  final raw = sharedContent.trim();
+  if (raw.isEmpty) return '';
+  final stripped = stripInstagramUrlsForCaption(sharedContent).trim();
+  if (stripped.isNotEmpty) return stripped;
+  return raw;
+}
+
 /// Maps Gemini / Instagram labels like "dinner" to [MealType] without using [_mealTypeFromDb].
 MealType mealTypeFromInstagramLabel(String? raw) {
   final s = (raw ?? '').trim().toLowerCase();
@@ -323,7 +417,7 @@ bool _isHashtagOnlyLine(String line) {
 /// Line starts like a quantity + common cooking unit (not a dish name like "1-Pot Pasta").
 final RegExp _ingredientLineLead = RegExp(
   r'^\s*([\d\s.,/\-–—½¼¾⅓⅔⅛⅜⅝⅞]+)\s+'
-  r'(cups?|tbsp|tsp|oz|ounce|ounces|g|kg|grams?|ml|l|lb|lbs|tablespoons?|teaspoons?|pinch|cloves?|large|medium|small|stalks?|sticks?|slices?|packets?|cans?|bunch|bunches)\b',
+  r'(cups?|tbsp|tsp|oz|ounce|ounces|g|kg|grams?|ml|l|lb|lbs|tablespoons?|teaspoons?|pinch|cloves?|eggs?|large|medium|small|stalks?|sticks?|slices?|packets?|cans?|bunch|bunches)\b',
   caseSensitive: false,
 );
 
@@ -337,44 +431,171 @@ String _normalizeInstagramTitle(String line) {
   return s.trim();
 }
 
-/// Picks a title from shared Instagram text (URL + caption) when the caption has a clear headline.
-///
-/// Uses the **first** substantive line after skipping leading URL-only and hashtag-only lines.
-/// If that line is not a plausible title (section header, ingredient-like, too long), returns null
-/// so callers can fall back to Gemini's [title] in JSON.
-String? inferInstagramRecipeTitle(String sharedContent) {
-  final raw = sharedContent.trim();
-  if (raw.isEmpty) return null;
-  final lines = raw.split(RegExp(r'\r?\n')).map((e) => e.trim()).toList();
-  var i = 0;
-  while (i < lines.length) {
-    final lineTrim = lines[i];
-    if (lineTrim.isEmpty) {
-      i++;
-      continue;
-    }
-    if (_isUrlOnlyLine(lineTrim)) {
-      i++;
-      continue;
-    }
-    if (_isHashtagOnlyLine(lineTrim)) {
-      i++;
-      continue;
-    }
-    break;
-  }
-  if (i >= lines.length) return null;
-
-  final lineTrim = lines[i];
+String? _tryLineAsInstagramTitle(String lineTrim) {
   if (_isIngredientsSectionHeader(lineTrim)) return null;
   if (lineTrim.length > kInstagramInferredTitleMaxLength) return null;
   if (_isSectionHeaderLine(lineTrim)) return null;
   if (_looksLikeIngredientLine(lineTrim)) return null;
-
   final normalized = _normalizeInstagramTitle(lineTrim);
   if (normalized.isEmpty) return null;
   if (normalized.length > kInstagramInferredTitleMaxLength) return null;
   return normalized;
+}
+
+/// Subtitle lines like "For the Fish Bites" — not the recipe headline.
+bool _isSubtitleForTheLine(String line) {
+  return RegExp(r'^\s*For the\s', caseSensitive: false).hasMatch(line);
+}
+
+String _truncateAtWordBoundary(String s, int maxLen) {
+  if (s.length <= maxLen) return s;
+  var t = s.substring(0, maxLen);
+  final lastSpace = t.lastIndexOf(' ');
+  if (lastSpace > maxLen ~/ 3) return t.substring(0, lastSpace).trim();
+  return t.trim();
+}
+
+/// Fallback: scan every line (used when headline block is empty or yields no title).
+String? _inferTitleFromLineScan(String raw) {
+  final lines = raw.split(RegExp(r'\r?\n')).map((e) => e.trim()).toList();
+  for (final lineTrim in lines) {
+    if (lineTrim.isEmpty) continue;
+    if (_isUrlOnlyLine(lineTrim)) continue;
+    if (_isHashtagOnlyLine(lineTrim)) continue;
+    final title = _tryLineAsInstagramTitle(lineTrim);
+    if (title != null) return title;
+  }
+  return null;
+}
+
+/// Picks a title from shared Instagram text (URL + caption) when the caption has a clear headline.
+///
+/// Prefer text **before the first "Ingredients:"** so one long caption line or a wall of text
+/// still yields the dish name instead of failing length checks and falling back to Gemini's title.
+/// Skips hashtag-only lines, [For the …] subtitles, then each remaining line
+/// until one looks like a title.
+///
+/// Uses [stripInstagramUrlsForCaption] first (not only "URL-only" lines), so a single share line
+/// like `https://…/reel/XXXXXXXXXXX Bok Choy stir-fry` still yields **Bok Choy stir-fry** instead of
+/// failing inference and falling back to a hallucinated model title.
+String? inferInstagramRecipeTitle(String sharedContent) {
+  final raw = sharedContent.trim();
+  if (raw.isEmpty) return null;
+
+  final withoutUrls = stripInstagramUrlsForCaption(raw);
+  if (withoutUrls.isEmpty) return null;
+
+  final firstIngredients = RegExp(
+    r'\bIngredients\s*:\s*',
+    caseSensitive: false,
+  ).firstMatch(withoutUrls);
+  final headBeforeIngredients = firstIngredients != null
+      ? withoutUrls.substring(0, firstIngredients.start).trim()
+      : withoutUrls;
+
+  if (headBeforeIngredients.isNotEmpty) {
+    final candidateLines = headBeforeIngredients
+        .split(RegExp(r'\r?\n'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    for (final line in candidateLines) {
+      if (_isHashtagOnlyLine(line)) continue;
+      if (_isSubtitleForTheLine(line)) continue;
+      var candidate = line;
+      if (candidate.length > kInstagramInferredTitleMaxLength) {
+        candidate =
+            _truncateAtWordBoundary(candidate, kInstagramInferredTitleMaxLength);
+      }
+      final title = _tryLineAsInstagramTitle(candidate);
+      if (title != null) return title;
+    }
+  }
+
+  return _inferTitleFromLineScan(withoutUrls);
+}
+
+/// True when the model title plausibly came from the caption (substring or word overlap).
+bool _geminiTitleSupportedByCaption(String geminiTitle, String captionStripped) {
+  final g = geminiTitle.toLowerCase().trim();
+  final c = captionStripped.toLowerCase();
+  if (g.isEmpty) return false;
+  if (c.contains(g)) return true;
+  final words =
+      g.split(RegExp(r'\s+')).where((w) => w.length > 2).toList();
+  if (words.isEmpty) return true;
+  final hits = words.where((w) => c.contains(w)).length;
+  return hits >= (words.length / 2).ceil();
+}
+
+/// Last-resort title: first usable line of stripped caption (when inference returned null).
+String? _firstCaptionLineAsTitleFallback(String stripped) {
+  for (final line
+      in stripped.split(RegExp(r'\r?\n')).map((e) => e.trim())) {
+    if (line.isEmpty) continue;
+    if (_isHashtagOnlyLine(line)) continue;
+    if (_isSubtitleForTheLine(line)) continue;
+    if (_isIngredientsSectionHeader(line)) continue;
+    if (_isSectionHeaderLine(line)) continue;
+    if (_looksLikeIngredientLine(line)) continue;
+    final t = _normalizeInstagramTitle(line);
+    if (t.isEmpty) continue;
+    if (t.length > kInstagramInferredTitleMaxLength) {
+      return _truncateAtWordBoundary(t, kInstagramInferredTitleMaxLength);
+    }
+    return t;
+  }
+  return null;
+}
+
+String _pickInstagramRecipeTitle({
+  required String? inferredTitle,
+  required String? geminiTitle,
+  required String captionStripped,
+}) {
+  final inf = inferredTitle?.trim();
+  if (inf != null && inf.isNotEmpty) return inf;
+
+  final g = geminiTitle?.trim() ?? '';
+  if (captionStripped.trim().isEmpty) {
+    return g.isNotEmpty ? g : 'Imported recipe';
+  }
+
+  if (g.isNotEmpty && _geminiTitleSupportedByCaption(g, captionStripped)) {
+    return g;
+  }
+
+  final fallback = _firstCaptionLineAsTitleFallback(captionStripped);
+  if (fallback != null && fallback.isNotEmpty) return fallback;
+
+  if (g.isNotEmpty) return g;
+  return 'Imported recipe';
+}
+
+/// Noodle/pasta tokens models sometimes hallucinate when the caption is fish/meat-only.
+bool _ingredientLooksLikeHallucinatedCarbNotInCaption(
+  Ingredient i,
+  String captionLower,
+) {
+  const tokens = <String>[
+    'pasta',
+    'spaghetti',
+    'linguine',
+    'fettuccine',
+    'penne',
+    'rigatoni',
+    'noodles',
+    'orzo',
+    'gnocchi',
+    'macaroni',
+    'fusilli',
+    'cavatelli',
+  ];
+  final name = i.name.toLowerCase();
+  for (final t in tokens) {
+    if (name.contains(t) && !captionLower.contains(t)) return true;
+  }
+  return false;
 }
 
 /// Builds a [Recipe] from Gemini JSON for Instagram or book-scan import (see [GeminiService]).
@@ -388,13 +609,23 @@ Recipe recipeFromInstagramGeminiMap(
 }) {
   final tempId =
       id ?? 'import-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(999999)}';
-  final ingredients = (json['ingredients'] as List?)
+  var ingredients = (json['ingredients'] as List?)
           ?.whereType<Map>()
           .map((e) => _ingredientFromInstagramJson(Map<String, dynamic>.from(e)))
           .map(normalizeImportedIngredient)
           .where((i) => i.name.isNotEmpty)
           .toList() ??
       const <Ingredient>[];
+  if (source == 'instagram_import' &&
+      sharedContent != null &&
+      sharedContent.trim().isNotEmpty) {
+    final cap = sharedContent.toLowerCase();
+    ingredients = ingredients
+        .where(
+          (i) => !_ingredientLooksLikeHallucinatedCarbNotInCaption(i, cap),
+        )
+        .toList();
+  }
 
   final instructions = (json['instructions'] as List?)
           ?.map((e) => e.toString().trim())
@@ -407,10 +638,14 @@ Recipe recipeFromInstagramGeminiMap(
   final geminiTitle = json['title']?.toString().trim();
   final inferredTitle =
       sharedContent != null ? inferInstagramRecipeTitle(sharedContent) : null;
-  final title =
-      (inferredTitle != null && inferredTitle.isNotEmpty)
-          ? inferredTitle
-          : (geminiTitle ?? 'Imported recipe');
+  final captionStripped = sharedContent != null
+      ? stripInstagramUrlsForCaption(sharedContent)
+      : '';
+  final title = _pickInstagramRecipeTitle(
+    inferredTitle: inferredTitle,
+    geminiTitle: geminiTitle,
+    captionStripped: captionStripped,
+  );
 
   return Recipe(
     id: tempId,

@@ -201,6 +201,7 @@ class _HouseholdSettingsScreenState
     final result = await showModalBottomSheet<_AppliedSharingState>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) => _HouseholdMigrationWizard(
         personalRecipes: personalRecipes,
         initialSharePlanner:
@@ -279,6 +280,7 @@ class _HouseholdSettingsScreenState
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      useSafeArea: true,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setModal) {

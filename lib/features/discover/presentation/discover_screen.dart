@@ -1012,6 +1012,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {

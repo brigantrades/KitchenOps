@@ -100,6 +100,7 @@ Future<void> showPlannerWindowSettingsSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
+    useSafeArea: true,
     builder: (ctx) {
       if (household == null) {
         return Padding(
@@ -556,15 +557,18 @@ Widget buildPlannerDaySlotCard({
     return false;
   }).toList();
   final hasPlannerGroceryItems = relatedGroceryForSlot.isNotEmpty;
-  final assignedIds =
+  final assignedIdsRaw =
       slot.assignedUserIds.isNotEmpty ? slot.assignedUserIds : activeMembers.map((m) => m.userId).toList();
+  final assignedIds =
+      assignedIdsRaw.map((id) => id.trim()).where((id) => id.isNotEmpty).toList();
   final assignedNames =
       assignedIds.map((id) => memberNameById[id]).whereType<String>().toList();
   final activeMemberIds = activeMembers.map((m) => m.userId).toSet();
   final assignedIdSet = assignedIds.toSet();
-  final allSelected = activeMemberIds.isNotEmpty &&
-      assignedIdSet.length == activeMemberIds.length &&
-      activeMemberIds.every(assignedIdSet.contains);
+  // Treat "All" as: every active member is included, even if the slot also
+  // contains stale/extra ids (e.g. removed household members).
+  final allSelected =
+      activeMemberIds.isNotEmpty && activeMemberIds.every(assignedIdSet.contains);
   final canAddToGrocery = recipe != null || (slot.mealText?.trim().isNotEmpty == true);
   final assignmentLabel = allSelected
       ? 'Assigned: All'
@@ -985,6 +989,9 @@ Future<bool> _plannerAddMealSlotFlow(
   required DateTime day,
   required List<MealPlanSlot> daySlots,
   required List<Recipe> recipes,
+  required List<HouseholdMember> activeMembers,
+  required String currentUserId,
+  required bool showMemberAssignment,
 }) async {
   final label = await showModalBottomSheet<String>(
     context: context,
@@ -1016,14 +1023,6 @@ Future<bool> _plannerAddMealSlotFlow(
   }
   if (!context.mounted) return false;
   final ordinal = nextNewSlotDisplayOrdinal(slotsForOrdinal, label);
-  final pickerLabel =
-      plannerNewSlotRecipePickerDisplayLabel(label, ordinal);
-  final picked = await pickRecipeForPlannerSlot(
-    context,
-    slotDisplayLabel: pickerLabel,
-    recipes: recipes,
-  );
-  if (!context.mounted) return false;
   final user = ref.read(currentUserProvider);
   if (user == null) return false;
   final storageDow = dartWeekdayToStartDay(dayOnly.weekday);
@@ -1043,9 +1042,47 @@ Future<bool> _plannerAddMealSlotFlow(
           dayOfWeek: storageDow,
           mealLabel: label,
           slotOrder: slotOrder,
-          recipeId: picked?.id,
         );
     invalidatePlannerSlotCaches(ref, dayOnly);
+
+    // After creating the slot, open the slot editor (typed meal or recipe) instead
+    // of forcing a recipe picker first.
+    try {
+      final weekSlots =
+          await ref.read(plannerRepositoryProvider).listSlots(user.id, storageWeek);
+      final freshDay = weekSlots
+          .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
+          .toList()
+        ..sort((a, b) => a.slotOrder.compareTo(b.slotOrder));
+      final created = freshDay.firstWhereOrNull((s) =>
+          s.mealLabel == label &&
+          s.dayOfWeek == storageDow &&
+          s.slotOrder == slotOrder);
+      if (created != null && context.mounted) {
+        final draft = await PlannerScreen.editSlotPlan(
+          context,
+          slot: created,
+          recipes: recipes,
+          slotDisplayLabel: plannerNewSlotRecipePickerDisplayLabel(label, ordinal),
+          activeMembers: activeMembers,
+          currentUserId: currentUserId,
+          showMemberAssignment: showMemberAssignment,
+        );
+        if (draft != null && context.mounted) {
+          await _persistSlotPlanDraft(
+            context,
+            ref,
+            slot: created,
+            storageWeek: storageWeek,
+            storageDow: storageDow,
+            draft: draft,
+            onInvalidatePlanner: () => invalidatePlannerSlotCaches(ref, dayOnly),
+          );
+        }
+      }
+    } catch (_) {
+      // If the editor can't be opened (e.g. transient fetch issue), keep the slot.
+    }
     return true;
   } on PostgrestException catch (error) {
     if (!context.mounted) return false;
@@ -1158,20 +1195,21 @@ Future<void> showPlannerDayDetailSheet(
   var weekSlotsForFallback = <MealPlanSlot>[];
   final user = ref.read(currentUserProvider);
   if (user != null) {
+    // Important: do NOT await network/DB work before opening the bottom sheet.
+    // Any seeding/fetching should happen in the background and trigger provider
+    // refreshes; the sheet should appear instantly.
     final repo = ref.read(plannerRepositoryProvider);
-    try {
-      await repo.ensureDefaultSlots(user.id, storageWeek);
-      effectiveMonthSlots = await repo.listPlannerMonthSlots(
-        user.id,
-        firstDayOfPlannerMonth(dayOnly),
-      );
-      invalidatePlannerSlotCaches(ref, dayOnly);
-    } catch (_) {
-      // Keep [monthSlots]; streams may still update after background ensure.
-    }
-    try {
-      weekSlotsForFallback = await repo.listSlots(user.id, storageWeek);
-    } catch (_) {}
+    unawaited(() async {
+      try {
+        await repo.ensureDefaultSlots(user.id, storageWeek);
+        invalidatePlannerSlotCaches(ref, dayOnly);
+      } catch (_) {}
+    }());
+    unawaited(() async {
+      try {
+        weekSlotsForFallback = await repo.listSlots(user.id, storageWeek);
+      } catch (_) {}
+    }());
   }
 
   if (!context.mounted) return;
@@ -1265,16 +1303,16 @@ Future<void> showPlannerDayDetailSheet(
                     const SizedBox(height: 8),
                     FilledButton.tonalIcon(
                       onPressed: () async {
-                        final added = await _plannerAddMealSlotFlow(
+                        await _plannerAddMealSlotFlow(
                           context,
                           ref,
                           day: dayOnly,
                           daySlots: daySlotsNow,
                           recipes: recipes,
+                          activeMembers: activeMembers,
+                          currentUserId: currentUserId ?? '',
+                          showMemberAssignment: showMemberAssignment,
                         );
-                        if (added && context.mounted) {
-                          Navigator.of(sheetCtx).pop();
-                        }
                       },
                       icon: const Icon(Icons.add_circle_outline),
                       label: const Text('Add meal or snack'),
@@ -2857,6 +2895,9 @@ class PlannerScreen extends ConsumerWidget {
                               day: selectedDate,
                               daySlots: daySlots,
                               recipes: recipes,
+                              activeMembers: activeMembers,
+                              currentUserId: currentUser?.id ?? '',
+                              showMemberAssignment: showMemberAssignment,
                             );
                           },
                           icon: const Icon(Icons.add_circle_outline),

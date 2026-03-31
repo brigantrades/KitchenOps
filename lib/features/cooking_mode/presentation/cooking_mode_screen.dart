@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -10,7 +12,11 @@ import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
+import 'package:plateplan/core/strings/ingredient_amount_display.dart';
+import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/auth/data/auth_providers.dart';
+import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
@@ -34,6 +40,12 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   DateTime? _recipeMissingSince;
   Nutrition? _nutritionOverride;
   List<IngredientNutritionBreakdownLine> _nutritionBreakdownOverride = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(ref.read(localCacheProvider).recordViewedRecipeId(widget.recipeId));
+  }
 
   bool _isInstagramSourceUrl(String? raw) {
     final parsed = Uri.tryParse(raw?.trim() ?? '');
@@ -70,6 +82,177 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
       anchorContext: context,
       recipeId: widget.recipeId,
       hasSharedHousehold: hasSharedHousehold,
+    );
+  }
+
+  Future<String?> _pickTargetListId({
+    required List<AppList> lists,
+    String? initialListId,
+    required int itemCount,
+  }) {
+    if (lists.isEmpty) return Future.value(null);
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) {
+        final sharedLists =
+            lists.where((l) => l.scope == ListScope.household).toList();
+        final privateLists =
+            lists.where((l) => l.scope == ListScope.private).toList();
+        final hasShared = sharedLists.isNotEmpty;
+        final hasPrivate = privateLists.isNotEmpty;
+
+        final initialTabIndex = hasShared ? 0 : 1;
+        final preferredInitialId = initialListId ??
+            (hasShared ? sharedLists.first.id : privateLists.first.id);
+        var selectedId = preferredInitialId;
+
+        return SafeArea(
+          child: DefaultTabController(
+            length: 2,
+            initialIndex: initialTabIndex,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              child: StatefulBuilder(
+                builder: (context, setModalState) {
+                  Widget listRadio(List<AppList> visible) {
+                    if (visible.isEmpty) {
+                      return Center(
+                        child: Text(
+                          'No lists in this section.',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        ),
+                      );
+                    }
+                    return ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: visible.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, idx) {
+                        final list = visible[idx];
+                        return RadioListTile<String>(
+                          value: list.id,
+                          groupValue: selectedId,
+                          onChanged: (v) => setModalState(() {
+                            selectedId = v ?? selectedId;
+                          }),
+                          title: Text(list.name),
+                        );
+                      },
+                    );
+                  }
+
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Add $itemCount item${itemCount == 1 ? '' : 's'} to list',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 10),
+                      TabBar(
+                        tabs: const [
+                          Tab(text: 'Shared'),
+                          Tab(text: 'Private'),
+                        ],
+                        onTap: (index) {
+                          final next = index == 0 ? sharedLists : privateLists;
+                          if (next.isEmpty) return;
+                          // If the current selection isn't in the active tab, move
+                          // selection to the first list in that tab.
+                          final stillVisible = next.any((l) => l.id == selectedId);
+                          if (!stillVisible) {
+                            setModalState(() => selectedId = next.first.id);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: TabBarView(
+                          children: [
+                            listRadio(sharedLists),
+                            listRadio(privateLists),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FilledButton(
+                        onPressed: (!hasShared && !hasPrivate)
+                            ? null
+                            : () => Navigator.of(sheetCtx).pop(selectedId),
+                        child: const Text('Add to this list'),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _addCheckedIngredientsToList(Recipe recipe) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+
+    final checked = _checkedIngredients.toList()..sort();
+    if (checked.isEmpty) return;
+
+    final lists = await ref.read(listsProvider.future);
+    if (!mounted) return;
+    if (lists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No lists available right now.')),
+      );
+      return;
+    }
+
+    final currentSelected = ref.read(selectedListIdProvider);
+    final targetListId = await _pickTargetListId(
+      lists: lists,
+      initialListId: currentSelected,
+      itemCount: checked.length,
+    );
+    if (!mounted || targetListId == null || targetListId.isEmpty) return;
+
+    final repo = ref.read(groceryRepositoryProvider);
+    var added = 0;
+    for (final idx in checked) {
+      if (idx < 0 || idx >= recipe.ingredients.length) continue;
+      final ing = recipe.ingredients[idx];
+      final name = ing.name.trim();
+      if (name.isEmpty) continue;
+      try {
+        await repo.addItem(
+          userId: user.id,
+          listId: targetListId,
+          name: name,
+          quantity: ing.qualitative ? ing.unit : formatIngredientAmount(ing.amount),
+          unit: ing.qualitative ? null : ing.unit,
+          fromRecipeId: recipe.id,
+        );
+        added++;
+      } catch (_) {
+        // Ignore individual failures (e.g. duplicates); keep going.
+      }
+    }
+
+    ref.read(selectedListIdProvider.notifier).state = targetListId;
+    invalidateActiveGroceryStreams(ref);
+
+    if (!mounted) return;
+    setState(() => _checkedIngredients.clear());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Added $added item${added == 1 ? '' : 's'} to list.')),
     );
   }
 
@@ -569,6 +752,16 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                       ),
                     ),
                   ),
+              if (_checkedIngredients.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                FilledButton.icon(
+                  onPressed: () => _addCheckedIngredientsToList(recipe),
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: Text(
+                    'Add ${_checkedIngredients.length} item${_checkedIngredients.length == 1 ? '' : 's'} to List',
+                  ),
+                ),
+              ],
               const Divider(),
               Text('Step ${_stepIndex + 1}/${steps.length}',
                   style: Theme.of(context).textTheme.titleMedium),

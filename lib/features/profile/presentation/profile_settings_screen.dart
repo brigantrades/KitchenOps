@@ -363,6 +363,7 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                     showModalBottomSheet<void>(
                       context: context,
                       showDragHandle: true,
+                      useSafeArea: true,
                       builder: (ctx) => Padding(
                         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                         child: Text(

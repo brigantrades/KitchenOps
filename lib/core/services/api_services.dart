@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:plateplan/core/config/env.dart';
+import 'package:plateplan/core/debug/share_import_debug_log.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/models/instagram_recipe_import.dart';
 import 'package:plateplan/core/network/http_client.dart';
 
 class SpoonacularService {
@@ -102,6 +104,214 @@ class GeminiService {
     'gemini-2.5-flash',
     'gemini-2.0-flash',
   ];
+
+  /// Structured output for Instagram import — avoids prose refusals that break JSON parsing.
+  static final Schema _kInstagramRecipeImportSchema = Schema.object(
+    properties: {
+      'title': Schema.string(
+        description:
+            'Recipe title: first non-empty caption line naming the dish, as written.',
+      ),
+      'description': Schema.string(
+        description: 'Short summary; omit or empty if none.',
+        nullable: true,
+      ),
+      'ingredients': Schema.array(
+        items: Schema.object(
+          properties: {
+            'name': Schema.string(),
+            'amount': Schema.string(
+              nullable: true,
+              description: 'Quantity text or empty',
+            ),
+            'unit': Schema.string(nullable: true),
+          },
+          requiredProperties: ['name'],
+        ),
+      ),
+      'instructions': Schema.array(items: Schema.string()),
+      'servings': Schema.number(description: 'Servings (whole number)'),
+      'prep_time': Schema.integer(nullable: true),
+      'cook_time': Schema.integer(nullable: true),
+      'meal_type': Schema.string(
+        description: 'e.g. breakfast, lunch, dinner, snack, dessert',
+      ),
+      'cuisine_tags': Schema.array(items: Schema.string()),
+    },
+    requiredProperties: [
+      'title',
+      'ingredients',
+      'instructions',
+      'servings',
+      'meal_type',
+      'cuisine_tags',
+    ],
+  );
+
+  /// Instagram-only: prefer JSON MIME type + schema so the model cannot return refusal prose.
+  Future<GenerateContentResponse?> _generateInstagramRecipeImportWithFallback(
+      String prompt) async {
+    if (_model == null) return null;
+
+    Future<GenerateContentResponse?> tryOnce(
+      GenerativeModel model,
+      GenerationConfig config,
+      String modeLabel,
+    ) async {
+      try {
+        final r = await model.generateContent(
+          [Content.text(prompt)],
+          generationConfig: config,
+        );
+        _lastGenerateFailure = null;
+        // #region agent log
+        agentDebugLogShareImport(
+          hypothesisId: 'H5',
+          location: 'GeminiService._generateInstagramRecipeImportWithFallback',
+          message: 'instagram_json_generation_ok',
+          data: {'mode': modeLabel},
+        );
+        // #endregion
+        return r;
+      } catch (e) {
+        final err = e.toString();
+        // #region agent log
+        agentDebugLogShareImport(
+          hypothesisId: 'H1',
+          location: 'GeminiService._generateInstagramRecipeImportWithFallback',
+          message: 'instagram_generate_attempt_failed',
+          data: {
+            'mode': modeLabel,
+            'errSnippet': err.length > 300 ? err.substring(0, 300) : err,
+          },
+        );
+        // #endregion
+        return null;
+      }
+    }
+
+    final withSchema = GenerationConfig(
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: _kInstagramRecipeImportSchema,
+    );
+    final jsonOnly = GenerationConfig(
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+    );
+
+    GenerateContentResponse? r;
+
+    r = await tryOnce(_model, withSchema, 'json_schema_primary');
+    if (r != null) return r;
+    r = await tryOnce(_model, jsonOnly, 'json_mime_primary');
+    if (r != null) return r;
+
+    for (final modelName in _fallbackModels) {
+      final model = GenerativeModel(model: modelName, apiKey: _apiKey);
+      r = await tryOnce(model, withSchema, 'json_schema_$modelName');
+      if (r != null) return r;
+      r = await tryOnce(model, jsonOnly, 'json_mime_$modelName');
+      if (r != null) return r;
+    }
+
+    // #region agent log
+    agentDebugLogShareImport(
+      hypothesisId: 'H3',
+      location: 'GeminiService._generateInstagramRecipeImportWithFallback',
+      message: 'instagram_falling_back_plain_text',
+      data: const {},
+    );
+    // #endregion
+    return _generateWithFallback(prompt);
+  }
+
+  /// Instagram-only (image): prefer JSON MIME type + schema for multimodal caption screenshots.
+  Future<GenerateContentResponse?>
+      _generateInstagramRecipeImportMultimodalWithFallback({
+    required String prompt,
+    required Uint8List imageBytes,
+    required String mimeType,
+  }) async {
+    if (_model == null) return null;
+
+    Future<GenerateContentResponse?> tryOnce(
+      GenerativeModel model,
+      GenerationConfig config,
+      String modeLabel,
+    ) async {
+      try {
+        final userContent = Content.multi([
+          TextPart(prompt),
+          DataPart(mimeType, imageBytes),
+        ]);
+        final r = await model.generateContent(
+          [userContent],
+          generationConfig: config,
+        );
+        _lastGenerateFailure = null;
+        agentDebugLogShareImport(
+          hypothesisId: 'H5',
+          location:
+              'GeminiService._generateInstagramRecipeImportMultimodalWithFallback',
+          message: 'instagram_multimodal_json_generation_ok',
+          data: {'mode': modeLabel},
+        );
+        return r;
+      } catch (e) {
+        final err = e.toString();
+        agentDebugLogShareImport(
+          hypothesisId: 'H1',
+          location:
+              'GeminiService._generateInstagramRecipeImportMultimodalWithFallback',
+          message: 'instagram_multimodal_generate_attempt_failed',
+          data: {
+            'mode': modeLabel,
+            'errSnippet': err.length > 300 ? err.substring(0, 300) : err,
+          },
+        );
+        return null;
+      }
+    }
+
+    final withSchema = GenerationConfig(
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: _kInstagramRecipeImportSchema,
+    );
+    final jsonOnly = GenerationConfig(
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+    );
+
+    GenerateContentResponse? r;
+
+    r = await tryOnce(_model, withSchema, 'json_schema_primary');
+    if (r != null) return r;
+    r = await tryOnce(_model, jsonOnly, 'json_mime_primary');
+    if (r != null) return r;
+
+    for (final modelName in _visionFallbackModels) {
+      final model = GenerativeModel(model: modelName, apiKey: _apiKey);
+      r = await tryOnce(model, withSchema, 'json_schema_$modelName');
+      if (r != null) return r;
+      r = await tryOnce(model, jsonOnly, 'json_mime_$modelName');
+      if (r != null) return r;
+    }
+
+    agentDebugLogShareImport(
+      hypothesisId: 'H3',
+      location:
+          'GeminiService._generateInstagramRecipeImportMultimodalWithFallback',
+      message: 'instagram_multimodal_falling_back_plain_text',
+      data: const {},
+    );
+    return _generateMultimodalWithFallback(
+      prompt: prompt,
+      imageBytes: imageBytes,
+      mimeType: mimeType,
+    );
+  }
 
   Future<GenerateContentResponse?> _generateWithFallback(String prompt) async {
     if (_model == null) return null;
@@ -341,8 +551,10 @@ Rules:
     if (_model == null) return null;
     final trimmed = sharedContent.trim();
     if (trimmed.isEmpty) return null;
+    final caption = captionForInstagramGemini(sharedContent);
+    if (caption.trim().isEmpty) return null;
     final prompt = '''
-Extract a complete recipe from the following Instagram post content.
+Extract a recipe from the Instagram caption below. Link URLs were removed where possible; if the text is only a link, treat that as the full input.
 Return ONLY valid JSON with these keys:
 {
   "title": string,
@@ -355,22 +567,30 @@ Return ONLY valid JSON with these keys:
   "meal_type": "dinner" or "lunch" etc (best guess),
   "cuisine_tags": array of strings
 }
-Ingredient rules (strict):
-- "name": ingredient name only — no leading quantities or units.
-- "amount": numeric quantity only (a number or numeric string like "1 1/2" or "2.5") — do not put unit words here.
-- "unit": a single canonical token when possible, chosen from: g, kg, mg, ml, l, cup, tbsp, tsp, oz, lb, fl oz, pt, qt, gal, piece. Use "" for qualitative lines (e.g. "to taste") or when unclear.
-Title guidance:
-- The app may use the first line of the caption as the recipe name when it is clear.
-- For "title", provide a short fallback dish name only when the caption does not clearly name the recipe (otherwise a simple descriptive name is fine).
+Title:
+- Set "title" to the first non-empty line of the caption (the dish name as written there). If that line is only hashtags or not a dish name, use the next line that names the dish.
+- Never invent a different recipe name: words in "title" must appear in the caption (e.g. do not use "pesto", "chicken", or "creamy" in the title if those words do not appear in the caption).
 
-Here is the shared content: $trimmed
+Output rules (critical — must follow):
+- Return ONLY a single JSON object. No markdown code fences, no commentary, no text before or after the JSON.
+- Do NOT refuse, apologize, or say you cannot access websites or URLs. You are not fetching the web; you only see the caption text below as provided by the user's device.
+- If the caption is only an Instagram URL with no recipe lines, still return valid JSON: set "title" to a short placeholder like "Instagram reel" or infer from path tokens; "ingredients": []; "instructions": ["Open the post in Instagram, tap … → Copy the full caption, then paste it into the app and import again."].
+
+Verbatim rules (when the caption contains recipe text):
+- Use ONLY the caption text below. Every ingredient and instruction must appear in that text. Do not add ingredients not written in the caption. Do not substitute proteins or rename the dish.
+- Do not invent viral or generic titles that are not in the caption.
+- If the caption is incomplete, extract what is present; omit missing parts rather than guessing.
+- Split each ingredient into name / amount / unit when the caption allows; if a line is messy, keep the wording in "name".
+
+Caption:
+$caption
 
 Serving size guidance:
 - Infer servings from ingredient quantities and yield language (e.g. "serves 4", tray size, pan size, portions).
 - Return an integer servings estimate even if not explicit.
 - If uncertain, choose the most plausible household size from {2, 3, 4, 6}.
 ''';
-    final response = await _generateWithFallback(prompt);
+    final response = await _generateInstagramRecipeImportWithFallback(prompt);
     if (response == null) {
       debugPrint(
         'Gemini Instagram import: generateContent returned null (API key, '
@@ -382,6 +602,38 @@ Serving size guidance:
     final raw = (response.text ?? '').trim();
     final asMap = _parseRecipeImportJsonFromModelText(raw);
     if (asMap != null) {
+      // #region agent log
+      final ings = asMap['ingredients'];
+      var jsonChicken = false;
+      var jsonFish = false;
+      var ingCount = 0;
+      if (ings is List) {
+        ingCount = ings.length;
+        for (final e in ings) {
+          if (e is! Map) continue;
+          final n = (e['name'] ?? '').toString().toLowerCase();
+          if (n.contains('chicken')) jsonChicken = true;
+          if (n.contains('fish') ||
+              n.contains('cod') ||
+              n.contains('tilapia') ||
+              n.contains('haddock') ||
+              n.contains('salmon')) {
+            jsonFish = true;
+          }
+        }
+      }
+      agentDebugLogShareImport(
+        hypothesisId: 'H2',
+        location: 'GeminiService.extractRecipeFromInstagramContent',
+        message: 'gemini_parsed_json_protein_flags',
+        data: {
+          'ingredientCount': ingCount,
+          'jsonHasChicken': jsonChicken,
+          'jsonHasFish': jsonFish,
+          'titleLen': (asMap['title'] ?? '').toString().length,
+        },
+      );
+      // #endregion
       return asMap;
     }
 
@@ -403,6 +655,76 @@ Serving size guidance:
         'Gemini decode result type: ${decoded.runtimeType} (expected object or array of object)',
       );
     }
+    // #region agent log
+    agentDebugLogShareImport(
+      hypothesisId: 'H4',
+      location: 'GeminiService.extractRecipeFromInstagramContent',
+      message: 'gemini_map_null_or_unparsed',
+      data: {
+        'rawLen': raw.length,
+        'trimmedSharedLen': trimmed.length,
+        'captionLen': caption.length,
+      },
+    );
+    // #endregion
+    return null;
+  }
+
+  /// Instagram share import (image-only): extract recipe from a shared screenshot/preview image.
+  Future<Map<String, dynamic>?> extractRecipeFromInstagramShareImage({
+    required Uint8List imageBytes,
+    required String mimeType,
+    String? sharedTextHint,
+  }) async {
+    if (_model == null) return null;
+    if (imageBytes.isEmpty) return null;
+    final hint = (sharedTextHint ?? '').trim();
+    final prompt = '''
+Extract a recipe from the attached Instagram share image. The image may contain the caption,
+ingredients, and/or directions overlaid or in the post description UI.
+
+Return ONLY valid JSON with these keys:
+{
+  "title": string,
+  "description": string (short summary),
+  "ingredients": array of objects [{ "name": string, "amount": string, "unit": string }],
+  "instructions": array of strings (each step as one string),
+  "servings": number (default 2 if missing),
+  "prep_time": number (minutes, null if missing),
+  "cook_time": number (minutes, null if missing),
+  "meal_type": string (best guess),
+  "cuisine_tags": array of strings
+}
+
+Rules:
+- Use ONLY text visible in the image. Do not invent ingredients or steps.
+- If the image does not include recipe content (just a photo), return valid JSON with:
+  "ingredients": [], "instructions": ["Open the post in Instagram, tap … → Copy the full caption, then paste it into the app and import again."].
+
+Optional hint text from the share sheet (may be empty / noisy):
+$hint
+''';
+
+    final response = await _generateInstagramRecipeImportMultimodalWithFallback(
+      prompt: prompt,
+      imageBytes: imageBytes,
+      mimeType: mimeType,
+    );
+    if (response == null) return null;
+    final raw = (response.text ?? '').trim();
+    final asMap = _parseRecipeImportJsonFromModelText(raw);
+    if (asMap != null) return asMap;
+
+    agentDebugLogShareImport(
+      hypothesisId: 'H4',
+      location: 'GeminiService.extractRecipeFromInstagramShareImage',
+      message: 'gemini_multimodal_map_null_or_unparsed',
+      data: {
+        'rawLen': raw.length,
+        'hintLen': hint.length,
+        'imageBytesLen': imageBytes.length,
+      },
+    );
     return null;
   }
 

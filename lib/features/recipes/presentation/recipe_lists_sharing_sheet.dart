@@ -18,10 +18,14 @@ void showRecipeListsSharingSheet({
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (sheetContext) => RecipeListsSharingSheet(
-      anchorContext: anchorContext,
-      recipeId: recipeId,
-      hasSharedHousehold: hasSharedHousehold,
+    useSafeArea: true,
+    builder: (sheetContext) => SafeArea(
+      top: true,
+      child: RecipeListsSharingSheet(
+        anchorContext: anchorContext,
+        recipeId: recipeId,
+        hasSharedHousehold: hasSharedHousehold,
+      ),
     ),
   );
 }

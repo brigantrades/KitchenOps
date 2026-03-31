@@ -29,6 +29,7 @@ import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_sheet_confirmations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// When true, Step 5 shows per-ingredient USDA/Gemini breakdown (dev / diagnostics).
@@ -624,6 +625,7 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
                         itemBuilder: (context, index) {
                           return _RecipeRow(
                             recipe: displayed[index],
+                            allRecipes: recipes,
                             hasSharedHousehold: hasSharedHousehold,
                             isHouseholdLibrary: isHouseholdLibrary,
                             onEditRecipe: _editRecipe,
@@ -657,12 +659,14 @@ void _showRecipeCollectionsSheet({
 class _RecipeRow extends ConsumerWidget {
   const _RecipeRow({
     required this.recipe,
+    required this.allRecipes,
     required this.hasSharedHousehold,
     required this.isHouseholdLibrary,
     required this.onEditRecipe,
   });
 
   final Recipe recipe;
+  final List<Recipe> allRecipes;
   final bool hasSharedHousehold;
   final bool isHouseholdLibrary;
   final Future<void> Function(Recipe recipe) onEditRecipe;
@@ -686,6 +690,14 @@ class _RecipeRow extends ConsumerWidget {
       }
       if (value == 'edit_recipe') {
         await onEditRecipe(recipe);
+        return;
+      }
+      if (value == 'delete_recipe') {
+        await confirmAndDeleteRecipeWithOptions(
+          context,
+          recipe: recipe,
+          allRecipes: allRecipes,
+        );
         return;
       }
     }
@@ -722,6 +734,16 @@ class _RecipeRow extends ConsumerWidget {
                   Icon(Icons.library_books_outlined),
                   SizedBox(width: 8),
                   Text('Lists & Sharing'),
+                ],
+              ),
+            ),
+            const PopupMenuItem<String>(
+              value: 'delete_recipe',
+              child: Row(
+                children: [
+                  Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                  SizedBox(width: 8),
+                  Text('Delete'),
                 ],
               ),
             ),
