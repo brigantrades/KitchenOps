@@ -664,7 +664,7 @@ Widget buildPlannerDaySlotCard({
         );
       }
       invalidateActiveGroceryStreams(ref);
-      ref.invalidate(groceryRecentsProvider);
+      // Recents are per-list; invalidation handled by Lists screen.
     } on PostgrestException catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

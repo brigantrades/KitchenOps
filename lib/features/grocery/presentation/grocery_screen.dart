@@ -55,6 +55,7 @@ class GroceryScreen extends ConsumerStatefulWidget {
 class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   bool _addSheetOpen = false;
   int _listScopeIndex = 0;
+  final Set<String> _migratedRecentsForListIds = <String>{};
 
   /// Jiggle + drag reorder; persisted when user taps Save in the toolbar.
   bool _groceryReorderMode = false;
@@ -74,7 +75,12 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
 
   Future<void> _removeItem(GroceryItem item) async {
     try {
-      await ref.read(groceryRecentsProvider.notifier).recordRemovedItem(item);
+      final listId = (item.listId ?? '').trim();
+      if (listId.isNotEmpty) {
+        await ref
+            .read(groceryRecentsProvider(listId).notifier)
+            .recordRemovedItem(item);
+      }
       await ref.read(groceryRepositoryProvider).removeItem(item.id);
       invalidateActiveGroceryStreams(ref);
     } catch (_) {
@@ -187,7 +193,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       return;
     }
     invalidateActiveGroceryStreams(ref);
-    ref.invalidate(groceryRecentsProvider);
+    final listId = (ref.read(selectedListIdProvider) ?? '').trim();
+    if (listId.isNotEmpty) {
+      ref.invalidate(groceryRecentsProvider(listId));
+    }
   }
 
   Future<void> _openAddItemSheet(List<GroceryItem> currentItems) async {
@@ -299,7 +308,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       _addSheetOpen = false;
     });
     invalidateActiveGroceryStreams(ref);
-    ref.invalidate(groceryRecentsProvider);
+    final listId = (ref.read(selectedListIdProvider) ?? '').trim();
+    if (listId.isNotEmpty) {
+      ref.invalidate(groceryRecentsProvider(listId));
+    }
   }
 
   Future<void> _openCreateListSheet(ListScope defaultScope) async {
@@ -307,6 +319,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     if (user == null) return;
     final nameCtrl = TextEditingController();
     var scope = defaultScope;
+    var kind = kListKindGeneral;
     final result = await showModalBottomSheet<
         ({String id, ListScope scope, String name})>(
       context: context,
@@ -343,6 +356,24 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 },
               ),
               const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: kListKindGeneral,
+                    label: Text('General'),
+                  ),
+                  ButtonSegment(
+                    value: kListKindGrocery,
+                    label: Text('Grocery'),
+                  ),
+                ],
+                selected: {kind},
+                onSelectionChanged: (value) {
+                  if (value.isEmpty) return;
+                  setModalState(() => kind = value.first);
+                },
+              ),
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -354,6 +385,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                                 userId: user.id,
                                 name: nameCtrl.text.trim(),
                                 scope: scope,
+                                kind: kind,
                               );
                       if (!ctx.mounted) return;
                       Navigator.of(ctx).pop(
@@ -398,6 +430,200 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           "Created \"${result.name}\". You're now on that list.",
         ),
       ),
+    );
+  }
+
+  Future<void> _promptEditList(AppList list) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    final ctrl = TextEditingController(text: list.name);
+    var kind = (list.kind.trim().isEmpty ? kListKindGeneral : list.kind.trim());
+    final result = await showModalBottomSheet<({String name, String kind})>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          final bottom = MediaQuery.of(ctx).viewInsets.bottom;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, bottom + 16),
+            child: BrandedSheetScaffold(
+              title: 'Edit list',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: ctrl,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: const InputDecoration(labelText: 'List name'),
+                    onSubmitted: (v) {
+                      final name = v.trim();
+                      if (name.isEmpty) return;
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!ctx.mounted) return;
+                        Navigator.of(ctx).pop((name: name, kind: kind));
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                        value: kListKindGeneral,
+                        label: Text('General'),
+                      ),
+                      ButtonSegment(
+                        value: kListKindGrocery,
+                        label: Text('Grocery'),
+                      ),
+                    ],
+                    selected: {kind},
+                    onSelectionChanged: (value) {
+                      if (value.isEmpty) return;
+                      setModalState(() => kind = value.first);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () {
+                        final name = ctrl.text.trim();
+                        if (name.isEmpty) return;
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!ctx.mounted) return;
+                          Navigator.of(ctx).pop((name: name, kind: kind));
+                        });
+                      },
+                      child: const Text('Save'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    ctrl.dispose();
+    if (!mounted || result == null) return;
+    // Let the bottom sheet route fully dispose before invalidating providers.
+    await Future<void>.delayed(Duration.zero);
+    final trimmed = result.name.trim();
+    final nextKind = result.kind.trim();
+    final sameName = trimmed == list.name;
+    final sameKind = nextKind == list.kind.trim();
+    if (trimmed.isEmpty || (sameName && sameKind)) return;
+    try {
+      await ref.read(groceryRepositoryProvider).updateList(
+            listId: list.id,
+            name: trimmed,
+            kind: nextKind,
+          );
+      ref.invalidate(listsProvider);
+      await ref.read(listsProvider.future);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('List updated.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not update list right now.')),
+      );
+    }
+  }
+
+  Future<void> _promptDeleteList(AppList list) async {
+    final user = ref.read(currentUserProvider);
+    if (user == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete list?'),
+        content: Text(
+          'Delete "${list.name}" and all its items? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref
+          .read(groceryRepositoryProvider)
+          .deleteList(userId: user.id, list: list);
+      ref.invalidate(listsProvider);
+      ref.invalidate(profileProvider);
+      await ref.read(listsProvider.future);
+      await ref.read(profileProvider.future);
+      if (!mounted) return;
+      final lists = ref.read(listsProvider).valueOrNull ?? const <AppList>[];
+      final selected = ref.read(selectedListIdProvider);
+      if (selected == list.id) {
+        final fallback = lists.firstWhereOrNull((l) => l.scope == list.scope) ??
+            lists.firstOrNull;
+        ref.read(selectedListIdProvider.notifier).state = fallback?.id;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('List deleted.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not delete list right now.')),
+      );
+    }
+  }
+
+  void _openRecentItemActions(RecentGroceryEntry entry) {
+    final scheme = Theme.of(context).colorScheme;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(Icons.delete_outline_rounded, color: scheme.error),
+                title: Text(
+                  'Delete from recents',
+                  style: TextStyle(
+                    color: scheme.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  final listId = (ref.read(selectedListIdProvider) ?? '').trim();
+                  if (listId.isEmpty) return;
+                  await ref
+                      .read(groceryRecentsProvider(listId).notifier)
+                      .deleteRecent(entry);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Deleted "${entry.name}" from recents')),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -660,6 +886,37 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
             profileOrder: listOrder,
           );
 
+          // One-time migration: legacy builds stored recents globally (not per list).
+          // If the active list has no per-list recents yet, copy the legacy set into it.
+          final activeListIdForRecents = (itemsStreamListId ?? '').trim();
+          if (activeListIdForRecents.isNotEmpty &&
+              !_migratedRecentsForListIds.contains(activeListIdForRecents)) {
+            _migratedRecentsForListIds.add(activeListIdForRecents);
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (!mounted) return;
+              final repo = ref.read(groceryRepositoryProvider);
+              final wrote = await repo.migrateGlobalRecentsToListIfEmpty(
+                listId: activeListIdForRecents,
+              );
+              if (!mounted || !wrote) return;
+              ref.invalidate(groceryRecentsProvider(activeListIdForRecents));
+            });
+          }
+          final activeItemsList = itemsStreamListId == null
+              ? null
+              : lists.firstWhereOrNull((l) => l.id == itemsStreamListId);
+          final isGroceryKindActive = activeItemsList?.kind == kListKindGrocery;
+
+          if (isGroceryKindActive &&
+              sortMode != GroceryItemsSortMode.byCategory &&
+              !_groceryReorderMode) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              ref.read(groceryItemsSortModeProvider.notifier).state =
+                  GroceryItemsSortMode.byCategory;
+            });
+          }
+
           List<GroceryItem>? displayItems;
           if (items == null) {
             displayItems = null;
@@ -688,7 +945,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
             }
           }
           final itemsAreaLoading = itemsAsync.isLoading && !itemsAsync.hasValue;
-          final recentsAll = ref.watch(groceryRecentsProvider);
+          final recentsAll = (itemsStreamListId != null &&
+                  itemsStreamListId.isNotEmpty)
+              ? ref.watch(groceryRecentsProvider(itemsStreamListId))
+              : const <RecentGroceryEntry>[];
           final filteredRecents = () {
             if (itemsAreaLoading || items == null) {
               return <RecentGroceryEntry>[];
@@ -730,6 +990,9 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                               .any((l) => l.id == selectedListId)
                       ? selectedListId
                       : orderedFilteredLists.firstOrNull?.id;
+                  final activeList = activeListId == null
+                      ? null
+                      : lists.firstWhereOrNull((l) => l.id == activeListId);
 
                   return _ListsToolbar(
                     hasSharedHousehold: hasSharedHousehold,
@@ -755,6 +1018,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                     },
                     orderedFilteredLists: orderedFilteredLists,
                     activeListId: activeListId,
+                    isGroceryKindActive: activeList?.kind == kListKindGrocery,
+                    activeList: activeList,
                     onListSelected: (id) {
                       final clearPending = _pendingReorderDisplayItems != null;
                       if (_groceryReorderMode || clearPending) {
@@ -788,6 +1053,8 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                           mode;
                     },
                     onNewList: () => _openCreateListSheet(scopeFilter),
+                    onRenameList: (list) => unawaited(_promptEditList(list)),
+                    onDeleteList: (list) => unawaited(_promptDeleteList(list)),
                   );
                 },
                 loading: () => const SizedBox.shrink(),
@@ -843,11 +1110,97 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                   child: Builder(
                     builder: (context) {
                       final scheme = Theme.of(context).colorScheme;
-                      final showReorderIcon = items.length > 1 &&
+                      final repo = ref.read(groceryRepositoryProvider);
+                      final showReorderIcon = !isGroceryKindActive &&
+                          items.length > 1 &&
                           sortMode == GroceryItemsSortMode.asAdded &&
                           itemsStreamListId != null &&
                           itemsStreamListId.isNotEmpty &&
                           orderedFilteredLists.isNotEmpty;
+
+                      Widget sectionedGrocery() {
+                        // Existing DB rows may have stale/unknown category values (e.g. older
+                        // installs or newly added keywords). For Grocery lists, re-categorize
+                        // "Other" locally for display so the UI improves immediately without a
+                        // migration/backfill.
+                        final list = (displayItems ?? const <GroceryItem>[])
+                            .map((i) {
+                              if (i.category != GroceryCategory.other) return i;
+                              final next = repo.categorize(i.name);
+                              if (next == GroceryCategory.other) return i;
+                              return i.copyWith(category: next);
+                            })
+                            .toList();
+                        const crossAxisCount = 3;
+                        final categories = GroceryCategory.values;
+                        final theme = Theme.of(context);
+                        final headerStyle =
+                            theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        );
+
+                        List<GroceryItem> itemsFor(GroceryCategory c) =>
+                            list.where((i) => i.category == c).toList();
+
+                        Widget gridFor(List<GroceryItem> sectionItems) {
+                          Widget cardFor(GroceryItem item) {
+                            final showNewBadge = householdNewBadges &&
+                                item.addedByUserId != null &&
+                                item.addedByUserId != viewerId;
+                            return _GroceryItemCard(
+                              key: ValueKey(item.id),
+                              item: item,
+                              showNewBadge: showNewBadge,
+                              reorderEditMode: false,
+                              reorderJiggle: false,
+                              onPrimaryTap: _onGroceryItemPrimaryTap,
+                              onLongPressMenu: () =>
+                                  _openGroceryItemActions(item),
+                            );
+                          }
+
+                          return GridView.count(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisCount: crossAxisCount,
+                            crossAxisSpacing: _groceryCardGridSpacing,
+                            mainAxisSpacing: _groceryCardGridSpacing,
+                            childAspectRatio: _groceryCardAspectRatio,
+                            children: sectionItems.map(cardFor).toList(),
+                          );
+                        }
+
+                        final children = <Widget>[];
+                        for (final c in categories) {
+                          final sectionItems = itemsFor(c);
+                          if (sectionItems.isEmpty) continue;
+                          children.addAll([
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(6, 8, 6, 8),
+                              child: Text(c.label, style: headerStyle),
+                            ),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 2),
+                              child: gridFor(sectionItems),
+                            ),
+                            const SizedBox(height: 12),
+                          ]);
+                        }
+                        if (children.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        // Remove trailing space.
+                        if (children.last is SizedBox) {
+                          children.removeLast();
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: children,
+                        );
+                      }
+
                       void onReorderIconPressed() {
                         final id = itemsStreamListId;
                         if (id == null ||
@@ -873,64 +1226,70 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                       return Stack(
                         clipBehavior: Clip.none,
                         children: [
-                          Padding(
-                            padding: EdgeInsets.only(
-                              top: showReorderIcon ? 36 : 0,
-                            ),
-                            child: LayoutBuilder(
-                              builder: (context, constraints) {
-                                const crossAxisCount = 3;
-                                final list = _groceryReorderMode &&
-                                        _reorderWorkingItems != null
-                                    ? _reorderWorkingItems!
-                                    : displayItems!;
-                                final useReorderGrid = _groceryReorderMode &&
-                                    _reorderWorkingItems != null &&
-                                    list.length > 1 &&
-                                    itemsStreamListId != null &&
-                                    itemsStreamListId.isNotEmpty;
-                                Widget cardFor(GroceryItem item) {
-                                  final showNewBadge = householdNewBadges &&
-                                      item.addedByUserId != null &&
-                                      item.addedByUserId != viewerId;
-                                  return _GroceryItemCard(
-                                    key: ValueKey(item.id),
-                                    item: item,
-                                    showNewBadge: showNewBadge,
-                                    reorderEditMode: _groceryReorderMode,
-                                    reorderJiggle: _groceryReorderMode,
-                                    onPrimaryTap: _onGroceryItemPrimaryTap,
-                                    onLongPressMenu: () =>
-                                        _openGroceryItemActions(item),
-                                  );
-                                }
+                          if (isGroceryKindActive)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: sectionedGrocery(),
+                            )
+                          else
+                            Padding(
+                              padding: EdgeInsets.only(
+                                top: showReorderIcon ? 36 : 0,
+                              ),
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  const crossAxisCount = 3;
+                                  final list = _groceryReorderMode &&
+                                          _reorderWorkingItems != null
+                                      ? _reorderWorkingItems!
+                                      : displayItems!;
+                                  final useReorderGrid = _groceryReorderMode &&
+                                      _reorderWorkingItems != null &&
+                                      list.length > 1 &&
+                                      itemsStreamListId != null &&
+                                      itemsStreamListId.isNotEmpty;
+                                  Widget cardFor(GroceryItem item) {
+                                    final showNewBadge = householdNewBadges &&
+                                        item.addedByUserId != null &&
+                                        item.addedByUserId != viewerId;
+                                    return _GroceryItemCard(
+                                      key: ValueKey(item.id),
+                                      item: item,
+                                      showNewBadge: showNewBadge,
+                                      reorderEditMode: _groceryReorderMode,
+                                      reorderJiggle: _groceryReorderMode,
+                                      onPrimaryTap: _onGroceryItemPrimaryTap,
+                                      onLongPressMenu: () =>
+                                          _openGroceryItemActions(item),
+                                    );
+                                  }
 
-                                // Always use [ReorderableGridView] so Save does not swap to
-                                // [GridView.builder] (different element types caused a one-frame
-                                // flash of the pre-drag layout when the reorder grid disposed).
-                                return ReorderableGridView.count(
-                                  key: ValueKey<bool>(_groceryReorderMode),
-                                  shrinkWrap: true,
-                                  physics:
-                                      const NeverScrollableScrollPhysics(),
-                                  crossAxisCount: crossAxisCount,
-                                  crossAxisSpacing: _groceryCardGridSpacing,
-                                  mainAxisSpacing: _groceryCardGridSpacing,
-                                  childAspectRatio: _groceryCardAspectRatio,
-                                  dragEnabled: useReorderGrid,
-                                  dragStartDelay: useReorderGrid
-                                      ? Duration.zero
-                                      : const Duration(milliseconds: 1),
-                                  onReorder: (oldIndex, newIndex) {
-                                    if (!useReorderGrid) return;
-                                    _onGroceryWorkingReorder(
-                                        oldIndex, newIndex);
-                                  },
-                                  children: list.map(cardFor).toList(),
-                                );
-                              },
+                                  // Always use [ReorderableGridView] so Save does not swap to
+                                  // [GridView.builder] (different element types caused a one-frame
+                                  // flash of the pre-drag layout when the reorder grid disposed).
+                                  return ReorderableGridView.count(
+                                    key: ValueKey<bool>(_groceryReorderMode),
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    crossAxisCount: crossAxisCount,
+                                    crossAxisSpacing: _groceryCardGridSpacing,
+                                    mainAxisSpacing: _groceryCardGridSpacing,
+                                    childAspectRatio: _groceryCardAspectRatio,
+                                    dragEnabled: useReorderGrid,
+                                    dragStartDelay: useReorderGrid
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 1),
+                                    onReorder: (oldIndex, newIndex) {
+                                      if (!useReorderGrid) return;
+                                      _onGroceryWorkingReorder(
+                                          oldIndex, newIndex);
+                                    },
+                                    children: list.map(cardFor).toList(),
+                                  );
+                                },
+                              ),
                             ),
-                          ),
                           if (showReorderIcon)
                             Positioned(
                               top: 0,
@@ -1024,6 +1383,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                             entry: entry,
                             onTap: () =>
                                 _addFromRecent(entry, items ?? const []),
+                            onLongPress: () => _openRecentItemActions(entry),
                           );
                         },
                       );
@@ -1198,12 +1558,16 @@ class _ListsToolbar extends StatelessWidget {
     required this.onScopeSelected,
     required this.orderedFilteredLists,
     required this.activeListId,
+    required this.isGroceryKindActive,
+    required this.activeList,
     required this.onListSelected,
     required this.itemsAreaLoading,
     required this.itemCount,
     required this.sortMode,
     required this.onSortModeSelected,
     required this.onNewList,
+    required this.onRenameList,
+    required this.onDeleteList,
   });
 
   final bool hasSharedHousehold;
@@ -1211,12 +1575,16 @@ class _ListsToolbar extends StatelessWidget {
   final ValueChanged<int> onScopeSelected;
   final List<AppList> orderedFilteredLists;
   final String? activeListId;
+  final bool isGroceryKindActive;
+  final AppList? activeList;
   final ValueChanged<String> onListSelected;
   final bool itemsAreaLoading;
   final int itemCount;
   final GroceryItemsSortMode sortMode;
   final ValueChanged<GroceryItemsSortMode> onSortModeSelected;
   final VoidCallback onNewList;
+  final ValueChanged<AppList> onRenameList;
+  final ValueChanged<AppList> onDeleteList;
 
   void _openListPicker(BuildContext context) {
     if (orderedFilteredLists.isEmpty) {
@@ -1397,10 +1765,14 @@ class _ListsToolbar extends StatelessWidget {
                         switch (value) {
                           case 'new':
                             onNewList();
+                          case 'rename':
+                            final l = activeList;
+                            if (l != null) onRenameList(l);
+                          case 'delete':
+                            final l = activeList;
+                            if (l != null) onDeleteList(l);
                           case 'sort_as_added':
                             onSortModeSelected(GroceryItemsSortMode.asAdded);
-                          case 'sort_category':
-                            onSortModeSelected(GroceryItemsSortMode.byCategory);
                           case 'sort_alpha':
                             onSortModeSelected(
                               GroceryItemsSortMode.alphabetical,
@@ -1409,67 +1781,63 @@ class _ListsToolbar extends StatelessWidget {
                       },
                       itemBuilder: (context) => [
                         PopupMenuItem<String>(
-                          value: 'sort_as_added',
-                          enabled: orderedFilteredLists.isNotEmpty,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 28,
-                                child: sortMode == GroceryItemsSortMode.asAdded
-                                    ? Icon(Icons.check_rounded,
-                                        size: 20, color: scheme.primary)
-                                    : null,
-                              ),
-                              Expanded(
-                                child: Text(
-                                  GroceryItemsSortMode.asAdded.menuLabel,
-                                ),
-                              ),
-                            ],
-                          ),
+                          value: 'rename',
+                          enabled: activeList != null,
+                          child: const Text('Edit list'),
                         ),
                         PopupMenuItem<String>(
-                          value: 'sort_category',
-                          enabled: orderedFilteredLists.isNotEmpty,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 28,
-                                child:
-                                    sortMode == GroceryItemsSortMode.byCategory
-                                        ? Icon(Icons.check_rounded,
-                                            size: 20, color: scheme.primary)
-                                        : null,
-                              ),
-                              Expanded(
-                                child: Text(
-                                  GroceryItemsSortMode.byCategory.menuLabel,
-                                ),
-                              ),
-                            ],
+                          value: 'delete',
+                          enabled: activeList != null,
+                          child: Text(
+                            'Delete list',
+                            style: TextStyle(color: scheme.error),
                           ),
                         ),
-                        PopupMenuItem<String>(
-                          value: 'sort_alpha',
-                          enabled: orderedFilteredLists.isNotEmpty,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 28,
-                                child: sortMode ==
-                                        GroceryItemsSortMode.alphabetical
-                                    ? Icon(Icons.check_rounded,
-                                        size: 20, color: scheme.primary)
-                                    : null,
-                              ),
-                              Expanded(
-                                child: Text(
-                                  GroceryItemsSortMode.alphabetical.menuLabel,
+                        const PopupMenuDivider(),
+                        if (!isGroceryKindActive) ...[
+                          PopupMenuItem<String>(
+                            value: 'sort_as_added',
+                            enabled: orderedFilteredLists.isNotEmpty,
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 28,
+                                  child:
+                                      sortMode == GroceryItemsSortMode.asAdded
+                                          ? Icon(Icons.check_rounded,
+                                              size: 20, color: scheme.primary)
+                                          : null,
                                 ),
-                              ),
-                            ],
+                                Expanded(
+                                  child: Text(
+                                    GroceryItemsSortMode.asAdded.menuLabel,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
+                          PopupMenuItem<String>(
+                            value: 'sort_alpha',
+                            enabled: orderedFilteredLists.isNotEmpty,
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 28,
+                                  child: sortMode ==
+                                          GroceryItemsSortMode.alphabetical
+                                      ? Icon(Icons.check_rounded,
+                                          size: 20, color: scheme.primary)
+                                      : null,
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    GroceryItemsSortMode.alphabetical.menuLabel,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         const PopupMenuItem<String>(
                           value: 'new',
                           child: Text('New list'),
@@ -1761,10 +2129,12 @@ class _RecentGroceryEntryCard extends StatelessWidget {
   const _RecentGroceryEntryCard({
     required this.entry,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final RecentGroceryEntry entry;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1782,6 +2152,7 @@ class _RecentGroceryEntryCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: LayoutBuilder(
           builder: (context, constraints) {
             final availableHeight = constraints.maxHeight - 20;

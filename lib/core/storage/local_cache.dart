@@ -47,14 +47,21 @@ class LocalCache {
     return (jsonDecode(raw) as List).whereType<Map<String, dynamic>>().toList();
   }
 
-  Future<void> saveGroceryRecents(List<Map<String, dynamic>> entries) async {
+  Future<void> saveGroceryRecents(
+    List<Map<String, dynamic>> entries, {
+    String? listId,
+  }) async {
     final box = Hive.box<String>(_groceryBox);
-    await box.put(_groceryRecentsKey, jsonEncode(entries));
+    final key =
+        (listId != null && listId.trim().isNotEmpty) ? '$_groceryRecentsKey:${listId.trim()}' : _groceryRecentsKey;
+    await box.put(key, jsonEncode(entries));
   }
 
-  List<Map<String, dynamic>> loadGroceryRecents() {
+  List<Map<String, dynamic>> loadGroceryRecents({String? listId}) {
     final box = Hive.box<String>(_groceryBox);
-    final raw = box.get(_groceryRecentsKey);
+    final key =
+        (listId != null && listId.trim().isNotEmpty) ? '$_groceryRecentsKey:${listId.trim()}' : _groceryRecentsKey;
+    final raw = box.get(key);
     if (raw == null || raw.isEmpty) return [];
     final decoded = jsonDecode(raw);
     if (decoded is! List) return [];

@@ -16,6 +16,13 @@ enum RecipeVisibility { personal, household, public }
 
 enum ListScope { private, household }
 
+/// Backed by `lists.kind` in Postgres.
+///
+/// Keep as string constants (not an enum) so unknown kinds from future app
+/// versions don't break older clients.
+const String kListKindGeneral = 'general';
+const String kListKindGrocery = 'grocery';
+
 enum HouseholdRole { owner, member }
 
 enum HouseholdMemberStatus { active, invited }

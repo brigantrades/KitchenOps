@@ -302,6 +302,12 @@ class GroceryRepository {
   /// Keyword hints for categorization (longer/specific keys should appear before
   /// broader substrings where order matters).
   static const Map<String, GroceryCategory> _categoryMap = {
+    // Meat / deli (specific before generic).
+    'roast beef': GroceryCategory.meatFish,
+    'deli': GroceryCategory.meatFish,
+    'beef': GroceryCategory.meatFish,
+    'ham': GroceryCategory.meatFish,
+
     'blueberr': GroceryCategory.produce,
     'blackberr': GroceryCategory.produce,
     'raspberr': GroceryCategory.produce,
@@ -337,6 +343,7 @@ class GroceryRepository {
     'potato': GroceryCategory.produce,
     'carrot': GroceryCategory.produce,
     'garlic': GroceryCategory.produce,
+    'ginger': GroceryCategory.produce,
     'apple': GroceryCategory.produce,
     'banana': GroceryCategory.produce,
     'bell pepper': GroceryCategory.produce,
@@ -385,6 +392,11 @@ class GroceryRepository {
     'soy sauce': GroceryCategory.pantryGrains,
     'bread': GroceryCategory.bakery,
     'bagel': GroceryCategory.bakery,
+    'brioche': GroceryCategory.bakery,
+    'bun': GroceryCategory.bakery,
+    'buns': GroceryCategory.bakery,
+    'roll': GroceryCategory.bakery,
+    'rolls': GroceryCategory.bakery,
     'croissant': GroceryCategory.bakery,
     'muffin': GroceryCategory.bakery,
   };
@@ -1015,6 +1027,7 @@ class GroceryRepository {
           'source_slot_id': sourceSlotId,
         });
         await touchRecent(
+          listId: targetListId,
           name: ingredient.name,
           category: ingredient.category,
           quantity: null,
@@ -1036,6 +1049,7 @@ class GroceryRepository {
         'source_slot_id': sourceSlotId,
       });
       await touchRecent(
+        listId: targetListId,
         name: ingredient.name,
         category: ingredient.category,
         quantity: qty,
@@ -1079,6 +1093,7 @@ class GroceryRepository {
     }
     await _client.from('list_items').insert(row);
     await touchRecent(
+      listId: targetListId,
       name: name,
       category: category,
       quantity: quantity,
@@ -1086,15 +1101,42 @@ class GroceryRepository {
     );
   }
 
-  List<RecentGroceryEntry> readRecentsFromCache() {
+  List<RecentGroceryEntry> readRecentsFromCache({required String listId}) {
     return _cache
-        .loadGroceryRecents()
+        .loadGroceryRecents(listId: listId)
         .map(RecentGroceryEntry.fromJson)
         .where((e) => e.name.trim().isNotEmpty)
         .toList();
   }
 
+  /// One-time migration: older builds stored recents globally (no list id).
+  /// If [listId] has no recents yet, copy the global recents into this list.
+  ///
+  /// Returns true when a migration write occurred.
+  Future<bool> migrateGlobalRecentsToListIfEmpty({required String listId}) async {
+    final id = listId.trim();
+    if (id.isEmpty) return false;
+    final existing = readRecentsFromCache(listId: id);
+    if (existing.isNotEmpty) return false;
+    final legacy = _cache
+        .loadGroceryRecents()
+        .map(RecentGroceryEntry.fromJson)
+        .where((e) => e.name.trim().isNotEmpty)
+        .toList();
+    if (legacy.isEmpty) return false;
+    await _cache.saveGroceryRecents(
+      legacy.map((e) => e.toJson()).toList(),
+      listId: id,
+    );
+    // Prevent copying the same legacy set into every list. After the first
+    // successful migration, clear the legacy global key so other lists start
+    // with their own per-list recents.
+    await _cache.saveGroceryRecents(const []);
+    return true;
+  }
+
   Future<void> touchRecent({
+    required String listId,
     required String name,
     required GroceryCategory category,
     String? quantity,
@@ -1103,7 +1145,7 @@ class GroceryRepository {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
     final norm = normalizeGroceryItemName(trimmed);
-    final existing = readRecentsFromCache();
+    final existing = readRecentsFromCache(listId: listId);
     final filtered = existing
         .where((e) => normalizeGroceryItemName(e.name) != norm)
         .toList();
@@ -1115,7 +1157,27 @@ class GroceryRepository {
       lastUsedAt: DateTime.now().toUtc(),
     );
     final next = [entry, ...filtered].take(_maxGroceryRecentsStored).toList();
-    await _cache.saveGroceryRecents(next.map((e) => e.toJson()).toList());
+    await _cache.saveGroceryRecents(
+      next.map((e) => e.toJson()).toList(),
+      listId: listId,
+    );
+  }
+
+  Future<void> removeRecentByName({
+    required String listId,
+    required String name,
+  }) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final norm = normalizeGroceryItemName(trimmed);
+    final existing = readRecentsFromCache(listId: listId);
+    final next = existing
+        .where((e) => normalizeGroceryItemName(e.name) != norm)
+        .toList();
+    await _cache.saveGroceryRecents(
+      next.map((e) => e.toJson()).toList(),
+      listId: listId,
+    );
   }
 
   Future<void> _clearHouseholdItems(String userId, {String? listId}) async {
@@ -1195,6 +1257,7 @@ class GroceryRepository {
     required String userId,
     required String name,
     required ListScope scope,
+    String kind = kListKindGeneral,
   }) async {
     String? householdId;
     if (scope == ListScope.household) {
@@ -1209,7 +1272,7 @@ class GroceryRepository {
           'owner_user_id': userId,
           'household_id': householdId,
           'name': name.trim(),
-          'kind': 'general',
+          'kind': kind,
           'scope': scope.name,
         })
         .select()
@@ -1230,6 +1293,24 @@ class GroceryRepository {
       throw StateError('List name cannot be empty.');
     }
     await _client.from('lists').update({'name': trimmed}).eq('id', listId);
+  }
+
+  /// Updates mutable list fields. RLS: owner for private lists; any household
+  /// member for household lists.
+  Future<void> updateList({
+    required String listId,
+    required String name,
+    required String kind,
+  }) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw StateError('List name cannot be empty.');
+    }
+    final nextKind = kind.trim().isEmpty ? kListKindGeneral : kind.trim();
+    await _client.from('lists').update({
+      'name': trimmed,
+      'kind': nextKind,
+    }).eq('id', listId);
   }
 
   /// Deletes the list and its items (DB cascade). Updates saved list order for [userId].
@@ -1327,25 +1408,46 @@ final groceryRepositoryProvider = Provider<GroceryRepository>((ref) {
   );
 });
 
-class GroceryRecentsNotifier extends Notifier<List<RecentGroceryEntry>> {
+class GroceryRecentsNotifier
+    extends FamilyNotifier<List<RecentGroceryEntry>, String> {
   @override
-  List<RecentGroceryEntry> build() {
-    return ref.read(groceryRepositoryProvider).readRecentsFromCache();
+  List<RecentGroceryEntry> build(String listId) {
+    return ref.read(groceryRepositoryProvider).readRecentsFromCache(
+          listId: listId,
+        );
   }
 
   Future<void> recordRemovedItem(GroceryItem item) async {
+    final listId = (item.listId ?? '').trim();
+    if (listId.isEmpty) return;
     await ref.read(groceryRepositoryProvider).touchRecent(
+          listId: listId,
           name: item.name,
           category: item.category,
           quantity: item.quantity,
           unit: item.unit,
         );
-    state = ref.read(groceryRepositoryProvider).readRecentsFromCache();
+    state = ref.read(groceryRepositoryProvider).readRecentsFromCache(
+          listId: listId,
+        );
+  }
+
+  Future<void> deleteRecent(RecentGroceryEntry entry) async {
+    final listId = arg.trim();
+    if (listId.isEmpty) return;
+    await ref.read(groceryRepositoryProvider).removeRecentByName(
+          listId: listId,
+          name: entry.name,
+        );
+    state = ref.read(groceryRepositoryProvider).readRecentsFromCache(
+          listId: listId,
+        );
   }
 }
 
 final groceryRecentsProvider =
-    NotifierProvider<GroceryRecentsNotifier, List<RecentGroceryEntry>>(
+    NotifierProviderFamily<GroceryRecentsNotifier, List<RecentGroceryEntry>,
+        String>(
   GroceryRecentsNotifier.new,
 );
 
