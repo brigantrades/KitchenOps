@@ -5,14 +5,20 @@ import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 
 /// Normalizes free-text units to internal keys. Returns null if unrecognized.
 String? normalizeIngredientUnitKey(String raw) {
-  var s = raw.trim().toLowerCase();
+  var s = raw
+      .replaceAll('\u00A0', ' ')
+      // Zero-width / BOM characters can sneak in via OCR, copy/paste, or imports.
+      .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
+      .trim()
+      .toLowerCase();
   if (s.isEmpty) return null;
   s = s.replaceAll(RegExp(r'\s+'), ' ');
   // Gemini/OCR often append sentence punctuation (e.g. "Tbsp.") which would
   // otherwise miss the map and show as a custom unit in dropdowns.
   s = s.replaceAll(RegExp(r'[.,;]+$'), '');
   if (s.isEmpty) return null;
-  if (s == 'fl oz' ||
+  // Allow for small variations like "fl. oz", "fl oz)", "fluid ounce(s)".
+  if (RegExp(r'\bfl\b.*\boz\b').hasMatch(s) ||
       s == 'floz' ||
       s == 'fluid oz' ||
       s.startsWith('fluid ounce')) {
@@ -66,7 +72,20 @@ String? normalizeIngredientUnitKey(String raw) {
     'piece': 'piece',
     'pieces': 'piece',
   };
-  return map[s];
+  final direct = map[s];
+  if (direct != null) return direct;
+
+  // Fallback: try last-token matches for dirty strings like "(ml)", "tbsp)".
+  final tokens = s.split(' ');
+  for (var i = tokens.length - 1; i >= 0; i--) {
+    var t = tokens[i].trim();
+    if (t.isEmpty) continue;
+    t = t.replaceAll(RegExp(r'^[\(\[\{]+'), '').replaceAll(RegExp(r'[\)\]\}]+$'), '');
+    t = t.replaceAll(RegExp(r'[.,;]+$'), '');
+    final hit = map[t];
+    if (hit != null) return hit;
+  }
+  return null;
 }
 
 double? _volumeKeyToMl(double amount, String key) {
@@ -164,6 +183,17 @@ CanonicalIngredientMeasure? canonicalIngredientMeasure(
   }
 }
 
+/// Snaps to the nearest whole fl oz when metric↔US conversion lands just off an integer
+/// (e.g. 30 ml → 1.014 fl oz → 1 fl oz).
+double _snapFlOzToWholeIfClose(double flOz) {
+  const tolerance = 0.03;
+  final rounded = flOz.roundToDouble();
+  if ((flOz - rounded).abs() <= tolerance) {
+    return rounded;
+  }
+  return flOz;
+}
+
 ({double amount, String unit}) _volumeValuesForSystem(double ml, MeasurementSystem s) {
   switch (s) {
     case MeasurementSystem.metric:
@@ -188,7 +218,7 @@ CanonicalIngredientMeasure? canonicalIngredientMeasure(
       }
       final flOz = ml / UsCustomaryUnits.mlPerUsFlOz;
       if (flOz >= 0.5) {
-        return (amount: flOz, unit: 'fl oz');
+        return (amount: _snapFlOzToWholeIfClose(flOz), unit: 'fl oz');
       }
       final tbsp = ml / UsCustomaryUnits.mlPerTbsp;
       if (tbsp >= 0.5) {
@@ -199,13 +229,41 @@ CanonicalIngredientMeasure? canonicalIngredientMeasure(
   }
 }
 
-({String amount, String unit}) _formatMass(double grams, MeasurementSystem s) {
+({double amount, String unit}) _massValuesForDisplay(double grams, MeasurementSystem s) {
   final v = _massValuesForSystem(grams, s);
+  if (s == MeasurementSystem.metric && v.unit == 'g') {
+    return (amount: snapMetricGramsForDisplay(grams), unit: 'g');
+  }
+  if (s == MeasurementSystem.imperial && v.unit == 'oz') {
+    return (amount: snapToNearestQuarter(v.amount), unit: 'oz');
+  }
+  return v;
+}
+
+({String amount, String unit}) _formatMass(double grams, MeasurementSystem s) {
+  final v = _massValuesForDisplay(grams, s);
+  if (s == MeasurementSystem.imperial && v.unit == 'oz') {
+    return (amount: formatQuarterMeasureAmount(v.amount), unit: v.unit);
+  }
   return (amount: formatIngredientAmount(v.amount), unit: v.unit);
 }
 
-({String amount, String unit}) _formatVolume(double ml, MeasurementSystem s) {
+bool _isImperialKitchenVolumeUnit(String unit) =>
+    unit == 'cup' || unit == 'tbsp' || unit == 'tsp';
+
+({double amount, String unit}) _volumeValuesForDisplay(double ml, MeasurementSystem s) {
   final v = _volumeValuesForSystem(ml, s);
+  if (s == MeasurementSystem.imperial && _isImperialKitchenVolumeUnit(v.unit)) {
+    return (amount: roundUpToKitchenStep(v.amount), unit: v.unit);
+  }
+  return v;
+}
+
+({String amount, String unit}) _formatVolume(double ml, MeasurementSystem s) {
+  final v = _volumeValuesForDisplay(ml, s);
+  if (s == MeasurementSystem.imperial && _isImperialKitchenVolumeUnit(v.unit)) {
+    return (amount: formatKitchenMeasureAmount(v.amount), unit: v.unit);
+  }
   return (amount: formatIngredientAmount(v.amount), unit: v.unit);
 }
 
@@ -230,8 +288,9 @@ bool _isKitchenSpoonUnitKey(String? key) => key == 'tsp' || key == 'tbsp';
   if (c case CanonicalVolume()) {
     final key = normalizeIngredientUnitKey(ing.unit);
     if (system == MeasurementSystem.metric && _isKitchenSpoonUnitKey(key)) {
+      final rounded = roundUpToKitchenStep(ing.amount);
       return (
-        amount: formatIngredientAmount(ing.amount),
+        amount: formatKitchenMeasureAmount(rounded),
         unit: ing.unit.trim(),
       );
     }
@@ -265,7 +324,7 @@ String ingredientDisplayQuantityLabel(Ingredient ing, MeasurementSystem system) 
   if (c == null) return null;
 
   return switch (c) {
-    CanonicalMass(:final grams) => _massValuesForSystem(grams, target),
-    CanonicalVolume(:final ml) => _volumeValuesForSystem(ml, target),
+    CanonicalMass(:final grams) => _massValuesForDisplay(grams, target),
+    CanonicalVolume(:final ml) => _volumeValuesForDisplay(ml, target),
   };
 }

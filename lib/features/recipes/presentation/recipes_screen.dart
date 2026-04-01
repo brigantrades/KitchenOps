@@ -1,13 +1,11 @@
 import 'dart:async';
 
 import 'package:collection/collection.dart';
-import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/discover_shell.dart';
-import 'package:plateplan/core/ui/food_icon_resolver.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -15,19 +13,19 @@ import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
-import 'package:plateplan/core/measurement/ingredient_display_units.dart';
 import 'package:plateplan/core/measurement/ingredient_unit_profile.dart';
 import 'package:plateplan/core/measurement/measurement_system.dart';
 import 'package:plateplan/core/measurement/measurement_system_provider.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/strings/recipe_title_case.dart';
+import 'package:plateplan/core/ui/recipe_title_input_formatter.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
-import 'package:plateplan/features/grocery/presentation/grocery_item_suggestions_grid.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_editor_modals.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_sheet_confirmations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -798,188 +796,6 @@ Widget _instagramImportHelpStep(
   );
 }
 
-const double _kAmountEpsilon = 1e-9;
-
-class _PresetAmountChip {
-  const _PresetAmountChip({required this.label, required this.canonicalText});
-  final String label;
-  final String canonicalText;
-}
-
-const _presetAmountChips = [
-  _PresetAmountChip(label: '¼', canonicalText: '1/4'),
-  _PresetAmountChip(label: '⅓', canonicalText: '1/3'),
-  _PresetAmountChip(label: '½', canonicalText: '1/2'),
-  _PresetAmountChip(label: '1', canonicalText: '1'),
-];
-
-const _kQualitativePresets = [
-  'to taste',
-  'as needed',
-  'pinch',
-  '1 tsp',
-  '1 tbsp',
-  '½ tsp',
-];
-
-class _IngredientInput {
-  _IngredientInput({
-    required String name,
-    required List<String> unitOptions,
-    required this.selectedUnit,
-    String? customUnit,
-    String? reorderId,
-    bool qualitative = false,
-    String qualitativePhrase = '',
-  })  : unitOptions = List<String>.from(unitOptions),
-        reorderId = reorderId ?? 'ing_${_nextReorderId++}' {
-    nameCtrl.text = name;
-    if (customUnit != null) {
-      customUnitCtrl.text = customUnit;
-    }
-    this.qualitative = qualitative;
-    if (qualitative) {
-      final t = qualitativePhrase.trim();
-      if (t.isEmpty) {
-        qualitativePreset = 'to taste';
-      } else if (_kQualitativePresets.contains(t)) {
-        qualitativePreset = t;
-      } else {
-        qualitativePreset = 'custom';
-        qualitativeCustomCtrl.text = t;
-      }
-    }
-  }
-
-  static int _nextReorderId = 0;
-
-  final String reorderId;
-  final TextEditingController nameCtrl = TextEditingController();
-  final TextEditingController amountCtrl = TextEditingController();
-  final TextEditingController customUnitCtrl = TextEditingController();
-  final TextEditingController qualitativeCustomCtrl = TextEditingController();
-  List<String> unitOptions;
-  String selectedUnit;
-
-  bool qualitative = false;
-  String qualitativePreset = 'to taste';
-
-  final FocusNode nameFocusNode = FocusNode();
-  final FocusNode amountFocusNode = FocusNode();
-  final FocusNode qualitativeCustomFocusNode = FocusNode();
-  final FocusNode customUnitFocusNode = FocusNode();
-
-  /// True after the user chose a name from the grocery suggestion grid.
-  bool namePickedFromSuggestions = false;
-
-  String get name => nameCtrl.text.trim();
-
-  String resolvedQualitativePhrase() {
-    if (!qualitative) return '';
-    if (qualitativePreset == 'custom') {
-      return qualitativeCustomCtrl.text.trim();
-    }
-    return qualitativePreset;
-  }
-
-  void dispose() {
-    nameFocusNode.dispose();
-    amountFocusNode.dispose();
-    qualitativeCustomFocusNode.dispose();
-    customUnitFocusNode.dispose();
-    nameCtrl.dispose();
-    amountCtrl.dispose();
-    customUnitCtrl.dispose();
-    qualitativeCustomCtrl.dispose();
-  }
-}
-
-class _DirectionDraft {
-  _DirectionDraft({String? text}) {
-    if (text != null) textCtrl.text = text;
-  }
-
-  final TextEditingController textCtrl = TextEditingController();
-
-  void dispose() {
-    textCtrl.dispose();
-  }
-}
-
-/// Scrolls the expanded ingredient card into view when any of its fields focus
-/// so the full card stays above the keyboard.
-class _IngredientCardScrollIntoView extends StatefulWidget {
-  const _IngredientCardScrollIntoView({
-    required this.focusNodes,
-    required this.cardKey,
-    required this.child,
-  });
-
-  final List<FocusNode> focusNodes;
-  final GlobalKey cardKey;
-  final Widget child;
-
-  @override
-  State<_IngredientCardScrollIntoView> createState() =>
-      _IngredientCardScrollIntoViewState();
-}
-
-class _IngredientCardScrollIntoViewState
-    extends State<_IngredientCardScrollIntoView> {
-  void _onAnyFocusNodeChanged() {
-    if (!widget.focusNodes.any((n) => n.hasFocus)) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (!widget.focusNodes.any((n) => n.hasFocus)) return;
-      final ctx = widget.cardKey.currentContext;
-      if (ctx != null) {
-        Scrollable.ensureVisible(
-          ctx,
-          alignment: 0.08,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-        );
-      }
-    });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    for (final n in widget.focusNodes) {
-      n.addListener(_onAnyFocusNodeChanged);
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final n in widget.focusNodes) {
-      n.removeListener(_onAnyFocusNodeChanged);
-    }
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(covariant _IngredientCardScrollIntoView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (listEquals(oldWidget.focusNodes, widget.focusNodes)) return;
-    for (final n in oldWidget.focusNodes) {
-      n.removeListener(_onAnyFocusNodeChanged);
-    }
-    for (final n in widget.focusNodes) {
-      n.addListener(_onAnyFocusNodeChanged);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return KeyedSubtree(
-      key: widget.cardKey,
-      child: widget.child,
-    );
-  }
-}
-
 class _RecipeBuilderSheet extends ConsumerStatefulWidget {
   const _RecipeBuilderSheet({this.initialRecipe});
 
@@ -1010,8 +826,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     'Japanese',
     'Thai',
   ];
-  final List<_IngredientInput> _ingredients = [];
-  final List<_DirectionDraft> _directionDrafts = [_DirectionDraft()];
+  final List<RecipeIngredientFormRow> _ingredients = [];
+  final List<RecipeDirectionDraft> _directionDrafts = [RecipeDirectionDraft()];
   MealType _mealType = MealType.entree;
   bool _markFavorite = false;
   bool _markToTry = false;
@@ -1024,6 +840,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   String? _validationMessage;
   bool _isSubmitting = false;
   int? _selectedIngredientIndex;
+  /// New recipe only: when true, title field does not auto-format per-word caps.
+  bool _recipeTitleLowercaseTyping = false;
 
   static const int _kNutritionStepIndex = 4;
 
@@ -1103,7 +921,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       if (ingredient.qualitative) {
         final profile = detectUnitProfile(ingredient.name, system);
         _ingredients.add(
-          _IngredientInput(
+          RecipeIngredientFormRow(
             name: ingredient.name,
             unitOptions: profile.options,
             selectedUnit: profile.defaultUnit,
@@ -1119,7 +937,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       // profile.options already ends with 'custom'; do not append again or the
       // unit dropdown gets duplicate values and DropdownButtonFormField asserts.
       final units = [...profile.options];
-      final row = _IngredientInput(
+      final row = RecipeIngredientFormRow(
         name: ingredient.name,
         unitOptions: units,
         selectedUnit: isCustom ? 'custom' : normalizedUnit,
@@ -1140,8 +958,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       ..clear()
       ..addAll(
         initial.instructions.isEmpty
-            ? [_DirectionDraft()]
-            : initial.instructions.map((step) => _DirectionDraft(text: step)),
+            ? [RecipeDirectionDraft()]
+            : initial.instructions
+                .map((step) => RecipeDirectionDraft(text: step)),
       );
     _loadedNutritionFingerprint = _computeNutritionFingerprint();
   }
@@ -1220,41 +1039,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     ref.read(measurementSystemProvider.notifier).setSystem(next);
     setState(() {
       for (final row in _ingredients) {
-        final profile = detectUnitProfile(row.nameCtrl.text, next);
-        row.unitOptions
-          ..clear()
-          ..addAll(profile.options);
-        if (row.qualitative) continue;
-        final amt = _parseIngredientAmount(row.amountCtrl.text);
-        final unit = row.selectedUnit == 'custom'
-            ? row.customUnitCtrl.text.trim()
-            : row.selectedUnit;
-        if (amt == null || unit.isEmpty) continue;
-        final conv = convertAmountAndUnitForMeasurementSystem(
-          amount: amt,
-          unitRaw: unit,
-          target: next,
-        );
-        if (conv != null) {
-          final matched = matchUnitOption(row.unitOptions, conv.unit);
-          if (matched != null) {
-            row.selectedUnit = matched;
-            row.customUnitCtrl.clear();
-          } else {
-            row.selectedUnit = 'custom';
-            row.customUnitCtrl.text = conv.unit;
-          }
-          row.amountCtrl.text = formatIngredientAmount(conv.amount);
-        } else {
-          final matched = matchUnitOption(row.unitOptions, unit);
-          if (matched != null) {
-            row.selectedUnit = matched;
-            row.customUnitCtrl.clear();
-          } else {
-            row.selectedUnit = 'custom';
-            row.customUnitCtrl.text = unit;
-          }
-        }
+        applyMeasurementSystemToRow(row, next);
       }
     });
   }
@@ -1265,19 +1050,8 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     dialogSetState?.call(() {});
   }
 
-  bool _isIngredientRowComplete(_IngredientInput row) {
-    if (row.nameCtrl.text.trim().isEmpty) return false;
-    if (row.qualitative) {
-      return row.resolvedQualitativePhrase().isNotEmpty;
-    }
-    if (row.amountCtrl.text.trim().isEmpty) return false;
-    if (_parseIngredientAmount(row.amountCtrl.text) == null) return false;
-    if (row.selectedUnit.trim().isEmpty) return false;
-    if (row.selectedUnit == 'custom' &&
-        row.customUnitCtrl.text.trim().isEmpty) {
-      return false;
-    }
-    return true;
+  bool _isIngredientRowComplete(RecipeIngredientFormRow row) {
+    return isRecipeIngredientRowComplete(row);
   }
 
   void _removeIngredientAt(int idx, [StateSetter? dialogSetState]) {
@@ -1332,7 +1106,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     return _ingredients.every(_isIngredientRowComplete);
   }
 
-  String _ingredientSummary(_IngredientInput row) {
+  String _ingredientSummary(RecipeIngredientFormRow row) {
     final name = row.nameCtrl.text.trim().isEmpty
         ? 'New ingredient'
         : row.nameCtrl.text.trim();
@@ -1374,7 +1148,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
               child: Row(
                 children: [
                   row.namePickedFromSuggestions && row.name.isNotEmpty
-                      ? _ingredientPickedFoodIcon(context, row, size: 22)
+                      ? ingredientPickedFoodIcon(context, ref, row, size: 22)
                       : Icon(
                           Icons.restaurant_rounded,
                           size: 20,
@@ -1419,363 +1193,27 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   Widget _buildExpandedIngredientRow(
     BuildContext context,
     int idx,
-    _IngredientInput row, {
+    RecipeIngredientFormRow row, {
     StateSetter? dialogSetState,
     VoidCallback? onRemovePressed,
     EdgeInsetsGeometry cardMargin =
         const EdgeInsets.only(bottom: AppSpacing.sm),
   }) {
-    final scheme = Theme.of(context).colorScheme;
-    final qualitativeDropdownValue =
-        _kQualitativePresets.contains(row.qualitativePreset)
-            ? row.qualitativePreset
-            : 'custom';
-    final keyboardBottom = MediaQuery.viewInsetsOf(context).bottom;
-    final suggestionGridMaxHeight = keyboardBottom > 0 ? 130.0 : 230.0;
-    final fieldScrollPadding = EdgeInsets.fromLTRB(
-      20,
-      20,
-      20,
-      keyboardBottom + 80,
-    );
-    return _IngredientCardScrollIntoView(
-      focusNodes: [
-        row.nameFocusNode,
-        row.amountFocusNode,
-        row.qualitativeCustomFocusNode,
-        row.customUnitFocusNode,
-      ],
-      cardKey: _ingredientExpandedCardKey,
-      child: Container(
-        margin: cardMargin,
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.sm,
-          AppSpacing.sm,
-          AppSpacing.xs,
-          AppSpacing.sm,
-        ),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: scheme.primary,
-            width: 1.2,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextField(
-                        controller: row.nameCtrl,
-                        focusNode: row.nameFocusNode,
-                        textCapitalization: TextCapitalization.sentences,
-                        scrollPadding: fieldScrollPadding,
-                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                        style: Theme.of(context).textTheme.bodyLarge,
-                        decoration: _ingredientInputDecoration(
-                          context,
-                          hintText: 'Ingredient name',
-                          hintStyle:
-                              Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    fontStyle: FontStyle.italic,
-                                    color: scheme.onSurfaceVariant
-                                        .withValues(alpha: 0.5),
-                                  ),
-                          borderOpacity: 0.2,
-                          prefixIcon: row.namePickedFromSuggestions &&
-                                  row.name.isNotEmpty
-                              ? Padding(
-                                  padding: const EdgeInsets.only(left: 8),
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    widthFactor: 1,
-                                    child: _ingredientPickedFoodIcon(
-                                      context,
-                                      row,
-                                    ),
-                                  ),
-                                )
-                              : null,
-                        ),
-                        onChanged: (_) => _notifyIngredientUi(dialogSetState, () {
-                          row.namePickedFromSuggestions = false;
-                        }),
-                      ),
-                      if (!row.qualitative)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: GroceryItemSuggestionsGrid(
-                            repo: ref.read(groceryRepositoryProvider),
-                            typedValue: row.nameCtrl.text,
-                            recentItems: const [],
-                            maxHeight: suggestionGridMaxHeight,
-                            onPick: (suggestion) {
-                              _notifyIngredientUi(dialogSetState, () {
-                                row.nameCtrl.text = suggestion;
-                                row.namePickedFromSuggestions = true;
-                              });
-                              row.nameFocusNode.unfocus();
-                            },
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: () {
-                    FocusScope.of(context).unfocus();
-                    if (onRemovePressed != null) {
-                      onRemovePressed();
-                    } else {
-                      _removeIngredientAt(idx, dialogSetState);
-                    }
-                  },
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  tooltip: 'Remove ingredient',
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            SegmentedButton<bool>(
-              emptySelectionAllowed: false,
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment<bool>(
-                  value: false,
-                  label: Text('Measure'),
-                  icon: Icon(Icons.scale_outlined, size: 18),
-                ),
-                ButtonSegment<bool>(
-                  value: true,
-                  label: Text('To taste'),
-                  icon: Icon(Icons.spa_outlined, size: 18),
-                ),
-              ],
-              selected: {row.qualitative},
-              onSelectionChanged: (next) {
-                _notifyIngredientUi(dialogSetState, () {
-                  row.qualitative = next.first;
-                });
-              },
-            ),
-            if (row.qualitative) ...[
-              const SizedBox(height: AppSpacing.sm),
-              DropdownButtonFormField<String>(
-                initialValue: qualitativeDropdownValue,
-                isExpanded: true,
-                decoration: _ingredientInputDecoration(
-                  context,
-                  labelText: 'Amount',
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  borderOpacity: 0.2,
-                ),
-                items: [
-                  ..._kQualitativePresets.map(
-                    (p) => DropdownMenuItem<String>(
-                      value: p,
-                      child: Text(p),
-                    ),
-                  ),
-                  const DropdownMenuItem<String>(
-                    value: 'custom',
-                    child: Text('Custom…'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  _notifyIngredientUi(dialogSetState, () {
-                    row.qualitativePreset = value;
-                  });
-                },
-              ),
-              if (row.qualitativePreset == 'custom') ...[
-                const SizedBox(height: AppSpacing.xs),
-                TextField(
-                  controller: row.qualitativeCustomCtrl,
-                  focusNode: row.qualitativeCustomFocusNode,
-                  textCapitalization: TextCapitalization.sentences,
-                  scrollPadding: fieldScrollPadding,
-                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                  decoration: _ingredientInputDecoration(
-                    context,
-                    hintText: 'e.g. 1½ tsp',
-                    borderOpacity: 0.2,
-                  ),
-                  onChanged: (_) =>
-                      _notifyIngredientUi(dialogSetState, () {}),
-                ),
-              ],
-            ] else ...[
-              const SizedBox(height: AppSpacing.xs),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Amount',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final preset in _presetAmountChips)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: ChoiceChip(
-                          label: Text(
-                            preset.label,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              height: 1.1,
-                            ),
-                          ),
-                          labelPadding:
-                              const EdgeInsets.symmetric(horizontal: 10),
-                          selected: _isPresetAmountSelected(
-                            row,
-                            preset.canonicalText,
-                          ),
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          onSelected: (selected) {
-                            _notifyIngredientUi(dialogSetState, () {
-                              if (selected) {
-                                row.amountCtrl.text = preset.canonicalText;
-                              }
-                            });
-                          },
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 132,
-                    child: TextField(
-                      controller: row.amountCtrl,
-                      focusNode: row.amountFocusNode,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      scrollPadding: fieldScrollPadding,
-                      onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                      decoration: _ingredientInputDecoration(
-                        context,
-                        hintText: 'Amount',
-                        hintStyle:
-                            Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  fontStyle: FontStyle.italic,
-                                  fontWeight: FontWeight.w400,
-                                  color: scheme.onSurfaceVariant
-                                      .withValues(alpha: 0.5),
-                                ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        borderOpacity: 0.2,
-                      ),
-                      onChanged: (_) =>
-                          _notifyIngredientUi(dialogSetState, () {}),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      key: ValueKey(
-                        '${row.reorderId}_${row.unitOptions.join('|')}_${row.selectedUnit}',
-                      ),
-                      initialValue: row.unitOptions.contains(row.selectedUnit)
-                          ? row.selectedUnit
-                          : row.unitOptions.first,
-                      isDense: true,
-                      isExpanded: true,
-                      decoration: _ingredientInputDecoration(
-                        context,
-                        labelText: 'Unit',
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        borderOpacity: 0.2,
-                      ),
-                      items: row.unitOptions
-                          .map(
-                            (unit) => DropdownMenuItem(
-                              value: unit,
-                              child: Text(unit),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        _notifyIngredientUi(dialogSetState, () {
-                          row.selectedUnit = value;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(
-                  left: 132 + AppSpacing.sm,
-                  top: AppSpacing.sm,
-                ),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: MeasurementSystemToggle(
-                    onChanged: (s) {
-                      _applyMeasurementSystem(s);
-                      dialogSetState?.call(() {});
-                    },
-                  ),
-                ),
-              ),
-              if (row.selectedUnit == 'custom') ...[
-                const SizedBox(height: AppSpacing.xs),
-                TextField(
-                  controller: row.customUnitCtrl,
-                  focusNode: row.customUnitFocusNode,
-                  textCapitalization: TextCapitalization.sentences,
-                  scrollPadding: fieldScrollPadding,
-                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                  decoration: _ingredientInputDecoration(
-                    context,
-                    labelText: 'Custom unit',
-                    hintText: 'e.g. clove, pinch, can',
-                    borderOpacity: 0.2,
-                  ),
-                  onChanged: (_) =>
-                      _notifyIngredientUi(dialogSetState, () {}),
-                ),
-              ],
-            ],
-          ],
-        ),
-      ),
+    return buildRecipeIngredientEditorBody(
+      context,
+      ref,
+      row: row,
+      index: idx,
+      ingredientCardKey: _ingredientExpandedCardKey,
+      notifyUi: (fn) => _notifyIngredientUi(dialogSetState, fn),
+      onMeasurementSystemChanged: (s) {
+        _applyMeasurementSystem(s);
+        dialogSetState?.call(() {});
+      },
+      onRemovePressed: onRemovePressed,
+      onRemoveIngredientAt: _removeIngredientAt,
+      dialogSetState: dialogSetState,
+      cardMargin: cardMargin,
     );
   }
 
@@ -1797,15 +1235,15 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     });
   }
 
-  bool _isDirectionStepComplete(_DirectionDraft draft) {
-    return draft.textCtrl.text.trim().isNotEmpty;
+  bool _isDirectionStepComplete(RecipeDirectionDraft draft) {
+    return isRecipeDirectionStepComplete(draft);
   }
 
   Future<void> _addDirectionAndOpenModal() async {
     if (!_canAddAnotherDirection) return;
     FocusScope.of(context).unfocus();
     setState(() {
-      _directionDrafts.add(_DirectionDraft());
+      _directionDrafts.add(RecipeDirectionDraft());
       _validationMessage = null;
     });
     final newIndex = _directionDrafts.length - 1;
@@ -1884,7 +1322,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                     child: SizedBox(
                       width: width - 24,
                       child: Theme(
-                        data: _themeForIngredientModal(this.context),
+                        data: themeForRecipeEditorModal(dialogCtx),
                         child: Scaffold(
                           resizeToAvoidBottomInset: false,
                           appBar: AppBar(
@@ -1970,117 +1408,16 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     return last.textCtrl.text.trim().isNotEmpty;
   }
 
-  String _directionSummary(_DirectionDraft draft) {
+  String _directionSummary(RecipeDirectionDraft draft) {
     final t = draft.textCtrl.text.trim();
     if (t.isEmpty) return 'New step';
     return t;
   }
 
-  static const double _kDirectionFieldBorderRadius = 14;
-  static const double _kIngredientFieldBorderRadius = 14;
-
-  InputDecoration _ingredientInputDecoration(
-    BuildContext context, {
-    String? labelText,
-    String? hintText,
-    TextStyle? hintStyle,
-    EdgeInsetsGeometry contentPadding =
-        const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-    double borderOpacity = 1.0,
-    Widget? prefixIcon,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final borderColor = scheme.primary.withValues(alpha: borderOpacity);
-    final border = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(_kIngredientFieldBorderRadius),
-      borderSide: BorderSide(color: borderColor, width: 1.2),
-    );
-    return InputDecoration(
-      filled: true,
-      fillColor: Colors.white,
-      labelText: labelText,
-      hintText: hintText,
-      hintStyle: hintStyle,
-      isDense: true,
-      contentPadding: contentPadding,
-      prefixIcon: prefixIcon,
-      prefixIconConstraints: prefixIcon == null
-          ? null
-          : const BoxConstraints(minWidth: 40, minHeight: 32),
-      border: border,
-      enabledBorder: border,
-      focusedBorder: border,
-      disabledBorder: border,
-    );
-  }
-
-  IconData _groceryCategoryIcon(GroceryCategory category) {
-    return switch (category) {
-      GroceryCategory.produce => Icons.eco_rounded,
-      GroceryCategory.meatFish => Icons.set_meal_rounded,
-      GroceryCategory.dairyEggs => Icons.egg_alt_rounded,
-      GroceryCategory.pantryGrains => Icons.rice_bowl_rounded,
-      GroceryCategory.bakery => Icons.bakery_dining_rounded,
-      GroceryCategory.other => Icons.shopping_bag_rounded,
-    };
-  }
-
-  Widget _ingredientPickedFoodIcon(
-    BuildContext context,
-    _IngredientInput row, {
-    double size = 24,
-  }) {
-    final repo = ref.read(groceryRepositoryProvider);
-    final name = row.nameCtrl.text.trim();
-    if (name.isEmpty) {
-      return SizedBox(width: size, height: size);
-    }
-    final category = repo.categorize(name);
-    final asset = foodIconAssetForName(name, category: category);
-    final color = Theme.of(context).colorScheme.onSurfaceVariant;
-    if (asset != null) {
-      return Image.asset(
-        asset,
-        width: size,
-        height: size,
-        filterQuality: FilterQuality.high,
-        errorBuilder: (_, __, ___) => Icon(
-          _groceryCategoryIcon(category),
-          size: size,
-          color: color,
-        ),
-      );
-    }
-    return Icon(
-      _groceryCategoryIcon(category),
-      size: size,
-      color: color,
-    );
-  }
-
-  InputDecoration _directionInstructionDecoration(BuildContext context) {
-    final border = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(_kDirectionFieldBorderRadius),
-      borderSide: const BorderSide(color: _kCreateRecipeBlueMid, width: 1.2),
-    );
-    return InputDecoration(
-      filled: true,
-      fillColor: Colors.white,
-      labelText: 'Instruction',
-      hintText: 'Describe what to do for this step',
-      isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      border: border,
-      enabledBorder: border,
-      focusedBorder: border,
-      disabledBorder: border,
-    );
-  }
-
   Widget _buildCondensedDirectionRow(
     BuildContext context,
     int idx,
-    _DirectionDraft draft, {
+    RecipeDirectionDraft draft, {
     bool wrapWithBottomPadding = true,
   }) {
     final scheme = Theme.of(context).colorScheme;
@@ -2148,90 +1485,25 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   Widget _buildExpandedDirectionRow(
     BuildContext context,
     int idx,
-    _DirectionDraft draft, {
+    RecipeDirectionDraft draft, {
     StateSetter? dialogSetState,
     VoidCallback? onRemovePressed,
     EdgeInsetsGeometry cardMargin =
         const EdgeInsets.only(bottom: AppSpacing.sm),
   }) {
-    final scheme = Theme.of(context).colorScheme;
-    void notifyUi() {
-      dialogSetState?.call(() {});
-      if (dialogSetState == null) setState(() {});
-    }
-
-    return Container(
-      margin: cardMargin,
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.sm,
-        AppSpacing.sm,
-        AppSpacing.xs,
-        AppSpacing.sm,
-      ),
-      decoration: BoxDecoration(
-        color: _kCreateRecipeBlueLight,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _kCreateRecipeBlueMid,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _kCreateRecipeBlueMid,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Step ${idx + 1}',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: scheme.onSurface,
-                      ),
-                ),
-              ),
-              const Spacer(),
-              if (_directionDrafts.length > 1)
-                IconButton(
-                  onPressed: onRemovePressed ?? () => _removeDirectionAt(idx),
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  tooltip: 'Remove step',
-                  visualDensity: VisualDensity.compact,
-                ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: draft.textCtrl,
-            maxLines: 4,
-            textCapitalization: TextCapitalization.sentences,
-            onTapOutside: (_) => FocusScope.of(context).unfocus(),
-            decoration: _directionInstructionDecoration(context),
-            onChanged: (_) => notifyUi(),
-          ),
-        ],
-      ),
+    return buildRecipeDirectionStepBody(
+      context,
+      draft: draft,
+      stepIndex: idx,
+      showRemoveButton: _directionDrafts.length > 1,
+      notifyUi: (fn) {
+        fn();
+        dialogSetState?.call(() {});
+        if (dialogSetState == null) setState(() {});
+      },
+      onRemovePressed: onRemovePressed,
+      cardMargin: cardMargin,
     );
-  }
-
-  double? _parseIngredientAmount(String raw) {
-    final s = raw.trim();
-    if (s.isEmpty) return null;
-    final direct = double.tryParse(s);
-    if (direct != null) return direct;
-    final slash = RegExp(r'^\s*(\d+)\s*/\s*(\d+)\s*$').firstMatch(s);
-    if (slash != null) {
-      final n = int.tryParse(slash.group(1)!);
-      final d = int.tryParse(slash.group(2)!);
-      if (n != null && d != null && d != 0) return n / d;
-    }
-    return null;
   }
 
   List<String> _ingredientLinesForNutrition() {
@@ -2252,7 +1524,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         );
         continue;
       }
-      final amt = _parseIngredientAmount(row.amountCtrl.text);
+      final amt = parseRecipeIngredientAmount(row.amountCtrl.text);
       final unit = row.selectedUnit == 'custom'
           ? row.customUnitCtrl.text.trim()
           : row.selectedUnit;
@@ -2336,13 +1608,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     }
   }
 
-  bool _isPresetAmountSelected(_IngredientInput row, String canonical) {
-    final a = _parseIngredientAmount(row.amountCtrl.text);
-    final b = _parseIngredientAmount(canonical);
-    if (a == null || b == null) return false;
-    return (a - b).abs() < _kAmountEpsilon;
-  }
-
   bool _validateCurrentStep() {
     if (_step == 0) {
       if ((_formKey.currentState?.validate() ?? false) == false) {
@@ -2373,7 +1638,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           return row.resolvedQualitativePhrase().isEmpty;
         }
         return row.amountCtrl.text.trim().isEmpty ||
-            _parseIngredientAmount(row.amountCtrl.text) == null ||
+            parseRecipeIngredientAmount(row.amountCtrl.text) == null ||
             row.selectedUnit.trim().isEmpty ||
             (row.selectedUnit == 'custom' &&
                 row.customUnitCtrl.text.trim().isEmpty);
@@ -2425,7 +1690,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         return row.resolvedQualitativePhrase().isEmpty;
       }
       return row.amountCtrl.text.trim().isEmpty ||
-          _parseIngredientAmount(row.amountCtrl.text) == null ||
+          parseRecipeIngredientAmount(row.amountCtrl.text) == null ||
           row.selectedUnit.trim().isEmpty ||
           (row.selectedUnit == 'custom' &&
               row.customUnitCtrl.text.trim().isEmpty);
@@ -2463,7 +1728,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     if (a.qualitative != b.qualitative) return false;
     if (a.unit != b.unit) return false;
     if (a.category != b.category) return false;
-    if ((a.amount - b.amount).abs() > _kAmountEpsilon) return false;
+    if ((a.amount - b.amount).abs() > kRecipeIngredientAmountEpsilon) return false;
     if (a.fdcId != b.fdcId) return false;
     if ((a.fdcDescription ?? '') != (b.fdcDescription ?? '')) return false;
     if (a.fdcNutritionEstimated != b.fdcNutritionEstimated) return false;
@@ -2529,7 +1794,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             : row.selectedUnit;
         return Ingredient(
           name: row.name.trim(),
-          amount: _parseIngredientAmount(row.amountCtrl.text) ?? 0,
+          amount: parseRecipeIngredientAmount(row.amountCtrl.text) ?? 0,
           unit: unit,
           category: GroceryCategory.other,
         );
@@ -2552,7 +1817,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     }
 
     final rawTitle = _titleCtrl.text.trim();
-    final formattedTitle = formatRecipeTitleCase(rawTitle);
+    final formattedTitle = formatRecipeTitlePerWord(rawTitle);
     final savedTitle = initial != null ? rawTitle : formattedTitle;
 
     return Recipe(
@@ -2973,30 +2238,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     );
   }
 
-  ThemeData _themeForIngredientModal(BuildContext sheetContext) {
-    return Theme.of(sheetContext).copyWith(
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: const Color(0xFFEFF6FF),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(
-            color: Theme.of(sheetContext).colorScheme.primary,
-            width: 1.2,
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _addIngredientAndOpenModal() async {
     if (!_canAddAnotherIngredient) return;
     FocusScope.of(context).unfocus();
@@ -3004,7 +2245,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       '',
       ref.read(measurementSystemProvider),
     );
-    final row = _IngredientInput(
+    final row = RecipeIngredientFormRow(
       name: '',
       unitOptions: profile.options,
       selectedUnit: profile.defaultUnit,
@@ -3094,7 +2335,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                     child: SizedBox(
                       width: width - 24,
                       child: Theme(
-                        data: _themeForIngredientModal(this.context),
+                        data: themeForRecipeEditorModal(dialogCtx),
                         child: Scaffold(
                           resizeToAvoidBottomInset: false,
                           appBar: AppBar(
@@ -3377,12 +2618,57 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                             child: TextFormField(
                               controller: _titleCtrl,
                               focusNode: _titleFocusNode,
-                              textCapitalization: TextCapitalization.sentences,
+                              textCapitalization: widget.initialRecipe != null
+                                  ? TextCapitalization.sentences
+                                  : (_recipeTitleLowercaseTyping
+                                      ? TextCapitalization.none
+                                      : TextCapitalization.words),
+                              inputFormatters: widget.initialRecipe == null
+                                  ? [
+                                      RecipeTitlePerWordInputFormatter(
+                                        lowercaseTyping:
+                                            _recipeTitleLowercaseTyping,
+                                      ),
+                                    ]
+                                  : null,
                               onTapOutside: (_) =>
                                   FocusScope.of(context).unfocus(),
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Recipe name',
-                                hintText: 'e.g., Spicy Garlic Chicken Pasta',
+                                hintText:
+                                    'e.g., Spicy Garlic Chicken Pasta',
+                                suffixIcon: widget.initialRecipe == null
+                                    ? IconButton(
+                                        icon: Icon(
+                                          _recipeTitleLowercaseTyping
+                                              ? Icons.title_rounded
+                                              : Icons.text_fields_rounded,
+                                        ),
+                                        tooltip: _recipeTitleLowercaseTyping
+                                            ? 'Title case while typing'
+                                            : 'Lowercase while typing',
+                                        onPressed: () {
+                                          setState(() {
+                                            if (_recipeTitleLowercaseTyping) {
+                                              _recipeTitleLowercaseTyping =
+                                                  false;
+                                              _titleCtrl.text =
+                                                  formatRecipeTitlePerWord(
+                                                _titleCtrl.text,
+                                              );
+                                              _titleCtrl.selection =
+                                                  TextSelection.collapsed(
+                                                offset:
+                                                    _titleCtrl.text.length,
+                                              );
+                                            } else {
+                                              _recipeTitleLowercaseTyping =
+                                                  true;
+                                            }
+                                          });
+                                        },
+                                      )
+                                    : null,
                               ),
                               validator: (value) =>
                                   (value == null || value.trim().isEmpty)

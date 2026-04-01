@@ -19,6 +19,9 @@ import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_editor_modals.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_direction_edit_chip.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_ingredient_edit_chip.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -35,6 +38,8 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   final FlutterTts _tts = FlutterTts();
   int _stepIndex = 0;
   final Set<int> _checkedIngredients = {};
+  bool _ingredientsEditMode = false;
+  bool _directionsEditMode = false;
   bool _nutritionShowPerServing = false;
   bool _nutritionBusy = false;
   DateTime? _recipeMissingSince;
@@ -45,6 +50,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   void initState() {
     super.initState();
     unawaited(ref.read(localCacheProvider).recordViewedRecipeId(widget.recipeId));
+    unawaited(ref.read(groceryRepositoryProvider).ensureCatalogLoaded());
   }
 
   bool _isInstagramSourceUrl(String? raw) {
@@ -232,12 +238,18 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
       final name = ing.name.trim();
       if (name.isEmpty) continue;
       try {
+        final measurementSystem = ref.read(measurementSystemProvider);
+        final cols = ing.qualitative
+            ? null
+            : ingredientDisplayColumns(ing, measurementSystem);
         await repo.addItem(
           userId: user.id,
           listId: targetListId,
           name: name,
-          quantity: ing.qualitative ? ing.unit : formatIngredientAmount(ing.amount),
-          unit: ing.qualitative ? null : ing.unit,
+          quantity: ing.qualitative
+              ? ing.unit
+              : cols!.amount,
+          unit: ing.qualitative ? null : (cols!.unit.isEmpty ? null : cols.unit),
           fromRecipeId: recipe.id,
         );
         added++;
@@ -254,6 +266,184 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Added $added item${added == 1 ? '' : 's'} to list.')),
     );
+  }
+
+  Recipe? _recipeSnapshot(String id) {
+    final recipes = ref.read(recipesProvider).valueOrNull;
+    return recipes?.firstWhereOrNull((r) => r.id == id);
+  }
+
+  Future<void> _persistRecipeIngredients(
+    Recipe base,
+    List<Ingredient> ingredients,
+  ) async {
+    final updated = base.copyWith(ingredients: ingredients);
+    try {
+      await ref.read(recipesRepositoryProvider).updateRecipe(base.id, updated);
+      ref.invalidate(recipesProvider);
+      if (mounted) {
+        setState(() => _checkedIngredients.clear());
+      }
+    } on StateError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save ingredients. Try again.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save ingredients. Check your connection.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editIngredientLine(Recipe recipe, int index) async {
+    if (index < 0 || index >= recipe.ingredients.length) return;
+    final initial = recipe.ingredients[index];
+    final outcome =
+        await showImportIngredientEditorDialog(context, ref, initial: initial);
+    if (!mounted || outcome == null) return;
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final list = [...fresh.ingredients];
+    if (index < 0 || index >= list.length) return;
+    if (outcome is ImportIngredientEditorSaved) {
+      list[index] = outcome.ingredient;
+      await _persistRecipeIngredients(fresh, list);
+    } else if (outcome is ImportIngredientEditorDeleted) {
+      list.removeAt(index);
+      await _persistRecipeIngredients(fresh, list);
+    }
+  }
+
+  Future<void> _removeIngredientLine(Recipe recipe, int index) async {
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final list = [...fresh.ingredients];
+    if (index < 0 || index >= list.length) return;
+    list.removeAt(index);
+    await _persistRecipeIngredients(fresh, list);
+  }
+
+  Future<void> _addIngredientLine(Recipe recipe) async {
+    final outcome =
+        await showImportIngredientEditorDialog(context, ref, initial: null);
+    if (!mounted || outcome == null) return;
+    if (outcome is! ImportIngredientEditorSaved) return;
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    await _persistRecipeIngredients(
+      fresh,
+      [...fresh.ingredients, outcome.ingredient],
+    );
+  }
+
+  Future<void> _persistRecipeInstructions(
+    Recipe base,
+    List<String> instructions,
+  ) async {
+    final updated = base.copyWith(instructions: instructions);
+    try {
+      await ref.read(recipesRepositoryProvider).updateRecipe(base.id, updated);
+      ref.invalidate(recipesProvider);
+      if (mounted) {
+        setState(() {
+          if (instructions.isEmpty) {
+            _stepIndex = 0;
+          } else if (_stepIndex >= instructions.length) {
+            _stepIndex = instructions.length - 1;
+          }
+        });
+      }
+    } on StateError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save directions. Try again.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save directions. Check your connection.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editDirectionLine(Recipe recipe, int index) async {
+    if (index < 0 || index >= recipe.instructions.length) return;
+    final initialText = recipe.instructions[index];
+    final outcome = await showImportDirectionStepDialog(
+      context,
+      stepIndex: index,
+      initialText: initialText,
+      isNewStep: false,
+      showRemoveButton: recipe.instructions.length > 1,
+    );
+    if (!mounted || outcome == null) return;
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final list = [...fresh.instructions];
+    if (index < 0 || index >= list.length) return;
+    if (outcome is ImportDirectionEditorSaved) {
+      list[index] = outcome.text;
+      await _persistRecipeInstructions(fresh, list);
+    } else if (outcome is ImportDirectionEditorDeleted) {
+      if (list.length <= 1) {
+        await _persistRecipeInstructions(fresh, const []);
+      } else {
+        list.removeAt(index);
+        await _persistRecipeInstructions(fresh, list);
+      }
+    }
+  }
+
+  Future<void> _removeDirectionLine(Recipe recipe, int index) async {
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final list = [...fresh.instructions];
+    if (index < 0 || index >= list.length) return;
+    if (list.length <= 1) {
+      await _persistRecipeInstructions(fresh, const []);
+    } else {
+      list.removeAt(index);
+      await _persistRecipeInstructions(fresh, list);
+    }
+  }
+
+  Future<void> _addDirectionLine(Recipe recipe) async {
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final list = [...fresh.instructions];
+    final isReplacingEmptyOnly =
+        list.length == 1 && list.first.trim().isEmpty;
+    final isEmpty = list.isEmpty;
+    final newIndex = isReplacingEmptyOnly ? 0 : (isEmpty ? 0 : list.length);
+    final outcome = await showImportDirectionStepDialog(
+      context,
+      stepIndex: newIndex,
+      initialText: '',
+      isNewStep: true,
+      showRemoveButton: !isEmpty && !isReplacingEmptyOnly,
+    );
+    if (!mounted || outcome == null) return;
+    if (outcome is ImportDirectionEditorDeleted) return;
+    if (outcome is! ImportDirectionEditorSaved) return;
+    final text = outcome.text.trim();
+    if (text.isEmpty) return;
+    final fresh2 = _recipeSnapshot(recipe.id);
+    if (fresh2 == null) return;
+    var next = [...fresh2.instructions];
+    if (isReplacingEmptyOnly) {
+      next = [text];
+    } else if (isEmpty) {
+      next = [text];
+    } else {
+      next.add(text);
+    }
+    await _persistRecipeInstructions(fresh2, next);
   }
 
   bool _hasNutritionData(Nutrition n) {
@@ -718,40 +908,96 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
               _buildNutritionSection(context, recipe),
               const SizedBox(height: 16),
               Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
-                      'Ingredients',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                  const MeasurementSystemToggle(),
-                ],
-              ),
-              const SizedBox(height: 6),
-              ...recipe.ingredients.asMap().entries.map(
-                    (entry) => Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: CheckboxListTile(
-                        value: _checkedIngredients.contains(entry.key),
-                        title: Text(
-                          entry.value.qualitative
-                              ? '${entry.value.name} · ${entry.value.unit}'
-                              : '${ingredientDisplayQuantityLabel(entry.value, measurementSystem)} ${entry.value.name}',
-                        ),
-                        onChanged: (_) {
-                          setState(() {
-                            if (_checkedIngredients.contains(entry.key)) {
-                              _checkedIngredients.remove(entry.key);
-                            } else {
-                              _checkedIngredients.add(entry.key);
-                            }
-                          });
-                        },
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Ingredients',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
                   ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 40,
+                          minHeight: 36,
+                        ),
+                        tooltip: _ingredientsEditMode
+                            ? 'Done editing ingredients'
+                            : 'Edit ingredients',
+                        icon: Icon(
+                          _ingredientsEditMode
+                              ? Icons.check_rounded
+                              : Icons.edit_outlined,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _ingredientsEditMode = !_ingredientsEditMode;
+                          });
+                        },
+                      ),
+                      const MeasurementSystemToggle(),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (!_ingredientsEditMode)
+                ...recipe.ingredients.asMap().entries.map(
+                      (entry) => Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: CheckboxListTile(
+                          value: _checkedIngredients.contains(entry.key),
+                          title: Text(
+                            entry.value.qualitative
+                                ? '${entry.value.name} · ${entry.value.unit}'
+                                : '${ingredientDisplayQuantityLabel(entry.value, measurementSystem)} ${entry.value.name}',
+                          ),
+                          onChanged: (_) {
+                            setState(() {
+                              if (_checkedIngredients.contains(entry.key)) {
+                                _checkedIngredients.remove(entry.key);
+                              } else {
+                                _checkedIngredients.add(entry.key);
+                              }
+                            });
+                          },
+                        ),
+                      ),
+                    )
+              else ...[
+                ...recipe.ingredients.asMap().entries.map(
+                      (entry) => RecipeIngredientEditChip(
+                        label:
+                            RecipeIngredientEditChip.labelForIngredientWithSystem(
+                          entry.value,
+                          measurementSystem,
+                        ),
+                        onTap: () => unawaited(
+                          _editIngredientLine(recipe, entry.key),
+                        ),
+                        onDelete: () => unawaited(
+                          _removeIngredientLine(recipe, entry.key),
+                        ),
+                      ),
+                    ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => unawaited(_addIngredientLine(recipe)),
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('Add ingredient'),
+                  ),
+                ),
+              ],
               if (_checkedIngredients.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 FilledButton.icon(
@@ -763,58 +1009,133 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                 ),
               ],
               const Divider(),
-              Text('Step ${_stepIndex + 1}/${steps.length}',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Text(step, style: Theme.of(context).textTheme.bodyLarge),
-              ),
-              const SizedBox(height: 16),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: _stepIndex == 0
-                          ? null
-                          : () => setState(() => _stepIndex--),
-                      child: const Text('Previous'),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Directions',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: _stepIndex >= steps.length - 1
-                          ? null
-                          : () => setState(() => _stepIndex++),
-                      child: const Text('Next Step'),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 36,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  FilledButton.tonal(
-                    onPressed: () => _tts.speak(step),
-                    child: const Text('Voice'),
-                  ),
-                  FilledButton.tonal(
-                    onPressed: () async {
-                      await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay.now(),
-                      );
+                    tooltip: _directionsEditMode
+                        ? 'Done editing directions'
+                        : 'Edit directions',
+                    icon: Icon(
+                      _directionsEditMode
+                          ? Icons.check_rounded
+                          : Icons.edit_outlined,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _directionsEditMode = !_directionsEditMode;
+                      });
                     },
-                    child: const Text('Timer'),
                   ),
                 ],
               ),
+              const SizedBox(height: 6),
+              if (!_directionsEditMode) ...[
+                Text(
+                  'Step ${_stepIndex + 1}/${steps.length}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child:
+                      Text(step, style: Theme.of(context).textTheme.bodyLarge),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _stepIndex == 0
+                            ? null
+                            : () => setState(() => _stepIndex--),
+                        child: const Text('Previous'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: _stepIndex >= steps.length - 1
+                            ? null
+                            : () => setState(() => _stepIndex++),
+                        child: const Text('Next Step'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => _tts.speak(step),
+                      child: const Text('Voice'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () async {
+                        await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay.now(),
+                        );
+                      },
+                      child: const Text('Timer'),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                if (recipe.instructions.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'No steps yet. Add one below.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                    ),
+                  )
+                else
+                  ...recipe.instructions.asMap().entries.map(
+                        (e) => RecipeDirectionEditChip(
+                          label: RecipeDirectionEditChip.labelForStep(
+                            e.key + 1,
+                            e.value,
+                          ),
+                          onTap: () => unawaited(
+                            _editDirectionLine(recipe, e.key),
+                          ),
+                          onDelete: () => unawaited(
+                            _removeDirectionLine(recipe, e.key),
+                          ),
+                        ),
+                      ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => unawaited(_addDirectionLine(recipe)),
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('Add step'),
+                  ),
+                ),
+              ],
             ],
           );
         },

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -6,26 +7,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/models/instagram_recipe_import.dart';
-import 'package:plateplan/core/measurement/ingredient_unit_profile.dart';
-import 'package:plateplan/core/measurement/measurement_system_provider.dart';
-import 'package:plateplan/core/strings/ingredient_amount_display.dart';
+import 'package:plateplan/core/strings/recipe_title_case.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_editor_modals.dart';
+import 'package:plateplan/features/recipes/presentation/recipe_ingredient_edit_chip.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
-/// Matches recipe editor qualitative presets ([recipes_screen]).
-const _kImportQualitativePresets = [
-  'to taste',
-  'as needed',
-  'pinch',
-  '1 tsp',
-  '1 tbsp',
-  '½ tsp',
-];
 
 /// Passed via [GoRouterState.extra] when opening [ImportRecipePreviewScreen].
 class ImportRecipePreviewArgs {
@@ -69,8 +61,11 @@ class _ImportRecipePreviewScreenState
   @override
   void initState() {
     super.initState();
+    unawaited(ref.read(groceryRepositoryProvider).ensureCatalogLoaded());
     _recipe = widget.args.recipe;
-    _titleCtrl = TextEditingController(text: _recipe.title);
+    _titleCtrl = TextEditingController(
+      text: formatRecipeTitlePerWord(_recipe.title),
+    );
     _descCtrl = TextEditingController(text: _recipe.description ?? '');
     _instructionDrafts =
         _recipe.instructions.isEmpty ? [''] : _recipe.instructions.toList();
@@ -111,7 +106,7 @@ class _ImportRecipePreviewScreenState
           sourceUrl: _recipe.sourceUrl,
           sharedContent: payload,
         );
-        _titleCtrl.text = _recipe.title;
+        _titleCtrl.text = formatRecipeTitlePerWord(_recipe.title);
         _descCtrl.text = _recipe.description ?? '';
         _instructionDrafts =
             _recipe.instructions.isEmpty ? [''] : _recipe.instructions.toList();
@@ -136,7 +131,7 @@ class _ImportRecipePreviewScreenState
     return _recipe.copyWith(
       title: _titleCtrl.text.trim().isEmpty
           ? _recipe.title
-          : _titleCtrl.text.trim(),
+          : formatRecipeTitlePerWord(_titleCtrl.text.trim()),
       description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
       instructions: instructions,
       ingredients: ingredients,
@@ -480,7 +475,7 @@ class _ImportRecipePreviewScreenState
                 ],
                 TextField(
                   controller: _titleCtrl,
-                  textCapitalization: TextCapitalization.sentences,
+                  textCapitalization: TextCapitalization.words,
                   decoration: const InputDecoration(
                     labelText: 'Title',
                     border: OutlineInputBorder(),
@@ -578,19 +573,35 @@ class _ImportRecipePreviewScreenState
                 for (var i = 0; i < _recipe.ingredients.length; i++)
                   Padding(
                     padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-                    child: _IngredientChip(
-                      ingredient: _recipe.ingredients[i],
+                    child: RecipeIngredientEditChip(
+                      label: RecipeIngredientEditChip.labelForIngredient(
+                        _recipe.ingredients[i],
+                      ),
+                      style: RecipeIngredientChipStyle.importPink,
                       onTap: () async {
-                        final edited = await _promptIngredient(
+                        final out = await showImportIngredientEditorDialog(
                           context,
+                          ref,
                           initial: _recipe.ingredients[i],
                         );
-                        if (edited == null) return;
-                        setState(() {
-                          final list = [..._recipe.ingredients];
-                          list[i] = edited;
-                          _recipe = _recipe.copyWith(ingredients: list);
-                        });
+                        if (out == null) return;
+                        if (out is ImportIngredientEditorDeleted) {
+                          setState(() {
+                            final list = [..._recipe.ingredients]
+                              ..removeAt(i);
+                            _recipe =
+                                _recipe.copyWith(ingredients: list);
+                          });
+                          return;
+                        }
+                        if (out is ImportIngredientEditorSaved) {
+                          setState(() {
+                            final list = [..._recipe.ingredients];
+                            list[i] = out.ingredient;
+                            _recipe =
+                                _recipe.copyWith(ingredients: list);
+                          });
+                        }
                       },
                       onDelete: () {
                         setState(() {
@@ -602,13 +613,21 @@ class _ImportRecipePreviewScreenState
                   ),
                 TextButton.icon(
                   onPressed: () async {
-                    final created = await _promptIngredient(context);
-                    if (created == null) return;
-                    setState(() {
-                      _recipe = _recipe.copyWith(
-                        ingredients: [..._recipe.ingredients, created],
-                      );
-                    });
+                    final out =
+                        await showImportIngredientEditorDialog(context, ref);
+                    if (out == null || out is ImportIngredientEditorDeleted) {
+                      return;
+                    }
+                    if (out is ImportIngredientEditorSaved) {
+                      setState(() {
+                        _recipe = _recipe.copyWith(
+                          ingredients: [
+                            ..._recipe.ingredients,
+                            out.ingredient,
+                          ],
+                        );
+                      });
+                    }
                   },
                   icon: const Icon(Icons.add_rounded),
                   label: const Text('Add ingredient'),
@@ -642,15 +661,30 @@ class _ImportRecipePreviewScreenState
                         index: index,
                         text: step,
                         onEdit: () async {
-                          final edited = await _promptInstruction(
+                          final out = await showImportDirectionStepDialog(
                             context,
-                            initial: step,
-                            index: index,
+                            stepIndex: index,
+                            initialText: step,
+                            isNewStep: false,
+                            showRemoveButton:
+                                _instructionDrafts.length > 1,
                           );
-                          if (edited == null) return;
-                          setState(() {
-                            _instructionDrafts[index] = edited;
-                          });
+                          if (out == null) return;
+                          if (out is ImportDirectionEditorDeleted) {
+                            setState(() {
+                              if (_instructionDrafts.length <= 1) {
+                                _instructionDrafts[0] = '';
+                              } else {
+                                _instructionDrafts.removeAt(index);
+                              }
+                            });
+                            return;
+                          }
+                          if (out is ImportDirectionEditorSaved) {
+                            setState(() {
+                              _instructionDrafts[index] = out.text;
+                            });
+                          }
                         },
                         onDelete: () {
                           setState(() {
@@ -677,20 +711,30 @@ class _ImportRecipePreviewScreenState
                 ),
                 TextButton.icon(
                   onPressed: () async {
-                    final created = await _promptInstruction(
+                    final isReplacingEmptyOnly =
+                        _instructionDrafts.length == 1 &&
+                            _instructionDrafts.first.trim().isEmpty;
+                    final newIndex = isReplacingEmptyOnly
+                        ? 0
+                        : _instructionDrafts.length;
+                    final out = await showImportDirectionStepDialog(
                       context,
-                      initial: '',
-                      index: _instructionDrafts.length,
+                      stepIndex: newIndex,
+                      initialText: '',
+                      isNewStep: true,
+                      showRemoveButton: !isReplacingEmptyOnly,
                     );
-                    if (created == null) return;
-                    setState(() {
-                      if (_instructionDrafts.length == 1 &&
-                          _instructionDrafts.first.trim().isEmpty) {
-                        _instructionDrafts[0] = created;
-                      } else {
-                        _instructionDrafts.add(created);
-                      }
-                    });
+                    if (out == null) return;
+                    if (out is ImportDirectionEditorDeleted) return;
+                    if (out is ImportDirectionEditorSaved) {
+                      setState(() {
+                        if (isReplacingEmptyOnly) {
+                          _instructionDrafts[0] = out.text;
+                        } else {
+                          _instructionDrafts.add(out.text);
+                        }
+                      });
+                    }
                   },
                   icon: const Icon(Icons.add_rounded),
                   label: const Text('Add step'),
@@ -846,303 +890,6 @@ class _ImportRecipePreviewScreenState
     return result;
   }
 
-  Future<Ingredient?> _promptIngredient(
-    BuildContext context, {
-    Ingredient? initial,
-  }) async {
-    final system = ref.read(measurementSystemProvider);
-    final nameCtrl = TextEditingController(text: initial?.name ?? '');
-    final amountCtrl = TextEditingController(
-      text: initial == null
-          ? ''
-          : initial.qualitative
-              ? ''
-              : formatIngredientAmount(initial.amount),
-    );
-    final customUnitCtrl = TextEditingController();
-    final qualitativeCustomCtrl = TextEditingController();
-
-    var profile = detectUnitProfile(nameCtrl.text.trim(), system);
-    var unitOptions = List<String>.from(profile.options);
-    var selectedUnit = profile.defaultUnit;
-    var qualitativePreset = 'to taste';
-
-    var qualitative = initial?.qualitative ?? false;
-    if (initial != null) {
-      if (initial.qualitative) {
-        final t = initial.unit.trim();
-        if (t.isEmpty) {
-          qualitativePreset = 'to taste';
-        } else if (_kImportQualitativePresets.contains(t)) {
-          qualitativePreset = t;
-        } else {
-          qualitativePreset = 'custom';
-          qualitativeCustomCtrl.text = t;
-        }
-      } else {
-        profile = detectUnitProfile(initial.name, system);
-        unitOptions = List<String>.from(profile.options);
-        final nu = initial.unit.trim().toLowerCase();
-        final isCustom =
-            !profile.options.any((o) => o.toLowerCase() == nu);
-        if (isCustom) {
-          selectedUnit = 'custom';
-          customUnitCtrl.text = initial.unit;
-        } else {
-          selectedUnit =
-              matchUnitOption(profile.options, initial.unit) ??
-                  profile.defaultUnit;
-        }
-      }
-    }
-
-    final result = await showDialog<Ingredient>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setLocal) {
-          void onNameChanged() {
-            setLocal(() {
-              profile = detectUnitProfile(nameCtrl.text.trim(), system);
-              unitOptions = List<String>.from(profile.options);
-              if (selectedUnit != 'custom' &&
-                  !unitOptions.contains(selectedUnit)) {
-                selectedUnit = profile.defaultUnit;
-              }
-            });
-          }
-
-          return AlertDialog(
-            title: Text(initial == null ? 'Add ingredient' : 'Edit ingredient'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Ingredient',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => onNameChanged(),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    value: qualitative,
-                    onChanged: (v) => setLocal(() {
-                      qualitative = v;
-                      if (!v) {
-                        profile =
-                            detectUnitProfile(nameCtrl.text.trim(), system);
-                        unitOptions = List<String>.from(profile.options);
-                        selectedUnit = profile.defaultUnit;
-                        customUnitCtrl.clear();
-                      }
-                    }),
-                    title: const Text('Free-text amount'),
-                    subtitle: const Text('Use for “to taste”, “pinch”, etc.'),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  if (qualitative) ...[
-                    DropdownButtonFormField<String>(
-                      key: ValueKey<String>(qualitativePreset),
-                      initialValue: qualitativePreset,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Amount',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: [
-                        ..._kImportQualitativePresets.map(
-                          (p) => DropdownMenuItem<String>(
-                            value: p,
-                            child: Text(p),
-                          ),
-                        ),
-                        const DropdownMenuItem<String>(
-                          value: 'custom',
-                          child: Text('Custom…'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setLocal(() => qualitativePreset = value);
-                      },
-                    ),
-                    if (qualitativePreset == 'custom') ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      TextField(
-                        controller: qualitativeCustomCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Custom amount text',
-                          border: OutlineInputBorder(),
-                        ),
-                        textCapitalization: TextCapitalization.sentences,
-                      ),
-                    ],
-                  ] else ...[
-                    TextField(
-                      controller: amountCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Amount',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            key: ValueKey(
-                              '${unitOptions.join('|')}_$selectedUnit',
-                            ),
-                            initialValue: unitOptions.contains(selectedUnit)
-                                ? selectedUnit
-                                : unitOptions.last,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Unit',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: unitOptions
-                                .map(
-                                  (u) => DropdownMenuItem<String>(
-                                    value: u,
-                                    child: Text(u),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (value) {
-                              if (value == null) return;
-                              setLocal(() {
-                                selectedUnit = value;
-                                if (value != 'custom') {
-                                  customUnitCtrl.clear();
-                                }
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (selectedUnit == 'custom') ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      TextField(
-                        controller: customUnitCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Custom unit',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final name = nameCtrl.text.trim();
-                  if (name.isEmpty) return;
-                  if (qualitative) {
-                    String qUnit;
-                    if (qualitativePreset == 'custom') {
-                      qUnit = qualitativeCustomCtrl.text.trim();
-                    } else {
-                      qUnit = qualitativePreset;
-                    }
-                    Navigator.pop(
-                      ctx,
-                      Ingredient(
-                        name: name,
-                        amount: 0,
-                        unit: qUnit,
-                        category: GroceryCategory.other,
-                        qualitative: true,
-                      ),
-                    );
-                    return;
-                  }
-                  final amount =
-                      _tryParseAmountText(amountCtrl.text.trim()) ?? 0;
-                  final unit = selectedUnit == 'custom'
-                      ? customUnitCtrl.text.trim()
-                      : selectedUnit;
-                  if (unit.isEmpty) return;
-                  Navigator.pop(
-                    ctx,
-                    Ingredient(
-                      name: name,
-                      amount: amount,
-                      unit: unit,
-                      category: GroceryCategory.other,
-                      qualitative: false,
-                    ),
-                  );
-                },
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        });
-      },
-    );
-    nameCtrl.dispose();
-    amountCtrl.dispose();
-    customUnitCtrl.dispose();
-    qualitativeCustomCtrl.dispose();
-    return result;
-  }
-
-  Future<String?> _promptInstruction(
-    BuildContext context, {
-    required String initial,
-    required int index,
-  }) async {
-    final ctrl = TextEditingController(text: initial);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Step ${index + 1}'),
-        content: TextField(
-          controller: ctrl,
-          minLines: 3,
-          maxLines: 10,
-          decoration: const InputDecoration(
-            hintText: 'Describe this step...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    return result;
-  }
-
-  double? _tryParseAmountText(String raw) {
-    final text = raw.trim();
-    if (text.isEmpty) return null;
-    return double.tryParse(text.replaceAll(',', '.'));
-  }
-
   bool _isServingsLikelyEstimated({
     required int servings,
     required String? sourcePayload,
@@ -1155,87 +902,6 @@ class _ImportRecipePreviewScreenState
       caseSensitive: false,
     ).hasMatch(text);
     return !mentionsServings && servings == 2;
-  }
-}
-
-class _IngredientChip extends StatelessWidget {
-  const _IngredientChip({
-    required this.ingredient,
-    required this.onTap,
-    required this.onDelete,
-  });
-
-  final Ingredient ingredient;
-  final VoidCallback onTap;
-  final VoidCallback onDelete;
-
-  String _summary() {
-    final name = ingredient.name.trim().isEmpty ? 'Ingredient' : ingredient.name;
-    if (ingredient.qualitative) {
-      final q = ingredient.unit.trim();
-      return q.isEmpty ? name : '$name · $q';
-    }
-    final amount =
-        ingredient.amount > 0 ? formatIngredientAmount(ingredient.amount) : '';
-    final unit = ingredient.unit.trim();
-    if (amount.isEmpty) return unit.isEmpty ? name : '$name · $unit';
-    return unit.isEmpty ? '$name · $amount' : '$name · $amount $unit';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Ink(
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFE8EE),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: const Color(0xFFE8A8B8)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.only(left: 10, right: 4, top: 8, bottom: 8),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.restaurant_rounded,
-                  size: 20,
-                  color: scheme.primary,
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                Expanded(
-                  child: Text(
-                    _summary(),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Icon(
-                  Icons.edit_outlined,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
-                IconButton(
-                  onPressed: onDelete,
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                  tooltip: 'Remove',
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
 
