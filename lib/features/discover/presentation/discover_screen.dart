@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/measurement/ingredient_display_units.dart';
 import 'package:plateplan/core/measurement/measurement_system_provider.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/models/dietary_option.dart';
 import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/measurement_system_toggle.dart';
@@ -11,6 +12,7 @@ import 'package:plateplan/core/ui/recipo_kit.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
+import 'package:plateplan/features/discover/domain/discover_browse_categories.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
@@ -71,6 +73,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     final searchQuery = ref.watch(discoverSearchQueryProvider);
     final isSearchActive = searchQuery.trim().isNotEmpty;
     final searchResultsAsync = ref.watch(discoverPublicSearchResultsProvider);
+    final activeDietary = ref.watch(discoverSelectedDietaryTagsProvider);
 
     return Scaffold(
       body: DecoratedBox(
@@ -87,6 +90,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                     _buildHeader(context),
                     const SizedBox(height: AppSpacing.sm),
                     _buildSearchOnly(isSearchActive: isSearchActive),
+                    if (activeDietary.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      _buildActiveDietaryFiltersRow(activeDietary),
+                    ],
                     const SizedBox(height: AppSpacing.sm),
                     if (!isSearchActive) ...[
                       _buildMealTypeChips(selectedMeal),
@@ -115,8 +122,28 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                                 const SizedBox(height: AppSpacing.xs),
                                 _buildQuickDinnerGrid(featuredRecipesAsync),
                                 const SizedBox(height: AppSpacing.md),
-                                // New From Users intentionally hidden for now.
                                 _sectionTitle(context, 'Explore Cuisines'),
+                                if (activeDietary.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: GestureDetector(
+                                      onTap: _showFilterSheet,
+                                      child: Text(
+                                        'Filtered for ${activeDietary.map((s) {
+                                          for (final o in DietaryOption.values) {
+                                            if (o.slug == s) return o.label;
+                                          }
+                                          return s;
+                                        }).join(', ')}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: AppBrand.deepTeal,
+                                            ),
+                                      ),
+                                    ),
+                                  ),
                                 const SizedBox(height: AppSpacing.xs),
                                 _buildCuisineGrid(cuisinesAsync),
                               ],
@@ -242,9 +269,23 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final filterCount = ref.watch(discoverActiveFilterCountProvider);
     return Row(
       children: [
-        const SizedBox(width: 40),
+        InkWell(
+          onTap: _showFilterSheet,
+          borderRadius: BorderRadius.circular(14),
+          child: Badge(
+            isLabelVisible: filterCount > 0,
+            label: Text('$filterCount'),
+            offset: const Offset(6, -4),
+            child: const Icon(
+              Icons.tune_rounded,
+              size: 20,
+              color: AppBrand.deepTeal,
+            ),
+          ),
+        ),
         const Spacer(),
         Text(
           'Discover',
@@ -271,6 +312,49 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             size: 18,
             color: AppBrand.deepTeal,
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActiveDietaryFiltersRow(Set<String> tags) {
+    String labelFor(String slug) {
+      for (final o in DietaryOption.values) {
+        if (o.slug == slug) return o.label;
+      }
+      return _titleCase(slug);
+    }
+
+    final sorted = tags.toList()..sort();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final tag in sorted)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: InputChip(
+                      label: Text(labelFor(tag)),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onDeleted: () => ref
+                          .read(discoverSelectedDietaryTagsProvider.notifier)
+                          .removeTag(tag),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: () => ref
+              .read(discoverSelectedDietaryTagsProvider.notifier)
+              .clearAll(),
+          child: const Text('Clear all'),
         ),
       ],
     );
@@ -529,7 +613,37 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     ];
 
     return cuisinesAsync.when(
-      data: (tiles) => GridView.builder(
+      data: (tiles) {
+        if (tiles.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Text(
+                  'No categories match your current filters',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[600],
+                      ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonal(
+                  onPressed: () {
+                    ref
+                        .read(discoverSelectedDietaryTagsProvider.notifier)
+                        .clearAll();
+                  },
+                  child: const Text('Clear dietary filters'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => context.push('/profile'),
+                  child: const Text('Adjust in Profile'),
+                ),
+              ],
+            ),
+          );
+        }
+        return GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: tiles.length,
@@ -546,7 +660,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             subtitle: '${tile.recipeCount} recipes',
             color: colors[index % colors.length],
             icon: icons[index % icons.length],
-            graphicUrl: _cuisineGraphicForLabel(tile.label),
+            graphicUrl: browseCategoryById(tile.id)?.graphicUrl ??
+                _cuisineGraphicForLabel(tile.label),
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
@@ -562,7 +677,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             },
           );
         },
-      ),
+      );
+      },
       loading: () => const SizedBox(
         height: 120,
         child: Center(child: CircularProgressIndicator()),
@@ -995,19 +1111,12 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     }
   }
 
-  // ignore: unused_element
   Future<void> _showFilterSheet() async {
-    final initialCuisines = ref.read(discoverSelectedCuisineIdsProvider);
     final initialDietary = ref.read(discoverSelectedDietaryTagsProvider);
-    final initialPrep = ref.read(discoverPrepTimeBucketProvider);
-    final initialRating = ref.read(discoverRatingBucketProvider);
-    final initialMeals = ref.read(discoverSelectedMealTypesProvider);
+    final initialMeal = ref.read(discoverMealTypeProvider);
 
-    final draftCuisines = {...initialCuisines};
     final draftDietary = {...initialDietary};
-    var draftPrep = initialPrep;
-    var draftRating = initialRating;
-    final draftMeals = {...initialMeals};
+    var draftMeal = initialMeal;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -1036,7 +1145,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                       Row(
                         children: [
                           Text(
-                            'Filter & Sort',
+                            'Filters',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleLarge
@@ -1048,11 +1157,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                           TextButton(
                             onPressed: () {
                               setModalState(() {
-                                draftCuisines.clear();
                                 draftDietary.clear();
-                                draftPrep = DiscoverPrepTimeBucket.any;
-                                draftRating = DiscoverRatingBucket.any;
-                                draftMeals.clear();
+                                draftMeal = DiscoverMealType.sauce;
                               });
                             },
                             child: const Text('Clear all'),
@@ -1063,23 +1169,40 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: ['vegetarian', 'gluten-free', 'vegan', 'keto']
+                        children: DietaryOption.values
                             .map(
-                              (tag) => FilterChip(
-                                label: Text(_titleCase(tag)),
-                                selected: draftDietary.contains(tag),
+                              (option) => FilterChip(
+                                label: Text(option.label),
+                                selected: draftDietary.contains(option.slug),
                                 onSelected: (selected) {
                                   setModalState(() {
                                     if (selected) {
-                                      draftDietary.add(tag);
+                                      draftDietary.add(option.slug);
                                     } else {
-                                      draftDietary.remove(tag);
+                                      draftDietary.remove(option.slug);
                                     }
                                   });
                                 },
                               ),
                             )
                             .toList(),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: GestureDetector(
+                          onTap: () {
+                            Navigator.pop(context);
+                            context.push('/profile');
+                          },
+                          child: Text(
+                            'Manage defaults in Profile',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: AppBrand.deepTeal,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                          ),
+                        ),
                       ),
                       sectionTitle('Meal Type'),
                       Wrap(
@@ -1087,48 +1210,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                         runSpacing: 8,
                         children: DiscoverMealType.values
                             .map(
-                              (meal) => FilterChip(
+                              (meal) => ChoiceChip(
                                 label: Text(meal.label),
-                                selected: draftMeals.contains(meal),
-                                onSelected: (selected) {
-                                  setModalState(() {
-                                    if (selected) {
-                                      draftMeals.add(meal);
-                                    } else {
-                                      draftMeals.remove(meal);
-                                    }
-                                  });
-                                },
-                              ),
-                            )
-                            .toList(),
-                      ),
-                      sectionTitle('Prep Time'),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: DiscoverPrepTimeBucket.values
-                            .map(
-                              (bucket) => ChoiceChip(
-                                label: Text(bucket.label),
-                                selected: draftPrep == bucket,
+                                selected: draftMeal == meal,
                                 onSelected: (_) =>
-                                    setModalState(() => draftPrep = bucket),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                      sectionTitle('User Rating'),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: DiscoverRatingBucket.values
-                            .map(
-                              (bucket) => ChoiceChip(
-                                label: Text(bucket.label),
-                                selected: draftRating == bucket,
-                                onSelected: (_) =>
-                                    setModalState(() => draftRating = bucket),
+                                    setModalState(() => draftMeal = meal),
                               ),
                             )
                             .toList(),
@@ -1140,24 +1226,12 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                             child: FilledButton(
                               onPressed: () {
                                 ref
-                                    .read(discoverSelectedCuisineIdsProvider
-                                        .notifier)
-                                    .state = draftCuisines;
-                                ref
                                     .read(discoverSelectedDietaryTagsProvider
                                         .notifier)
-                                    .state = draftDietary;
+                                    .setTags(draftDietary);
                                 ref
-                                    .read(
-                                        discoverPrepTimeBucketProvider.notifier)
-                                    .state = draftPrep;
-                                ref
-                                    .read(discoverRatingBucketProvider.notifier)
-                                    .state = draftRating;
-                                ref
-                                    .read(discoverSelectedMealTypesProvider
-                                        .notifier)
-                                    .state = draftMeals;
+                                    .read(discoverMealTypeProvider.notifier)
+                                    .state = draftMeal;
                                 Navigator.pop(context);
                               },
                               child: const Text('Apply Filters'),
@@ -1194,7 +1268,7 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+    final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
     return Scaffold(
       body: DecoratedBox(
         decoration: const BoxDecoration(
@@ -1373,290 +1447,11 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
 }
 
 bool _matchesCuisine(Recipe recipe, String cuisineId) {
-  final haystack = '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
-  switch (cuisineId) {
-    case 'pasta':
-      return _hasAny(haystack, const <String>['pasta', 'spaghetti', 'italian']);
-    case 'mexican-fiesta':
-      return _hasAny(haystack, const <String>['mexican', 'taco', 'fajita', 'burrito']);
-    case 'asian':
-      return _hasAny(haystack, const <String>['asian', 'ramen', 'stir-fry', 'noodle']);
-    case 'plant-based-power':
-      return _hasAny(haystack, const <String>['plant', 'vegetarian', 'veggie']);
-    case 'whole30':
-      return _hasAny(
-        haystack,
-        const <String>['whole30', 'whole 30', 'paleo', 'grain-free', 'dairy-free'],
-      );
-    case 'high-protein':
-      return _hasAny(haystack, const <String>['high-protein', 'high protein', 'protein']);
-    case 'healthy':
-      return _hasAny(haystack, const <String>['healthy', 'wellness', 'clean', 'nourishing']);
-    case 'pancakes':
-      return _hasAny(haystack, const <String>['pancake', 'waffle', 'crepe', 'hotcake']);
-    case 'breakfast-casserole':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'breakfast casserole',
-          'breakfast',
-          'egg bake',
-          'scrambled',
-          'scramble',
-          'strata',
-          'frittata',
-          'hash',
-          'potato',
-        ],
-      );
-    case 'bento-box-lunch':
-      return _hasAny(
-        haystack,
-        const <String>['bento', 'lunch box', 'box lunch', 'meal prep lunch'],
-      );
-    case 'healthy-lunch':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'healthy lunch',
-          'lunch ideas',
-          'meal prep lunch',
-          'light lunch',
-          'nourishing',
-        ],
-      );
-    case 'salads':
-      return _hasAny(
-        haystack,
-        const <String>['salad', 'vinaigrette', 'greens', 'caesar'],
-      );
-    case 'sandwiches-wraps':
-      return _hasAny(
-        haystack,
-        const <String>['sandwich', 'wrap', 'panini', 'melt', 'hoagie', 'sub'],
-      );
-    case 'vegetarian':
-      return _hasAny(
-        haystack,
-        const <String>['vegetarian', 'veggie', 'plant-based', 'meatless'],
-      );
-    case 'comfort-classics':
-      return _hasAny(haystack, const <String>['comfort', 'classic', 'baked', 'creamy']);
-    case 'vegan-delights':
-      return _hasAny(haystack, const <String>['vegan']);
-    case 'mediterranean-flavors':
-      return _hasAny(haystack, const <String>['mediterranean', 'greek', 'orzo']);
-    case 'snack-dips-spreads':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'dip',
-          'hummus',
-          'guacamole',
-          'salsa',
-          'tapenade',
-          'tzatziki',
-          'muhammara',
-          'whipped feta',
-        ],
-      );
-    case 'snack-finger-foods':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'finger food',
-          'bites',
-          'skewer',
-          'roll',
-          'taquito',
-          'dumpling',
-          'poppers',
-          'deviled eggs',
-        ],
-      );
-    case 'snack-boards-platters':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'board',
-          'platter',
-          'charcuterie',
-          'cheese board',
-          'crudite',
-          'mezze',
-          'nachos',
-        ],
-      );
-    case 'snack-cheesy-bakes':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'baked brie',
-          'cheese log',
-          'potato skins',
-          'spinach artichoke',
-          'cheese',
-        ],
-      );
-    case 'snack-wings-meaty-bites':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'wings',
-          'meatballs',
-          'sausage rolls',
-          'buffalo',
-          'chicken',
-          'bacon',
-        ],
-      );
-    case 'snack-seafood-appetizers':
-      return _hasAny(
-        haystack,
-        const <String>['shrimp', 'prawns', 'smoked salmon', 'ceviche', 'fish'],
-      );
-    case 'snack-crispy-snacks':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'fries',
-          'onion rings',
-          'fried pickles',
-          'zucchini fries',
-          'chips',
-          'popcorn',
-        ],
-      );
-    case 'snack-healthy-veggie-snacks':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'cauliflower',
-          'mushrooms',
-          'vegetarian',
-          'vegan',
-          'veggie',
-          'nuts',
-          'seeds',
-        ],
-      );
-    case 'dessert-chocolate':
-      return _hasAny(
-        haystack,
-        const <String>['chocolate', 'brownie', 'mousse', 'cacao', 'fudge'],
-      );
-    case 'dessert-cookies-bars':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'cookie',
-          'bars',
-          'shortbread',
-          'snickerdoodle',
-          'thumbprint',
-        ],
-      );
-    case 'dessert-cakes-cupcakes':
-      return _hasAny(
-        haystack,
-        const <String>['cake', 'cupcake', 'layer cake', 'pound cake'],
-      );
-    case 'dessert-muffins-breads':
-      return _hasAny(
-        haystack,
-        const <String>['muffin', 'banana bread', 'zucchini bread', 'quick bread'],
-      );
-    case 'dessert-pies-cobblers-crisps':
-      return _hasAny(
-        haystack,
-        const <String>['pie', 'cobbler', 'crisp', 'crumble', 'tart'],
-      );
-    case 'dessert-fruit':
-      return _hasAny(
-        haystack,
-        const <String>['fruit', 'berries', 'strawberry', 'peach', 'apple', 'cherry'],
-      );
-    case 'dessert-no-bake':
-      return _hasAny(
-        haystack,
-        const <String>['no-bake', 'energy balls', 'protein balls', 'truffles'],
-      );
-    case 'dessert-frozen-creamy':
-      return _hasAny(
-        haystack,
-        const <String>['ice cream', 'pudding', 'panna cotta', 'affogato', 'custard'],
-      );
-    case 'dinner-chicken':
-      return _hasAny(haystack, const <String>['chicken', 'poultry']);
-    case 'dinner-beef':
-      return _hasAny(haystack, const <String>['beef', 'steak', 'brisket']);
-    case 'dinner-pasta':
-      return _hasAny(
-        haystack,
-        const <String>['pasta', 'spaghetti', 'italian', 'penne', 'linguine'],
-      );
-    case 'dinner-pork':
-      return _hasAny(haystack, const <String>['pork', 'bacon', 'ham', 'sausage']);
-    case 'dinner-vegetarian':
-      return _hasAny(
-        haystack,
-        const <String>['vegetarian', 'plant-based', 'veggie', 'plant', 'tofu'],
-      );
-    case 'dinner-seafood':
-      return _hasAny(
-        haystack,
-        const <String>['seafood', 'salmon', 'shrimp', 'fish', 'scallop', 'cod'],
-      );
-    case 'dinner-one-pan':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'one-pan',
-          'one pan',
-          'sheet pan',
-          'sheet-pan',
-          'skillet',
-        ],
-      );
-    case 'dinner-southern':
-      return _hasAny(
-        haystack,
-        const <String>[
-          'southern',
-          'comfort',
-          'grits',
-          'biscuit',
-          'cajun',
-          'fried',
-        ],
-      );
-    case 'dinner-crockpot':
-      return _hasAny(
-        haystack,
-        const <String>['crockpot', 'slow cooker', 'slow-cooker'],
-      );
-    case 'dinner-instant-pot':
-      return _hasAny(
-        haystack,
-        const <String>['instant pot', 'instant-pot', 'pressure cooker'],
-      );
-    case 'dinner-grill':
-      return _hasAny(haystack, const <String>['grill', 'grilled', 'bbq', 'skewer']);
-    case 'dinner-soup':
-      return _hasAny(
-        haystack,
-        const <String>['soup', 'stew', 'chowder', 'bisque', 'broth', 'chili'],
-      );
-    default:
-      return false;
-  }
-}
-
-bool _hasAny(String haystack, List<String> needles) {
-  for (final keyword in needles) {
-    if (haystack.contains(keyword)) return true;
-  }
-  return false;
+  final category = browseCategoryById(cuisineId);
+  if (category == null) return false;
+  final haystack =
+      '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
+  return category.keywords.any(haystack.contains);
 }
 
 bool _savedRecipeMatchesDiscover(Recipe discoverRecipe, Recipe saved) {

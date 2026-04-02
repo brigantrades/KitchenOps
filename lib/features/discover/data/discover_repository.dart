@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/api_services.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
+import 'package:plateplan/features/discover/data/discover_selected_dietary_tags_notifier.dart';
+import 'package:plateplan/features/discover/domain/discover_browse_categories.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -858,7 +860,100 @@ final discoverSelectedCuisineIdsProvider =
     StateProvider<Set<String>>((ref) => <String>{});
 
 final discoverSelectedDietaryTagsProvider =
-    StateProvider<Set<String>>((ref) => <String>{});
+    NotifierProvider<DiscoverSelectedDietaryTagsNotifier, Set<String>>(
+  DiscoverSelectedDietaryTagsNotifier.new,
+);
+
+/// Public catalog filtered by active dietary tags.
+///
+/// Exclusion-based diets (vegetarian, vegan, pescatarian) use ingredient
+/// categories so recipes like "Greek Scrambled Eggs" are correctly kept for
+/// vegetarians even when the title/tags don't contain "vegetarian".
+/// Label-based diets (gluten-free, keto, etc.) still use substring matching
+/// on title + cuisine tags because those are opt-in labels.
+final discoverDietaryFilteredPublicRecipesProvider =
+    Provider<AsyncValue<List<Recipe>>>((ref) {
+  final dietary = ref.watch(discoverSelectedDietaryTagsProvider);
+  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  if (dietary.isEmpty) return recipesAsync;
+  return recipesAsync.whenData(
+    (recipes) => recipes
+        .where((r) => _recipeMatchesDiscoverDietaryTags(r, dietary))
+        .toList(),
+  );
+});
+
+const _meatKeywords = <String>[
+  'chicken', 'beef', 'pork', 'lamb', 'turkey', 'duck', 'veal', 'venison',
+  'bison', 'bacon', 'sausage', 'ham', 'prosciutto', 'salami', 'pepperoni',
+  'chorizo', 'steak', 'ground meat', 'meatball', 'ribs', 'roast',
+  'braised', 'pulled pork', 'ground turkey', 'ground beef',
+];
+
+const _fishKeywords = <String>[
+  'salmon', 'tuna', 'shrimp', 'prawn', 'cod', 'tilapia', 'halibut', 'trout',
+  'bass', 'anchovy', 'sardine', 'crab', 'lobster', 'scallop', 'mussel',
+  'clam', 'oyster', 'squid', 'calamari', 'octopus', 'fish', 'seafood',
+  'mahi', 'swordfish', 'snapper',
+];
+
+const _dairyEggKeywords = <String>[
+  'egg', 'cheese', 'butter', 'cream', 'milk', 'yogurt', 'whey',
+  'ghee', 'sour cream', 'cream cheese', 'parmesan', 'mozzarella',
+  'cheddar', 'feta', 'ricotta', 'brie', 'gouda',
+];
+
+/// Build a searchable string from the recipe title, tags, and ingredient names.
+String _recipeHaystack(Recipe recipe) {
+  final parts = StringBuffer()
+    ..write(recipe.title.toLowerCase())
+    ..write(' ')
+    ..write(recipe.cuisineTags.join(' ').toLowerCase());
+  for (final i in recipe.ingredients) {
+    parts
+      ..write(' ')
+      ..write(i.name.toLowerCase());
+  }
+  return parts.toString();
+}
+
+bool _hasMeatOrFishCategory(Recipe recipe) =>
+    recipe.ingredients.any((i) => i.category == GroceryCategory.meatFish);
+
+bool _hasDairyEggCategory(Recipe recipe) =>
+    recipe.ingredients.any((i) => i.category == GroceryCategory.dairyEggs);
+
+bool _recipeMatchesDiscoverDietaryTags(Recipe recipe, Set<String> dietary) {
+  if (dietary.isEmpty) return true;
+
+  final haystack = _recipeHaystack(recipe);
+
+  for (final tag in dietary) {
+    switch (tag) {
+      case 'vegetarian':
+        if (_hasMeatOrFishCategory(recipe)) return false;
+        if (_meatKeywords.any(haystack.contains)) return false;
+        if (_fishKeywords.any(haystack.contains)) return false;
+      case 'vegan':
+        if (_hasMeatOrFishCategory(recipe)) return false;
+        if (_hasDairyEggCategory(recipe)) return false;
+        if (_meatKeywords.any(haystack.contains)) return false;
+        if (_fishKeywords.any(haystack.contains)) return false;
+        if (_dairyEggKeywords.any(haystack.contains)) return false;
+      case 'pescatarian':
+        if (_meatKeywords.any(haystack.contains)) return false;
+        if (recipe.ingredients
+            .where((i) => i.category == GroceryCategory.meatFish)
+            .any((i) => _meatKeywords.any(i.name.toLowerCase().contains))) {
+          return false;
+        }
+      default:
+        if (!haystack.contains(tag)) return false;
+    }
+  }
+
+  return true;
+}
 
 final discoverPrepTimeBucketProvider =
     StateProvider<DiscoverPrepTimeBucket>((ref) => DiscoverPrepTimeBucket.any);
@@ -917,452 +1012,49 @@ final discoverFiltersProvider = Provider<DiscoverFilters>((ref) {
 });
 
 final discoverActiveFilterCountProvider = Provider<int>((ref) {
-  final filters = ref.watch(discoverFiltersProvider);
-  var count = 0;
-  if (filters.query.trim().isNotEmpty) count++;
-  if (filters.cuisineIds.isNotEmpty) count++;
-  if (filters.dietaryIds.isNotEmpty) count++;
-  if (filters.prepTime != DiscoverPrepTimeBucket.any) count++;
-  if (filters.rating != DiscoverRatingBucket.any) count++;
-  if (filters.mealTypes.isNotEmpty) count++;
-  return count;
+  final dietary = ref.watch(discoverSelectedDietaryTagsProvider);
+  return dietary.length;
 });
 
 final discoverCuisineTilesProvider =
     Provider<AsyncValue<List<DiscoverCuisineTile>>>(
   (ref) {
-    final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
-    final selectedMeals = ref.watch(discoverSelectedMealTypesProvider);
+    final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
+    final mealTab = ref.watch(discoverMealTypeProvider);
+    final activeDiets = ref.watch(discoverSelectedDietaryTagsProvider);
+
     return recipesAsync.whenData((recipes) {
-      final selectedRecipeMealTypes = selectedMeals
-          .map((meal) => meal.recipeMealType)
-          .toSet();
-      int matchesAny(Recipe recipe, List<String> keywords) {
-        if (selectedRecipeMealTypes.isNotEmpty &&
-            !selectedRecipeMealTypes.contains(recipe.mealType)) {
-          return 0;
+      final mealType = mealTab.recipeMealType;
+      final mealRecipes = recipes
+          .where((r) => r.mealType == mealType)
+          .toList();
+
+      final candidates = browseCategoriesForMeal(mealTab, activeDiets);
+
+      final tiles = <DiscoverCuisineTile>[];
+      for (final cat in candidates) {
+        var count = 0;
+        for (final recipe in mealRecipes) {
+          final haystack =
+              '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
+          if (cat.keywords.any(haystack.contains)) count++;
         }
-        final haystack =
-            '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
-        return keywords.any(haystack.contains) ? 1 : 0;
+        tiles.add(DiscoverCuisineTile(
+          id: cat.id,
+          label: cat.label,
+          recipeCount: count,
+        ));
       }
 
-      int countFor(List<String> keywords) => recipes.fold<int>(
-            0,
-            (sum, recipe) => sum + matchesAny(recipe, keywords),
-          );
-
-      final isBreakfastSelectedOnly =
-          selectedMeals.length == 1 &&
-          selectedMeals.contains(DiscoverMealType.entree);
-      if (isBreakfastSelectedOnly) {
-        return <DiscoverCuisineTile>[
-          DiscoverCuisineTile(
-            id: 'high-protein',
-            label: 'High-Protein',
-            recipeCount:
-                countFor(<String>['high-protein', 'high protein', 'protein']),
-          ),
-          DiscoverCuisineTile(
-            id: 'healthy',
-            label: 'Healthy',
-            recipeCount: countFor(<String>[
-              'healthy',
-              'wellness',
-              'clean',
-              'nourishing',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'whole30',
-            label: 'Whole30',
-            recipeCount: countFor(<String>[
-              'whole30',
-              'whole 30',
-              'paleo',
-              'grain-free',
-              'dairy-free',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'pancakes',
-            label: 'Pancakes',
-            recipeCount: countFor(<String>[
-              'pancake',
-              'waffle',
-              'crepe',
-              'hotcake',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'breakfast-casserole',
-            label: 'Hearty Breakfasts',
-            recipeCount: countFor(<String>[
-              'breakfast casserole',
-              'breakfast',
-              'egg bake',
-              'scrambled',
-              'scramble',
-              'strata',
-              'frittata',
-              'hash',
-              'potato',
-            ]),
-          ),
-        ];
-      }
-      final isLunchSelectedOnly =
-          selectedMeals.length == 1 &&
-          selectedMeals.contains(DiscoverMealType.side);
-      if (isLunchSelectedOnly) {
-        return <DiscoverCuisineTile>[
-          DiscoverCuisineTile(
-            id: 'whole30',
-            label: 'Whole30',
-            recipeCount: countFor(<String>[
-              'whole30',
-              'whole 30',
-              'paleo',
-              'grain-free',
-              'dairy-free',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'healthy-lunch',
-            label: 'Healthy Lunch Ideas',
-            recipeCount: countFor(<String>[
-              'healthy lunch',
-              'lunch ideas',
-              'meal prep lunch',
-              'light lunch',
-              'nourishing',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'salads',
-            label: 'Salads',
-            recipeCount: countFor(<String>[
-              'salad',
-              'vinaigrette',
-              'greens',
-              'caesar',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'sandwiches-wraps',
-            label: 'Sandwiches & Wraps',
-            recipeCount: countFor(<String>[
-              'sandwich',
-              'wrap',
-              'panini',
-              'melt',
-              'hoagie',
-              'sub',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'vegetarian',
-            label: 'Vegetarian',
-            recipeCount: countFor(<String>[
-              'vegetarian',
-              'veggie',
-              'plant-based',
-              'meatless',
-            ]),
-          ),
-        ];
-      }
-      final isSnackSelectedOnly =
-          selectedMeals.length == 1 &&
-          selectedMeals.contains(DiscoverMealType.snack);
-      if (isSnackSelectedOnly) {
-        return <DiscoverCuisineTile>[
-          DiscoverCuisineTile(
-            id: 'snack-dips-spreads',
-            label: 'Dips & Spreads',
-            recipeCount: countFor(<String>[
-              'dip',
-              'hummus',
-              'guacamole',
-              'salsa',
-              'tapenade',
-              'tzatziki',
-              'muhammara',
-              'whipped feta',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-finger-foods',
-            label: 'Finger Foods',
-            recipeCount: countFor(<String>[
-              'finger food',
-              'bites',
-              'skewer',
-              'roll',
-              'taquito',
-              'dumpling',
-              'poppers',
-              'deviled eggs',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-boards-platters',
-            label: 'Boards & Platters',
-            recipeCount: countFor(<String>[
-              'board',
-              'platter',
-              'charcuterie',
-              'cheese board',
-              'crudite',
-              'mezze',
-              'nachos',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-cheesy-bakes',
-            label: 'Cheesy Bakes',
-            recipeCount: countFor(<String>[
-              'baked brie',
-              'cheese log',
-              'potato skins',
-              'spinach artichoke',
-              'cheese',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-wings-meaty-bites',
-            label: 'Wings & Meaty Bites',
-            recipeCount: countFor(<String>[
-              'wings',
-              'meatballs',
-              'sausage rolls',
-              'buffalo',
-              'chicken',
-              'bacon',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-seafood-appetizers',
-            label: 'Seafood Appetizers',
-            recipeCount: countFor(<String>[
-              'shrimp',
-              'prawns',
-              'smoked salmon',
-              'ceviche',
-              'fish',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-crispy-snacks',
-            label: 'Crispy Snacks',
-            recipeCount: countFor(<String>[
-              'fries',
-              'onion rings',
-              'fried pickles',
-              'zucchini fries',
-              'chips',
-              'popcorn',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'snack-healthy-veggie-snacks',
-            label: 'Healthy & Veggie',
-            recipeCount: countFor(<String>[
-              'cauliflower',
-              'mushrooms',
-              'vegetarian',
-              'vegan',
-              'veggie',
-              'nuts',
-              'seeds',
-            ]),
-          ),
-        ];
-      }
-      final isDessertSelectedOnly =
-          selectedMeals.length == 1 &&
-          selectedMeals.contains(DiscoverMealType.dessert);
-      if (isDessertSelectedOnly) {
-        return <DiscoverCuisineTile>[
-          DiscoverCuisineTile(
-            id: 'dessert-chocolate',
-            label: 'Chocolate',
-            recipeCount: countFor(<String>[
-              'chocolate',
-              'brownie',
-              'mousse',
-              'cacao',
-              'fudge',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-cookies-bars',
-            label: 'Cookies & Bars',
-            recipeCount: countFor(<String>[
-              'cookie',
-              'bars',
-              'shortbread',
-              'snickerdoodle',
-              'thumbprint',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-cakes-cupcakes',
-            label: 'Cakes & Cupcakes',
-            recipeCount: countFor(<String>[
-              'cake',
-              'cupcake',
-              'layer cake',
-              'pound cake',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-muffins-breads',
-            label: 'Muffins & Quick Breads',
-            recipeCount: countFor(<String>[
-              'muffin',
-              'banana bread',
-              'zucchini bread',
-              'quick bread',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-pies-cobblers-crisps',
-            label: 'Pies, Cobblers & Crisps',
-            recipeCount: countFor(<String>[
-              'pie',
-              'cobbler',
-              'crisp',
-              'crumble',
-              'tart',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-fruit',
-            label: 'Fruit Desserts',
-            recipeCount: countFor(<String>[
-              'fruit',
-              'berries',
-              'strawberry',
-              'peach',
-              'apple',
-              'cherry',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-no-bake',
-            label: 'No-Bake',
-            recipeCount: countFor(<String>[
-              'no-bake',
-              'energy balls',
-              'protein balls',
-              'truffles',
-            ]),
-          ),
-          DiscoverCuisineTile(
-            id: 'dessert-frozen-creamy',
-            label: 'Frozen & Creamy',
-            recipeCount: countFor(<String>[
-              'ice cream',
-              'pudding',
-              'panna cotta',
-              'affogato',
-              'custard',
-            ]),
-          ),
-        ];
-      }
-
-      return <DiscoverCuisineTile>[
-        DiscoverCuisineTile(
-          id: 'dinner-chicken',
-          label: 'Chicken',
-          recipeCount: countFor(<String>['chicken']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-beef',
-          label: 'Beef',
-          recipeCount: countFor(<String>['beef', 'steak', 'brisket']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-pasta',
-          label: 'Pasta',
-          recipeCount:
-              countFor(<String>['pasta', 'spaghetti', 'italian', 'penne']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-pork',
-          label: 'Pork',
-          recipeCount: countFor(<String>['pork', 'bacon', 'sausage']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-vegetarian',
-          label: 'Vegetarian',
-          recipeCount:
-              countFor(<String>['vegetarian', 'plant-based', 'veggie', 'plant']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-seafood',
-          label: 'Seafood',
-          recipeCount:
-              countFor(<String>['seafood', 'salmon', 'shrimp', 'fish']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-one-pan',
-          label: 'One-Pan & Sheet Pan',
-          recipeCount: countFor(<String>[
-            'one-pan',
-            'one pan',
-            'sheet pan',
-            'sheet-pan',
-            'skillet',
-          ]),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-southern',
-          label: 'Southern Comfort',
-          recipeCount: countFor(<String>[
-            'southern',
-            'comfort',
-            'grits',
-            'biscuit',
-            'cajun',
-          ]),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-crockpot',
-          label: 'Crockpot',
-          recipeCount:
-              countFor(<String>['crockpot', 'slow cooker', 'slow-cooker']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-instant-pot',
-          label: 'Instant Pot',
-          recipeCount: countFor(<String>[
-            'instant pot',
-            'instant-pot',
-            'pressure cooker',
-          ]),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-grill',
-          label: 'Grill',
-          recipeCount: countFor(<String>['grill', 'grilled', 'bbq', 'skewer']),
-        ),
-        DiscoverCuisineTile(
-          id: 'dinner-soup',
-          label: 'Soups',
-          recipeCount:
-              countFor(<String>['soup', 'stew', 'chowder', 'bisque', 'broth']),
-        ),
-      ];
+      tiles.sort((a, b) => b.recipeCount.compareTo(a.recipeCount));
+      return tiles;
     });
   },
 );
 
 final discoverTrendingRecipesProvider =
     Provider<AsyncValue<List<Recipe>>>((ref) {
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   return recipesAsync.whenData((recipes) => recipes.take(8).toList());
 });
 
@@ -1380,7 +1072,7 @@ const _discoverQuickEasyApiIds = <String>{
 };
 
 final discoverQuickEasyRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   return recipesAsync.whenData(
     (recipes) => recipes
         .where((recipe) => _discoverQuickEasyApiIds.contains(recipe.apiId))
@@ -1389,7 +1081,7 @@ final discoverQuickEasyRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref
 });
 
 final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   return recipesAsync.whenData((recipes) {
     return recipes.where((recipe) {
       final haystack =
@@ -1408,7 +1100,7 @@ final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>(
 });
 
 final discoverQuickLunchRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   return recipesAsync.whenData((recipes) {
     return recipes.where((recipe) {
       final haystack =
@@ -1426,7 +1118,7 @@ final discoverQuickLunchRecipesProvider = Provider<AsyncValue<List<Recipe>>>((re
 });
 
 final discoverSnackIdeasRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   return recipesAsync.whenData((recipes) {
     final snackRecipes = recipes
         .where((recipe) => recipe.mealType == MealType.snack)
@@ -1440,7 +1132,7 @@ final discoverSnackIdeasRecipesProvider = Provider<AsyncValue<List<Recipe>>>((re
 });
 
 final discoverDessertIdeasRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   return recipesAsync.whenData((recipes) {
     final dessertRecipes = recipes
         .where((recipe) => recipe.mealType == MealType.dessert)
@@ -1455,7 +1147,7 @@ final discoverDessertIdeasRecipesProvider = Provider<AsyncValue<List<Recipe>>>((
 final discoverFilteredRecipesProvider =
     Provider<AsyncValue<List<Recipe>>>((ref) {
   final selectedChip = ref.watch(discoverSelectedChipProvider);
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   final filters = ref.watch(discoverFiltersProvider);
   final repository = ref.watch(discoverRepositoryProvider);
   return recipesAsync.whenData((recipes) {
@@ -1470,7 +1162,7 @@ final discoverFilteredRecipesProvider =
 final discoverPublicSearchResultsProvider =
     Provider<AsyncValue<List<Recipe>>>((ref) {
   final query = ref.watch(discoverSearchQueryProvider).trim();
-  final recipesAsync = ref.watch(discoverAllPublicRecipesProvider);
+  final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
   if (query.isEmpty) {
     return const AsyncValue.data(<Recipe>[]);
   }

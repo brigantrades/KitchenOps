@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/models/dietary_option.dart';
+import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
@@ -10,6 +12,7 @@ import 'package:plateplan/features/household/data/household_providers.dart';
 import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/profile/data/profile_providers.dart';
+import 'package:plateplan/features/profile/data/profile_repository.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 
 class ProfileSettingsScreen extends ConsumerStatefulWidget {
@@ -24,6 +27,11 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
   TextEditingController? _nameCtrl;
   String? _nameCtrlUserId;
   bool _savingName = false;
+  bool _savingDietary = false;
+
+  /// Server save succeeded but we skip [profileProvider] invalidation so the screen
+  /// does not refetch and flash; chips read this until the next full profile load.
+  List<String>? _dietaryRestrictionsLocal;
   @override
   void dispose() {
     _nameCtrl?.dispose();
@@ -42,6 +50,58 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
       'A household lets you share your planner, grocery lists, and recipes '
       'with family or roommates. Shared recipes stay private to your '
       'household and are not visible to anyone outside it.';
+
+  List<String> _effectiveDietaryRestrictions(Profile? profile) =>
+      _dietaryRestrictionsLocal ?? profile?.dietaryRestrictions ?? const [];
+
+  Future<void> _toggleDietary({
+    required DietaryOption option,
+    required Profile? profile,
+    required String userId,
+    required ProfileRepository profileRepo,
+  }) async {
+    if (_savingDietary) return;
+    final slug = option.slug;
+    final current = _effectiveDietaryRestrictions(profile).toSet();
+    final next = {...current};
+    if (next.contains(slug)) {
+      next.remove(slug);
+    } else {
+      next.add(slug);
+    }
+    setState(() => _savingDietary = true);
+    try {
+      final name = (_nameCtrl?.text ?? '').trim();
+      final resolvedName =
+          name.isNotEmpty ? name : (profile?.name ?? 'Member');
+      final toSave = profile != null
+          ? profile.copyWith(dietaryRestrictions: next.toList())
+          : Profile(
+              id: userId,
+              name: resolvedName,
+              goals: const [],
+              dietaryRestrictions: next.toList(),
+              preferredCuisines: const [],
+              dislikedIngredients: const [],
+              householdServings: 2,
+              householdId: null,
+              groceryListOrder: GroceryListOrder.empty,
+            );
+      await profileRepo.upsertProfile(toSave);
+      ref.read(discoverSelectedDietaryTagsProvider.notifier).setTags(next);
+      if (!mounted) return;
+      setState(() {
+        _dietaryRestrictionsLocal = next.toList();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save dietary preference: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingDietary = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -91,12 +151,14 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
         ),
       ),
       body: profileAsync.when(
+        skipLoadingOnReload: true,
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) =>
             Center(child: Text('Could not load profile: $error')),
         data: (profile) {
           _syncNameController(user.id, profile?.name ?? '');
           final ctrl = _nameCtrl!;
+          final dietaryForChips = _effectiveDietaryRestrictions(profile);
 
           Future<void> saveName() async {
             final trimmed = ctrl.text.trim();
@@ -344,6 +406,32 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
                           : const Text('Save first name'),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SectionCard(
+                title: 'Dietary Preferences',
+                subtitle:
+                    'Select any that apply. These will auto-filter Discover recipes.',
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: DietaryOption.values.map((option) {
+                    final selected =
+                        dietaryForChips.contains(option.slug);
+                    return FilterChip(
+                      label: Text(option.label),
+                      selected: selected,
+                      onSelected: _savingDietary
+                          ? null
+                          : (_) => _toggleDietary(
+                                option: option,
+                                profile: profile,
+                                userId: user.id,
+                                profileRepo: profileRepo,
+                              ),
+                    );
+                  }).toList(),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
