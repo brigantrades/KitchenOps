@@ -16,6 +16,7 @@ import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
+import 'package:plateplan/core/recipes/recipe_import_reparse_kind.dart';
 import 'package:plateplan/features/recipes/presentation/import_recipe_preview_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show User;
 
@@ -147,6 +148,8 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
             extra: ImportRecipePreviewArgs(
               recipe: next.recipeToNavigate!,
               sourcePayload: next.navigationSourcePayload,
+              reparseKind: next.navigationReparseKind ??
+                  RecipeImportReparseKind.instagramCaption,
             ),
           );
           ref.read(shareImportNotifierProvider.notifier).clearRecipeNavigation();

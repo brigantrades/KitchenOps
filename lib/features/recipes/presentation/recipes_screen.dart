@@ -11,6 +11,7 @@ import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/models/app_models.dart';
+import 'package:plateplan/core/recipes/recipe_manual_nutrition.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
 import 'package:plateplan/core/measurement/ingredient_unit_profile.dart';
@@ -32,6 +33,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// When true, Step 5 shows per-ingredient USDA/Gemini breakdown (dev / diagnostics).
 const bool _kShowNutritionIngredientBreakdown = false;
+
+enum _NutritionEditMode { auto, manual }
 
 /// Result of saving from [_RecipeBuilderSheet] (create or edit).
 class RecipeBuilderSaveResult {
@@ -96,6 +99,12 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
               subtitle: const Text('Photo of a cookbook page'),
               onTap: () => Navigator.pop(ctx, 'scan'),
             ),
+            ListTile(
+              leading: const Icon(Icons.link_rounded),
+              title: const Text('Import from link'),
+              subtitle: const Text('Paste a recipe URL from the web'),
+              onTap: () => Navigator.pop(ctx, 'url'),
+            ),
           ],
         ),
       ),
@@ -105,6 +114,8 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
       await _createRecipeManually();
     } else if (choice == 'scan') {
       context.push('/scan-recipe-book');
+    } else if (choice == 'url') {
+      context.push('/import-recipe-url');
     }
   }
 
@@ -855,6 +866,14 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
   /// When true, the nutrition step shows a prompt and [Calculate] only (no auto-sync).
   bool _nutritionAwaitingManualCalculate = true;
 
+  _NutritionEditMode _nutritionEditMode = _NutritionEditMode.auto;
+  final _manualCaloriesCtrl = TextEditingController();
+  final _manualProteinCtrl = TextEditingController();
+  final _manualFatCtrl = TextEditingController();
+  final _manualCarbsCtrl = TextEditingController();
+  final _manualFiberCtrl = TextEditingController();
+  final _manualSugarCtrl = TextEditingController();
+
   void _onEditFormControllerChanged() {
     if (!mounted) return;
     if (widget.initialRecipe != null) setState(() {});
@@ -889,6 +908,12 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _titleCtrl.dispose();
     _servingsCtrl.dispose();
     _tagCtrl.dispose();
+    _manualCaloriesCtrl.dispose();
+    _manualProteinCtrl.dispose();
+    _manualFatCtrl.dispose();
+    _manualCarbsCtrl.dispose();
+    _manualFiberCtrl.dispose();
+    _manualSugarCtrl.dispose();
     _titleFocusNode.dispose();
     for (final ingredient in _ingredients) {
       ingredient.dispose();
@@ -951,6 +976,22 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     _estimatedNutrition = initial.nutrition;
     _nutritionEstimateSource = initial.nutritionSource;
     _nutritionBreakdown = const [];
+    _nutritionEditMode = initial.nutritionSource == 'manual'
+        ? _NutritionEditMode.manual
+        : _NutritionEditMode.auto;
+    final serv = initial.servings.clamp(1, 999999);
+    if (_nutritionEditMode == _NutritionEditMode.manual) {
+      final ps = perServingNutritionFromRecipeTotals(initial.nutrition, serv);
+      _manualCaloriesCtrl.text = '${ps.calories}';
+      _manualProteinCtrl.text = ps.protein.toStringAsFixed(1);
+      _manualFatCtrl.text = ps.fat.toStringAsFixed(1);
+      _manualCarbsCtrl.text = ps.carbs.toStringAsFixed(1);
+      _manualFiberCtrl.text = ps.fiber.toStringAsFixed(1);
+      _manualSugarCtrl.text = ps.sugar.toStringAsFixed(1);
+    } else {
+      _nutritionAwaitingManualCalculate =
+          !nutritionHasAnyTotals(initial.nutrition);
+    }
     for (final draft in _directionDrafts) {
       draft.dispose();
     }
@@ -1590,6 +1631,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       );
       if (!mounted) return;
       setState(() {
+        _nutritionEditMode = _NutritionEditMode.auto;
         _estimatedNutrition = result.nutrition;
         _nutritionEstimateSource = result.source;
         _nutritionLoading = false;
@@ -1605,6 +1647,20 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
             'Could not estimate nutrition. Check your connection and try again.';
         _nutritionBreakdown = const [];
       });
+    }
+  }
+
+  void _syncManualFieldsFromEstimatedTotals() {
+    final servings = (_parseIntOrNull(_servingsCtrl.text) ?? 2).clamp(1, 999999);
+    final n = _estimatedNutrition;
+    if (nutritionHasAnyTotals(n) && servings > 0) {
+      final ps = perServingNutritionFromRecipeTotals(n, servings);
+      _manualCaloriesCtrl.text = '${ps.calories}';
+      _manualProteinCtrl.text = ps.protein.toStringAsFixed(1);
+      _manualFatCtrl.text = ps.fat.toStringAsFixed(1);
+      _manualCarbsCtrl.text = ps.carbs.toStringAsFixed(1);
+      _manualFiberCtrl.text = ps.fiber.toStringAsFixed(1);
+      _manualSugarCtrl.text = ps.sugar.toStringAsFixed(1);
     }
   }
 
@@ -1650,17 +1706,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       }
     }
 
-    if (_step == 3) {
-      final stepCount = _directionDrafts
-          .map((d) => d.textCtrl.text.trim())
-          .where((text) => text.isNotEmpty)
-          .length;
-      if (stepCount == 0) {
-        setState(() => _validationMessage = 'Add at least one direction step.');
-        return false;
-      }
-    }
-
     setState(() => _validationMessage = null);
     return true;
   }
@@ -1698,14 +1743,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     if (hasIssue) {
       setState(() => _validationMessage =
           'Each ingredient needs a name and a valid amount (or To taste).');
-      return false;
-    }
-    final stepCount = _directionDrafts
-        .map((d) => d.textCtrl.text.trim())
-        .where((text) => text.isNotEmpty)
-        .length;
-    if (stepCount == 0) {
-      setState(() => _validationMessage = 'Add at least one direction step.');
       return false;
     }
     setState(() => _validationMessage = null);
@@ -1808,7 +1845,19 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
 
     final Nutrition recipeNutrition;
     final String? recipeNutritionSource;
-    if (_nutritionError != null) {
+    if (_nutritionEditMode == _NutritionEditMode.manual) {
+      final s = (_parseIntOrNull(_servingsCtrl.text) ?? 2).clamp(1, 999999);
+      recipeNutrition = recipeNutritionTotalsFromPerServing(
+        caloriesPerServing: int.tryParse(_manualCaloriesCtrl.text.trim()) ?? 0,
+        proteinPerServing: double.tryParse(_manualProteinCtrl.text.trim()) ?? 0,
+        fatPerServing: double.tryParse(_manualFatCtrl.text.trim()) ?? 0,
+        carbsPerServing: double.tryParse(_manualCarbsCtrl.text.trim()) ?? 0,
+        fiberPerServing: double.tryParse(_manualFiberCtrl.text.trim()) ?? 0,
+        sugarPerServing: double.tryParse(_manualSugarCtrl.text.trim()) ?? 0,
+        servings: s,
+      );
+      recipeNutritionSource = 'manual';
+    } else if (_nutritionError != null) {
       recipeNutrition = initial?.nutrition ?? const Nutrition();
       recipeNutritionSource = initial?.nutritionSource;
     } else {
@@ -1858,7 +1907,10 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     }
     setState(() {
       _step += 1;
-      if (_step == _kNutritionStepIndex) {
+      if (widget.initialRecipe == null &&
+          _step == _kNutritionStepIndex &&
+          _nutritionEditMode == _NutritionEditMode.auto &&
+          !nutritionHasAnyTotals(_estimatedNutrition)) {
         _nutritionAwaitingManualCalculate = true;
       }
     });
@@ -1874,9 +1926,6 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     if (_step == 0) return;
     setState(() {
       _step -= 1;
-      if (_step == _kNutritionStepIndex) {
-        _nutritionAwaitingManualCalculate = true;
-      }
     });
     ref.read(recipeCreationGuardProvider.notifier).setStep(_step);
     _stepCtrl.animateToPage(
@@ -1891,10 +1940,9 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     if (!_validateAllStepsForSave()) return;
 
     final recipe = _recipeFromForm();
-    if (recipe.ingredients.isEmpty || recipe.instructions.isEmpty) {
+    if (recipe.ingredients.isEmpty) {
       setState(() {
-        _validationMessage =
-            'Add at least one ingredient and one direction step.';
+        _validationMessage = 'Add at least one ingredient.';
       });
       return;
     }
@@ -1966,20 +2014,178 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
         n.fiber > 0 ||
         n.sugar > 0;
 
+    final manualTotalsPreview = recipeNutritionTotalsFromPerServing(
+      caloriesPerServing: int.tryParse(_manualCaloriesCtrl.text.trim()) ?? 0,
+      proteinPerServing: double.tryParse(_manualProteinCtrl.text.trim()) ?? 0,
+      fatPerServing: double.tryParse(_manualFatCtrl.text.trim()) ?? 0,
+      carbsPerServing: double.tryParse(_manualCarbsCtrl.text.trim()) ?? 0,
+      fiberPerServing: double.tryParse(_manualFiberCtrl.text.trim()) ?? 0,
+      sugarPerServing: double.tryParse(_manualSugarCtrl.text.trim()) ?? 0,
+      servings: servings,
+    );
+
+    Widget manualField({
+      required String label,
+      required TextEditingController controller,
+      TextInputType? keyboardType,
+    }) {
+      return TextField(
+        controller: controller,
+        keyboardType: keyboardType ?? const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        onChanged: (_) => setState(() {}),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
           child: SingleChildScrollView(
             child: SectionCard(
-              title: 'Nutrition estimate',
-              subtitle:
-                  'Approximate totals for the full recipe (all servings). Tap '
-                  'Calculate to estimate, or Next to skip. Not medical advice.',
+              title: 'Nutrition',
+              subtitle: _nutritionEditMode == _NutritionEditMode.manual
+                  ? 'Enter per-serving values. Stored totals scale with servings ($servings). Not medical advice.'
+                  : 'Approximate totals for the full recipe (all servings). Tap '
+                      'Calculate to estimate, or Next to skip. Not medical advice.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (_nutritionAwaitingManualCalculate) ...[
+                  SegmentedButton<_NutritionEditMode>(
+                    emptySelectionAllowed: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: _NutritionEditMode.auto,
+                        label: Text('Auto'),
+                        icon: Icon(Icons.calculate_outlined, size: 18),
+                      ),
+                      ButtonSegment(
+                        value: _NutritionEditMode.manual,
+                        label: Text('Manual'),
+                        icon: Icon(Icons.edit_note_rounded, size: 18),
+                      ),
+                    ],
+                    selected: {_nutritionEditMode},
+                    onSelectionChanged: (Set<_NutritionEditMode> next) {
+                      setState(() {
+                        _nutritionEditMode = next.first;
+                        if (_nutritionEditMode == _NutritionEditMode.manual) {
+                          _nutritionError = null;
+                          _syncManualFieldsFromEstimatedTotals();
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  if (_nutritionEditMode == _NutritionEditMode.manual) ...[
+                    Text(
+                      'Per serving',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    manualField(
+                      label: 'Calories (kcal)',
+                      controller: _manualCaloriesCtrl,
+                      keyboardType: TextInputType.number,
+                    ),
+                    const SizedBox(height: 8),
+                    manualField(
+                      label: 'Protein (g)',
+                      controller: _manualProteinCtrl,
+                    ),
+                    const SizedBox(height: 8),
+                    manualField(
+                      label: 'Fat (g)',
+                      controller: _manualFatCtrl,
+                    ),
+                    const SizedBox(height: 8),
+                    manualField(
+                      label: 'Carbs (g)',
+                      controller: _manualCarbsCtrl,
+                    ),
+                    const SizedBox(height: 8),
+                    manualField(
+                      label: 'Fiber (g)',
+                      controller: _manualFiberCtrl,
+                    ),
+                    const SizedBox(height: 8),
+                    manualField(
+                      label: 'Sugar (g)',
+                      controller: _manualSugarCtrl,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Recipe totals (all servings)',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    tile(
+                      icon: Icons.local_fire_department_rounded,
+                      label: 'Calories (total)',
+                      value: '${manualTotalsPreview.calories}',
+                    ),
+                    const SizedBox(height: 8),
+                    tile(
+                      icon: Icons.fitness_center_rounded,
+                      label: 'Protein (total)',
+                      value:
+                          '${manualTotalsPreview.protein.toStringAsFixed(1)} g',
+                    ),
+                    const SizedBox(height: 8),
+                    tile(
+                      icon: Icons.opacity_rounded,
+                      label: 'Fat (total)',
+                      value: '${manualTotalsPreview.fat.toStringAsFixed(1)} g',
+                    ),
+                    const SizedBox(height: 8),
+                    tile(
+                      icon: Icons.grain_rounded,
+                      label: 'Carbs (total)',
+                      value:
+                          '${manualTotalsPreview.carbs.toStringAsFixed(1)} g',
+                    ),
+                    const SizedBox(height: 8),
+                    tile(
+                      icon: Icons.grass_rounded,
+                      label: 'Fiber (total)',
+                      value:
+                          '${manualTotalsPreview.fiber.toStringAsFixed(1)} g',
+                    ),
+                    const SizedBox(height: 8),
+                    tile(
+                      icon: Icons.cake_rounded,
+                      label: 'Sugar (total)',
+                      value:
+                          '${manualTotalsPreview.sugar.toStringAsFixed(1)} g',
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _nutritionLoading
+                          ? null
+                          : () {
+                              setState(() {
+                                _nutritionAwaitingManualCalculate = false;
+                              });
+                              unawaited(_syncNutritionEstimate());
+                            },
+                      icon: const Icon(Icons.auto_awesome_outlined, size: 20),
+                      label: const Text('Estimate from ingredients'),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Replaces manual values with an automated estimate.',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ] else if (_nutritionAwaitingManualCalculate) ...[
                     Text(
                       'We can estimate calories and macros from your '
                       'ingredient list. This is optional—use Next to continue '
@@ -2142,6 +2348,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                     ),
                   ],
                   if (_kShowNutritionIngredientBreakdown &&
+                      _nutritionEditMode == _NutritionEditMode.auto &&
                       !_nutritionAwaitingManualCalculate &&
                       !_nutritionLoading &&
                       _nutritionError == null &&
@@ -2493,7 +2700,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
       0 => 'Step 1: Name your recipe',
       1 => 'Step 2: Serving + labels',
       2 => 'Step 3: Ingredients',
-      3 => 'Step 4: Directions',
+      3 => 'Step 4: Directions (optional)',
       4 => 'Step 5: Nutrition',
       _ => 'Step 6: Final touches',
     };
@@ -2838,7 +3045,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                           ),
                           _buildIngredientStepPage(),
                           _StepCard(
-                            title: 'Directions',
+                            title: 'Directions (optional)',
                             subtitle:
                                 'Tap a step to edit, or Add step. Drag the handle on '
                                 'the left to reorder steps. Use Save in the editor '

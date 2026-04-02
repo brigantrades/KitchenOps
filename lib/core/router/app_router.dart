@@ -18,6 +18,7 @@ import 'package:plateplan/features/planner/presentation/planner_screen.dart';
 import 'package:plateplan/features/profile/presentation/onboarding_screen.dart';
 import 'package:plateplan/features/profile/presentation/profile_settings_screen.dart';
 import 'package:plateplan/features/recipes/presentation/import_recipe_preview_screen.dart';
+import 'package:plateplan/features/recipes/presentation/import_recipe_url_screen.dart';
 import 'package:plateplan/features/recipes/presentation/instagram_import_test_screen.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_creation_guard.dart';
 import 'package:plateplan/features/recipes/presentation/recipes_screen.dart';
@@ -67,9 +68,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final atInstagramImportTest =
           state.matchedLocation == '/instagram-import-test';
       final atScanRecipeBook = state.matchedLocation == '/scan-recipe-book';
+      final atImportRecipeUrl = state.matchedLocation == '/import-recipe-url';
 
       if (!loggedIn &&
-          (atImportPreview || atInstagramImportTest || atScanRecipeBook)) {
+          (atImportPreview ||
+              atInstagramImportTest ||
+              atScanRecipeBook ||
+              atImportRecipeUrl)) {
         return '/auth';
       }
       if (!loggedIn && !atAuth) return '/auth';
@@ -126,6 +131,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/instagram-import-test',
         builder: (context, state) => const InstagramImportTestScreen(),
+      ),
+      GoRoute(
+        path: '/import-recipe-url',
+        builder: (context, state) => const ImportRecipeUrlScreen(),
       ),
       GoRoute(
         path: '/scan-recipe-book',

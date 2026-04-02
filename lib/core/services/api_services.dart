@@ -670,6 +670,74 @@ Serving size guidance:
     return null;
   }
 
+  /// Recipe website: plain text from fetched HTML (same JSON shape as Instagram import).
+  Future<Map<String, dynamic>?> extractRecipeFromWebPageText({
+    required String canonicalUrl,
+    required String pagePlainText,
+    String? userNotes,
+  }) async {
+    if (_model == null) return null;
+    final url = canonicalUrl.trim();
+    final body = pagePlainText.trim();
+    if (url.isEmpty || body.isEmpty) return null;
+    final notes = userNotes?.trim();
+    final notesBlock = (notes != null && notes.isNotEmpty)
+        ? '\nUser-added notes (may clarify missing details):\n$notes\n'
+        : '';
+    final prompt = '''
+Extract a recipe from the plain text below, taken from this web page:
+$url
+$notesBlock
+The text is from an HTML page (navigation, ads, and chrome may be mixed in). Ignore site navigation, "jump to recipe", newsletter prompts, comments, and unrelated sections. Focus on ingredients and cooking steps for one dish.
+
+Return ONLY valid JSON with these keys:
+{
+  "title": string,
+  "description": string (short summary),
+  "ingredients": array of objects [{ "name": string, "amount": string, "unit": string }],
+  "instructions": array of strings (each step as one string),
+  "servings": number (default 2 if missing),
+  "prep_time": number (minutes, null if missing),
+  "cook_time": number (minutes, null if missing),
+  "meal_type": "dinner" or "lunch" etc (best guess),
+  "cuisine_tags": array of strings
+}
+
+Rules (critical):
+- Return ONLY a single JSON object. No markdown code fences, no commentary.
+- Use ONLY information supported by the plain text below. Do not invent ingredients or steps.
+- If the text does not contain a real recipe (e.g. only navigation or paywall), return valid JSON with "title": "Could not read recipe", "ingredients": [], "instructions": ["Open the page in a browser, copy the full recipe text, then use Add recipe manually or try again."].
+
+Plain text:
+$body
+''';
+    final response = await _generateInstagramRecipeImportWithFallback(prompt);
+    if (response == null) {
+      debugPrint(
+        'Gemini web import: generateContent returned null (API key, network, quota).',
+      );
+      return null;
+    }
+    final raw = (response.text ?? '').trim();
+    final asMap = _parseRecipeImportJsonFromModelText(raw);
+    if (asMap != null) {
+      agentDebugLogShareImport(
+        hypothesisId: 'H2',
+        location: 'GeminiService.extractRecipeFromWebPageText',
+        message: 'web_import_json_ok',
+        data: {
+          'titleLen': (asMap['title'] ?? '').toString().length,
+          'ingCount': (asMap['ingredients'] is List)
+              ? (asMap['ingredients'] as List).length
+              : 0,
+        },
+      );
+      return asMap;
+    }
+    debugPrint('Gemini web import: invalid or empty recipe JSON.');
+    return null;
+  }
+
   /// Instagram share import (image-only): extract recipe from a shared screenshot/preview image.
   Future<Map<String, dynamic>?> extractRecipeFromInstagramShareImage({
     required Uint8List imageBytes,

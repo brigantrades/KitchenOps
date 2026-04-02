@@ -10,6 +10,8 @@ import 'package:plateplan/core/config/env.dart';
 import 'package:plateplan/core/debug/share_import_debug_log.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/models/instagram_recipe_import.dart';
+import 'package:plateplan/core/recipes/recipe_import_reparse_kind.dart';
+import 'package:plateplan/core/recipes/recipe_web_import_fetcher.dart';
 import 'package:plateplan/core/services/recipe_image_storage.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
@@ -27,10 +29,12 @@ class ShareImportState {
     this.isLoading = false,
     this.recipeToNavigate,
     this.navigationSourcePayload,
+    this.navigationReparseKind,
     this.errorMessage,
     this.canRetry = false,
     this.lastCombinedPayload,
     this.lastImagePath,
+    this.lastImportReparseKind = RecipeImportReparseKind.instagramCaption,
     this.snackMessage,
     this.pendingCombined,
     this.pendingImagePath,
@@ -40,10 +44,14 @@ class ShareImportState {
   final Recipe? recipeToNavigate;
   /// Original shared text/URL for "Re-parse" on the preview screen.
   final String? navigationSourcePayload;
+  /// How [ImportRecipePreviewScreen] should re-parse [navigationSourcePayload].
+  final RecipeImportReparseKind? navigationReparseKind;
   final String? errorMessage;
   final bool canRetry;
   final String? lastCombinedPayload;
   final String? lastImagePath;
+  /// Last import path (for Retry after failure).
+  final RecipeImportReparseKind lastImportReparseKind;
   final String? snackMessage;
   final String? pendingCombined;
   final String? pendingImagePath;
@@ -56,11 +64,14 @@ class ShareImportState {
     bool clearRecipeToNavigate = false,
     String? navigationSourcePayload,
     bool clearNavigationSourcePayload = false,
+    RecipeImportReparseKind? navigationReparseKind,
+    bool clearNavigationReparseKind = false,
     String? errorMessage,
     bool clearError = false,
     bool? canRetry,
     String? lastCombinedPayload,
     String? lastImagePath,
+    RecipeImportReparseKind? lastImportReparseKind,
     String? snackMessage,
     bool clearSnack = false,
     String? pendingCombined,
@@ -74,10 +85,14 @@ class ShareImportState {
       navigationSourcePayload: clearNavigationSourcePayload
           ? null
           : (navigationSourcePayload ?? this.navigationSourcePayload),
+      navigationReparseKind: clearNavigationReparseKind
+          ? null
+          : (navigationReparseKind ?? this.navigationReparseKind),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       canRetry: canRetry ?? this.canRetry,
       lastCombinedPayload: lastCombinedPayload ?? this.lastCombinedPayload,
       lastImagePath: lastImagePath ?? this.lastImagePath,
+      lastImportReparseKind: lastImportReparseKind ?? this.lastImportReparseKind,
       snackMessage: clearSnack ? null : (snackMessage ?? this.snackMessage),
       pendingCombined:
           clearPending ? null : (pendingCombined ?? this.pendingCombined),
@@ -120,6 +135,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       state = state.copyWith(
         clearRecipeToNavigate: true,
         clearNavigationSourcePayload: true,
+        clearNavigationReparseKind: true,
       );
     }
   }
@@ -144,6 +160,15 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
   }
 
   Future<void> retryLastImport() async {
+    if (state.lastImportReparseKind == RecipeImportReparseKind.webPage) {
+      final raw = state.lastCombinedPayload;
+      final decoded =
+          raw != null ? decodeWebRecipeImportPayload(raw) : null;
+      if (decoded != null) {
+        await _retryWebImportGeminiOnly(decoded);
+        return;
+      }
+    }
     final payload = state.lastCombinedPayload;
     final img = state.lastImagePath;
     final text = payload?.trim() ?? '';
@@ -190,6 +215,161 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     }
 
     await _runImport(combined, null);
+  }
+
+  /// Fetches a recipe page, extracts plain text, runs Gemini, then navigates to
+  /// import preview (same global loading dialog as Instagram paste test).
+  Future<void> importFromWebsiteUrl({
+    required String urlRaw,
+    String? notes,
+  }) async {
+    final parsed = parseRecipePageUrl(urlRaw);
+    if (!parsed.isOk) {
+      state = state.copyWith(
+        snackMessage: parsed.errorMessage ?? 'Invalid URL.',
+      );
+      return;
+    }
+    if (!Env.hasGemini) {
+      state = state.copyWith(
+        errorMessage: 'Gemini is not configured.',
+        canRetry: false,
+      );
+      return;
+    }
+    final user = ref.read(currentUserProvider);
+    if (user == null) {
+      state = state.copyWith(
+        snackMessage: 'Sign in to finish importing this recipe.',
+      );
+      return;
+    }
+
+    final n = notes?.trim();
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      canRetry: false,
+      lastImportReparseKind: RecipeImportReparseKind.webPage,
+      clearSnack: true,
+    );
+
+    String? encodedPayload;
+    try {
+      final fetch = await fetchRecipePagePlainText(parsed.uri!);
+      if (!fetch.isOk) {
+        throw Exception(fetch.errorMessage ?? 'Could not load the page.');
+      }
+      encodedPayload = encodeWebRecipeImportPayload(
+        canonicalUrl: fetch.canonicalUrl!,
+        pageText: fetch.plainText!,
+        notes: n,
+      );
+      state = state.copyWith(lastCombinedPayload: encodedPayload);
+
+      final gemini = ref.read(geminiServiceProvider);
+      final map = await gemini.extractRecipeFromWebPageText(
+        canonicalUrl: fetch.canonicalUrl!,
+        pagePlainText: fetch.plainText!,
+        userNotes: n,
+      );
+      if (map == null || map.isEmpty) {
+        final failure = gemini.lastGenerateFailure ?? '';
+        if (failure.toLowerCase().contains('quota exceeded')) {
+          throw Exception(
+            'Gemini quota exceeded for this key/project. Enable billing or use a key with available quota, then retry.',
+          );
+        }
+        if (failure.toLowerCase().contains('not found for api version')) {
+          throw Exception(
+            'Gemini model mismatch for this API key/project. Update to a supported model or key configuration.',
+          );
+        }
+        throw Exception(
+          'Could not extract a recipe from this page. Try another page or add the recipe manually.',
+        );
+      }
+      var recipe = recipeFromInstagramGeminiMap(
+        map,
+        sourceUrl: fetch.canonicalUrl,
+        sharedContent: null,
+        source: 'web_import',
+      );
+
+      state = state.copyWith(
+        isLoading: false,
+        recipeToNavigate: recipe,
+        navigationSourcePayload: encodedPayload,
+        navigationReparseKind: RecipeImportReparseKind.webPage,
+        clearError: true,
+        canRetry: false,
+      );
+    } catch (e, st) {
+      debugPrint('Web recipe import failed: $e\n$st');
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString(),
+        canRetry: encodedPayload != null,
+        lastCombinedPayload: encodedPayload ?? state.lastCombinedPayload,
+        lastImportReparseKind: RecipeImportReparseKind.webPage,
+      );
+    }
+  }
+
+  Future<void> _retryWebImportGeminiOnly(WebRecipeImportPayload decoded) async {
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      canRetry: false,
+      clearSnack: true,
+    );
+    try {
+      final gemini = ref.read(geminiServiceProvider);
+      final map = await gemini.extractRecipeFromWebPageText(
+        canonicalUrl: decoded.canonicalUrl,
+        pagePlainText: decoded.pageText,
+        userNotes: decoded.notes,
+      );
+      if (map == null || map.isEmpty) {
+        final failure = gemini.lastGenerateFailure ?? '';
+        if (failure.toLowerCase().contains('quota exceeded')) {
+          throw Exception(
+            'Gemini quota exceeded for this key/project. Enable billing or use a key with available quota, then retry.',
+          );
+        }
+        throw Exception(
+          'Could not extract a recipe from this page. Try again or add the recipe manually.',
+        );
+      }
+      final payload = encodeWebRecipeImportPayload(
+        canonicalUrl: decoded.canonicalUrl,
+        pageText: decoded.pageText,
+        notes: decoded.notes,
+      );
+      final recipe = recipeFromInstagramGeminiMap(
+        map,
+        sourceUrl: decoded.canonicalUrl,
+        sharedContent: null,
+        source: 'web_import',
+      );
+      state = state.copyWith(
+        isLoading: false,
+        recipeToNavigate: recipe,
+        navigationSourcePayload: payload,
+        navigationReparseKind: RecipeImportReparseKind.webPage,
+        lastCombinedPayload: payload,
+        clearError: true,
+        canRetry: false,
+      );
+    } catch (e, st) {
+      debugPrint('Web recipe import retry failed: $e\n$st');
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString(),
+        canRetry: true,
+        lastImportReparseKind: RecipeImportReparseKind.webPage,
+      );
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -349,6 +529,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       canRetry: false,
       lastCombinedPayload: combined,
       lastImagePath: imagePath,
+      lastImportReparseKind: RecipeImportReparseKind.instagramCaption,
       clearSnack: true,
     );
 
@@ -512,6 +693,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
         isLoading: false,
         recipeToNavigate: recipe,
         navigationSourcePayload: textForGemini,
+        clearNavigationReparseKind: true,
         clearError: true,
         canRetry: false,
       );
@@ -523,6 +705,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
         canRetry: true,
         lastCombinedPayload: combined,
         lastImagePath: imagePath,
+        lastImportReparseKind: RecipeImportReparseKind.instagramCaption,
       );
     }
   }

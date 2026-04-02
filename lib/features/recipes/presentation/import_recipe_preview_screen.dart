@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/models/instagram_recipe_import.dart';
+import 'package:plateplan/core/recipes/recipe_import_reparse_kind.dart';
+import 'package:plateplan/core/recipes/recipe_web_import_fetcher.dart';
 import 'package:plateplan/core/strings/recipe_title_case.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
 import 'package:plateplan/core/ui/section_card.dart';
@@ -24,10 +26,12 @@ class ImportRecipePreviewArgs {
   const ImportRecipePreviewArgs({
     required this.recipe,
     this.sourcePayload,
+    this.reparseKind = RecipeImportReparseKind.instagramCaption,
   });
 
   final Recipe recipe;
   final String? sourcePayload;
+  final RecipeImportReparseKind reparseKind;
 }
 
 class ImportRecipePreviewScreen extends ConsumerStatefulWidget {
@@ -87,9 +91,20 @@ class _ImportRecipePreviewScreenState
     if (payload == null || payload.trim().isEmpty) return;
     setState(() => _reparseBusy = true);
     try {
-      final map = await ref
-          .read(geminiServiceProvider)
-          .extractRecipeFromInstagramContent(payload);
+      final gemini = ref.read(geminiServiceProvider);
+      final Map<String, dynamic>? map;
+      if (widget.args.reparseKind == RecipeImportReparseKind.instagramCaption) {
+        map = await gemini.extractRecipeFromInstagramContent(payload);
+      } else {
+        final decoded = decodeWebRecipeImportPayload(payload);
+        map = decoded == null
+            ? null
+            : await gemini.extractRecipeFromWebPageText(
+                canonicalUrl: decoded.canonicalUrl,
+                pagePlainText: decoded.pageText,
+                userNotes: decoded.notes,
+              );
+      }
       if (map == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -98,13 +113,20 @@ class _ImportRecipePreviewScreenState
         }
         return;
       }
+      final parsedMap = map;
       final imageUrl = _recipe.imageUrl;
+      final shared = widget.args.reparseKind == RecipeImportReparseKind.instagramCaption
+          ? payload
+          : null;
       setState(() {
         _recipe = recipeFromInstagramGeminiMap(
-          map,
+          parsedMap,
           imageUrl: imageUrl,
           sourceUrl: _recipe.sourceUrl,
-          sharedContent: payload,
+          sharedContent: shared,
+          source: widget.args.reparseKind == RecipeImportReparseKind.webPage
+              ? 'web_import'
+              : 'instagram_import',
         );
         _titleCtrl.text = formatRecipeTitlePerWord(_recipe.title);
         _descCtrl.text = _recipe.description ?? '';
@@ -428,7 +450,9 @@ class _ImportRecipePreviewScreenState
               child: Text(
                 _recipe.source == 'book_scan'
                     ? 'No photo was attached. Try scanning again with better light and a steady shot.'
-                    : 'Image appears only when Instagram includes media in the share payload.',
+                    : _recipe.source == 'web_import'
+                        ? 'We don’t attach a hero image from website imports. You can add one after saving.'
+                        : 'Image appears only when Instagram includes media in the share payload.',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
