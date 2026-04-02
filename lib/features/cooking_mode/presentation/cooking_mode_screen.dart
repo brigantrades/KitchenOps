@@ -863,10 +863,6 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
           }
           _recipeMissingSince = null;
 
-          final steps = recipe.instructions.isEmpty
-              ? const ['Follow your recipe details.']
-              : recipe.instructions;
-          final step = steps[_stepIndex.clamp(0, steps.length - 1)];
           final measurementSystem = ref.watch(measurementSystemProvider);
 
           return ListView(
@@ -885,7 +881,11 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                   ),
                   Chip(
                     avatar: const Icon(Icons.format_list_numbered_rounded, size: 16),
-                    label: Text('${steps.length} steps'),
+                    label: Text(
+                      recipe.instructions.isEmpty
+                          ? 'No directions'
+                          : '${recipe.instructions.length} steps',
+                    ),
                   ),
                   Chip(
                     avatar: const Icon(Icons.people_alt_rounded, size: 16),
@@ -1046,51 +1046,17 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
               ),
               const SizedBox(height: 6),
               if (!_directionsEditMode) ...[
-                Text(
-                  'Step ${_stepIndex + 1}/${steps.length}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(24),
+                if (recipe.instructions.isEmpty) ...[
+                  Text(
+                    'No directions for this recipe. Tap Edit to add steps, or add them when editing the recipe.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                   ),
-                  child:
-                      Text(step, style: Theme.of(context).textTheme.bodyLarge),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _stepIndex == 0
-                            ? null
-                            : () => setState(() => _stepIndex--),
-                        child: const Text('Previous'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: _stepIndex >= steps.length - 1
-                            ? null
-                            : () => setState(() => _stepIndex++),
-                        child: const Text('Next Step'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    FilledButton.tonal(
-                      onPressed: () => _tts.speak(step),
-                      child: const Text('Voice'),
-                    ),
-                    FilledButton.tonal(
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonal(
                       onPressed: () async {
                         await showTimePicker(
                           context: context,
@@ -1099,8 +1065,78 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                       },
                       child: const Text('Timer'),
                     ),
-                  ],
-                ),
+                  ),
+                ] else ...[
+                  Builder(
+                    builder: (context) {
+                      final instr = recipe.instructions;
+                      final idx = _stepIndex.clamp(0, instr.length - 1);
+                      final stepText = instr[idx];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Step ${idx + 1}/${instr.length}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: Text(
+                              stepText,
+                              style: Theme.of(context).textTheme.bodyLarge,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: idx == 0
+                                      ? null
+                                      : () => setState(() => _stepIndex--),
+                                  child: const Text('Previous'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: FilledButton(
+                                  onPressed: idx >= instr.length - 1
+                                      ? null
+                                      : () => setState(() => _stepIndex++),
+                                  child: const Text('Next Step'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              FilledButton.tonal(
+                                onPressed: () => _tts.speak(stepText),
+                                child: const Text('Voice'),
+                              ),
+                              FilledButton.tonal(
+                                onPressed: () async {
+                                  await showTimePicker(
+                                    context: context,
+                                    initialTime: TimeOfDay.now(),
+                                  );
+                                },
+                                child: const Text('Timer'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ] else ...[
                 if (recipe.instructions.isEmpty)
                   Padding(
