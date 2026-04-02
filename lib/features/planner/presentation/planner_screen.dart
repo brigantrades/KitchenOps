@@ -1328,8 +1328,21 @@ Future<void> showPlannerDayDetailSheet(
   );
 }
 
+String _plannerEarlierDaysWeekdayRange(
+  DateTime anchor,
+  PlannerWindowPreference pref,
+  int fromUiIndex,
+  int toUiIndexInclusive,
+) {
+  final first = calendarDateForPlannerUiDay(anchor, fromUiIndex, pref);
+  final last = calendarDateForPlannerUiDay(anchor, toUiIndexInclusive, pref);
+  final fmt = DateFormat.E();
+  if (fromUiIndex == toUiIndexInclusive) return fmt.format(first);
+  return '${fmt.format(first)}–${fmt.format(last)}';
+}
+
 /// Condensed strip: one column per day in the planner window (same range as list).
-class _PlannerWindowSummaryPane extends ConsumerWidget {
+class _PlannerWindowSummaryPane extends ConsumerStatefulWidget {
   const _PlannerWindowSummaryPane({
     required this.pref,
     required this.dayCount,
@@ -1344,16 +1357,34 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
   final PlannerEditSlotGroceryFn onEditSlotGroceryItems;
   final VoidCallback onOpenPlannerWindowSettings;
 
+  @override
+  ConsumerState<_PlannerWindowSummaryPane> createState() =>
+      _PlannerWindowSummaryPaneState();
+}
+
+class _PlannerWindowSummaryPaneState
+    extends ConsumerState<_PlannerWindowSummaryPane> {
+  bool _showFullWeek = false;
+
   static const int _maxLinesPerDay = 5;
-  static const int _gridCrossAxisCount = 2;
-  /// Tile height vs width; magazine cards need room for stacked meal rows.
-  static const double _calendarTileHeightFactor = 1.08;
-  static const double _calendarTileMinHeight = 168;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void didUpdateWidget(covariant _PlannerWindowSummaryPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pref != widget.pref || oldWidget.dayCount != widget.dayCount) {
+      _showFullWeek = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final slotsAsync = ref.watch(plannerSlotsProvider);
     final anchor = ref.watch(weekStartProvider);
+    ref.listen<DateTime>(weekStartProvider, (prev, next) {
+      if (prev != next) {
+        setState(() => _showFullWeek = false);
+      }
+    });
     final recipesAsync = ref.watch(recipesProvider);
     final currentUser = ref.watch(currentUserProvider);
     final members = ref.watch(householdMembersProvider).valueOrNull ?? const [];
@@ -1369,20 +1400,31 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
 
     return slotsAsync.when(
       skipLoadingOnReload: true,
-      loading: onShowLoadingShell,
+      loading: widget.onShowLoadingShell,
       error: (e, _) => Center(child: Text('Error: $e')),
       data: (slots) {
+        final pref = widget.pref;
+        final dayCount = widget.dayCount;
         final reloadingWithoutOverlap = slotsAsync.isReloading &&
             !slots.any((s) => slotBelongsToPlannerWindow(s, anchor, pref));
         final effectiveSlots =
             reloadingWithoutOverlap ? <MealPlanSlot>[] : slots;
         return recipesAsync.when(
           skipLoadingOnReload: true,
-          loading: onShowLoadingShell,
+          loading: widget.onShowLoadingShell,
           error: (e, _) => Center(child: Text('Error loading recipes: $e')),
           data: (recipes) {
             final scheme = Theme.of(context).colorScheme;
             final today = plannerDateOnly(DateTime.now());
+            final todayIdx = plannerUiDayIndexForDate(anchor, pref, today);
+            final shouldCollapse =
+                todayIdx != null && todayIdx > 0 && !_showFullWeek;
+            final dayIndices = shouldCollapse
+                ? List<int>.generate(
+                    dayCount - todayIdx,
+                    (j) => todayIdx + j,
+                  )
+                : List<int>.generate(dayCount, (i) => i);
             return ListView(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
               children: [
@@ -1416,7 +1458,7 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                         alignment: Alignment.centerRight,
                         child: IconButton(
                           tooltip: 'Planner window',
-                          onPressed: onOpenPlannerWindowSettings,
+                          onPressed: widget.onOpenPlannerWindowSettings,
                           icon: const Icon(Icons.tune_rounded),
                         ),
                       ),
@@ -1425,88 +1467,102 @@ class _PlannerWindowSummaryPane extends ConsumerWidget {
                 ),
                 SectionCard(
                   padding: const EdgeInsets.all(AppSpacing.md),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      const gap = AppSpacing.xs;
-                      final innerW = constraints.maxWidth;
-                      final tileW = (innerW -
-                              gap * (_gridCrossAxisCount - 1)) /
-                          _gridCrossAxisCount;
-                      final tileH = math.max(
-                        _calendarTileMinHeight,
-                        tileW * _calendarTileHeightFactor,
-                      );
-                      return Wrap(
-                        spacing: gap,
-                        runSpacing: AppSpacing.sm,
-                        children: [
-                          for (var dayIndex = 0; dayIndex < dayCount; dayIndex++)
-                            SizedBox(
-                              width: tileW,
-                              height: tileH,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () {
-                                  unawaited(
-                                    showPlannerDayDetailSheet(
-                                      context,
-                                      ref,
-                                      day: calendarDateForPlannerUiDay(
-                                        anchor,
-                                        dayIndex,
-                                        pref,
-                                      ),
-                                      monthSlots: effectiveSlots,
-                                      recipes: recipes,
-                                      groceryItems: groceryItems,
-                                      activeMembers: activeMembers,
-                                      memberNameById: memberNameById,
-                                      currentUserId: currentUser?.id,
-                                      showMemberAssignment:
-                                          showMemberAssignment,
-                                      onEditSlotGroceryItems:
-                                          onEditSlotGroceryItems,
-                                    ),
-                                  );
-                                },
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: PlannerMagazineDayCard(
-                                    date: calendarDateForPlannerUiDay(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (todayIdx != null &&
+                          todayIdx > 0 &&
+                          _showFullWeek) ...[
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () {
+                              setState(() => _showFullWeek = false);
+                            },
+                            icon: const Icon(Icons.vertical_align_top_rounded),
+                            label: const Text('Show today first'),
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                      ],
+                      if (shouldCollapse) ...[
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () {
+                              setState(() => _showFullWeek = true);
+                            },
+                            icon: const Icon(Icons.expand_more_rounded),
+                            label: Text(
+                              'Earlier this week (${_plannerEarlierDaysWeekdayRange(anchor, pref, 0, todayIdx - 1)})',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                      ],
+                      for (final e in dayIndices.asMap().entries) ...[
+                        if (e.key > 0) const SizedBox(height: AppSpacing.sm),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            final dayIndex = e.value;
+                            unawaited(
+                              showPlannerDayDetailSheet(
+                                context,
+                                ref,
+                                day: calendarDateForPlannerUiDay(
+                                  anchor,
+                                  dayIndex,
+                                  pref,
+                                ),
+                                monthSlots: effectiveSlots,
+                                recipes: recipes,
+                                groceryItems: groceryItems,
+                                activeMembers: activeMembers,
+                                memberNameById: memberNameById,
+                                currentUserId: currentUser?.id,
+                                showMemberAssignment: showMemberAssignment,
+                                onEditSlotGroceryItems:
+                                    widget.onEditSlotGroceryItems,
+                              ),
+                            );
+                          },
+                          child: Material(
+                            color: Colors.transparent,
+                            child: PlannerMagazineDayCard(
+                              date: calendarDateForPlannerUiDay(
+                                anchor,
+                                e.value,
+                                pref,
+                              ),
+                              isToday: plannerDateOnly(
+                                    calendarDateForPlannerUiDay(
                                       anchor,
-                                      dayIndex,
+                                      e.value,
                                       pref,
                                     ),
-                                    isToday: plannerDateOnly(
-                                          calendarDateForPlannerUiDay(
+                                  ) ==
+                                  today,
+                              daySlots: effectiveSlots
+                                  .where((s) =>
+                                      plannerUiDayIndexForSlot(
+                                            s,
                                             anchor,
-                                            dayIndex,
                                             pref,
-                                          ),
-                                        ) ==
-                                        today,
-                                    daySlots: effectiveSlots
-                                        .where((s) =>
-                                            plannerUiDayIndexForSlot(
-                                                  s,
-                                                  anchor,
-                                                  pref,
-                                                ) ==
-                                                dayIndex)
-                                        .sorted(
-                                          (a, b) =>
-                                              a.slotOrder.compareTo(b.slotOrder),
-                                        )
-                                        .toList(),
-                                    recipes: recipes,
-                                    maxVisibleSlots: _maxLinesPerDay,
-                                  ),
-                                ),
-                              ),
+                                          ) ==
+                                          e.value)
+                                  .sorted(
+                                    (a, b) =>
+                                        a.slotOrder.compareTo(b.slotOrder),
+                                  )
+                                  .toList(),
+                              recipes: recipes,
+                              maxVisibleSlots: _maxLinesPerDay,
                             ),
-                        ],
-                      );
-                    },
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],

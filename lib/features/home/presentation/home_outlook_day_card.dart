@@ -328,6 +328,7 @@ class HomeOutlookDayCard extends StatelessWidget {
     }
 
     final line = plannerSlotPrimarySummaryLine(slot, recipes);
+    final sideLine = plannerSlotSideSummaryLine(slot, recipes);
     final showDinnerIcon = slot.mealLabel.toLowerCase().trim() == 'dinner' ||
         slot.mealLabel.toLowerCase().trim() == 'supper';
 
@@ -368,6 +369,19 @@ class HomeOutlookDayCard extends StatelessWidget {
             ],
           ],
         ),
+        if (sideLine != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            sideLine,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: ribbonColor,
+                  height: 1.25,
+                ),
+          ),
+        ],
       ],
     );
   }

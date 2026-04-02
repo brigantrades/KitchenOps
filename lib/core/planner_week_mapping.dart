@@ -96,6 +96,20 @@ List<DateTime> calendarDatesForPlannerWindow(
   );
 }
 
+/// UI index of [dateOnly] in the planner window, or null if outside the range.
+int? plannerUiDayIndexForDate(
+  DateTime anchor,
+  PlannerWindowPreference pref,
+  DateTime dateOnly,
+) {
+  final target = plannerDateOnly(dateOnly);
+  final dates = calendarDatesForPlannerWindow(anchor, pref);
+  for (var i = 0; i < dates.length; i++) {
+    if (plannerDateOnly(dates[i]) == target) return i;
+  }
+  return null;
+}
+
 /// Unique Monday `week_start` buckets needed for DB queries for this window.
 Set<DateTime> weekStartMondaysForWindow(
   DateTime anchor,

@@ -5,7 +5,7 @@ import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/features/planner/presentation/planner_day_summary_tile.dart';
 
-/// Magazine-style day cell for the planner grid (reference UI).
+/// Magazine-style day card for the planner week summary (full-width rows).
 ///
 /// When [onTap] is null, the card is display-only (no inner [InkWell]); use a
 /// parent [InkWell]/[GestureDetector] with [HitTestBehavior.opaque] so empty
@@ -88,7 +88,6 @@ class PlannerMagazineDayCard extends StatelessWidget {
 
     final inkChild = Ink(
       width: double.infinity,
-      height: double.infinity,
       decoration: BoxDecoration(
         color: fill,
         borderRadius: cardRadius,
@@ -109,6 +108,7 @@ class PlannerMagazineDayCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -146,53 +146,45 @@ class PlannerMagazineDayCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Expanded(
-                    child: daySlots.isEmpty
-                        ? Align(
-                            alignment: Alignment.topLeft,
-                            child: Text(
-                              'NO SLOTS',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
-                                    color: weekdayColor,
-                                    fontStyle: FontStyle.italic,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                            ),
-                          )
-                        : SingleChildScrollView(
-                            physics: const BouncingScrollPhysics(),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (final slot in visible)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: _slotRow(
-                                      context,
-                                      slot: slot,
-                                      bodyColor: bodyColor,
-                                      mutedColor: weekdayColor,
-                                    ),
-                                  ),
-                                if (extra > 0)
-                                  Text(
-                                    '+$extra more',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(
-                                          color: weekdayColor,
-                                          fontStyle: FontStyle.italic,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                  ),
-                              ],
+                  if (daySlots.isEmpty)
+                    Text(
+                      'NO SLOTS',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: weekdayColor,
+                            fontStyle: FontStyle.italic,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final slot in visible)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _slotRow(
+                              context,
+                              slot: slot,
+                              recipes: recipes,
+                              bodyColor: bodyColor,
+                              mutedColor: weekdayColor,
                             ),
                           ),
-                  ),
+                        if (extra > 0)
+                          Text(
+                            '+$extra more',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: weekdayColor,
+                                  fontStyle: FontStyle.italic,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -227,6 +219,7 @@ class PlannerMagazineDayCard extends StatelessWidget {
   Widget _slotRow(
     BuildContext context, {
     required MealPlanSlot slot,
+    required List<Recipe> recipes,
     required Color bodyColor,
     required Color mutedColor,
   }) {
@@ -282,27 +275,55 @@ class PlannerMagazineDayCard extends StatelessWidget {
     }
 
     final line = plannerSlotPrimarySummaryLine(slot, recipes);
-    return Row(
+    final sideLine = plannerSlotSideSummaryLine(slot, recipes);
+    final scheme = Theme.of(context).colorScheme;
+    final sideColor =
+        Theme.of(context).brightness == Brightness.dark
+            ? scheme.onSurfaceVariant
+            : mutedColor;
+
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          _iconForMealLabel(slot.mealLabel),
-          size: 18,
-          color: bodyColor.withValues(alpha: 0.85),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              _iconForMealLabel(slot.mealLabel),
+              size: 18,
+              color: bodyColor.withValues(alpha: 0.85),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                line,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      height: 1.25,
+                      fontWeight: FontWeight.w500,
+                      color: bodyColor,
+                    ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            line,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  height: 1.25,
-                  fontWeight: FontWeight.w500,
-                  color: bodyColor,
-                ),
+        if (sideLine != null) ...[
+          const SizedBox(height: 2),
+          Padding(
+            padding: const EdgeInsets.only(left: 26),
+            child: Text(
+              sideLine,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    height: 1.25,
+                    fontWeight: FontWeight.w500,
+                    color: sideColor,
+                  ),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

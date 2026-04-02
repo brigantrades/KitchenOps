@@ -25,6 +25,44 @@ String plannerCondensedMealSummaryLine(
   return '$tag: $line';
 }
 
+/// Side rows for a slot: prefers [MealPlanSlot.sideItems], else legacy
+/// [MealPlanSlot.sideRecipeId] / [MealPlanSlot.sideText] as a single item.
+List<PlannerSlotSideItem> mealPlanSlotEffectiveSideItems(MealPlanSlot slot) {
+  if (slot.sideItems.isNotEmpty) return slot.sideItems;
+  final legacy = PlannerSlotSideItem(
+    recipeId: slot.sideRecipeId,
+    text: slot.sideText,
+  );
+  return legacy.isEmpty
+      ? const <PlannerSlotSideItem>[]
+      : <PlannerSlotSideItem>[legacy];
+}
+
+/// Short label for planner/home summaries, or null when there are no sides.
+String? plannerSlotSideSummaryLine(MealPlanSlot slot, List<Recipe> recipes) {
+  final sides =
+      mealPlanSlotEffectiveSideItems(slot).where((e) => !e.isEmpty).toList();
+  if (sides.isEmpty) return null;
+  final parts = <String>[];
+  for (final side in sides) {
+    final t = side.text?.trim();
+    if (t != null && t.isNotEmpty) {
+      parts.add(t);
+      continue;
+    }
+    final id = side.recipeId?.trim();
+    if (id != null && id.isNotEmpty) {
+      final title = recipes.firstWhereOrNull((r) => r.id == id)?.title;
+      if (title != null && title.trim().isNotEmpty) {
+        parts.add(title.trim());
+      }
+    }
+  }
+  if (parts.isEmpty) return null;
+  if (parts.length == 1) return 'Side: ${parts.first}';
+  return 'Sides: ${parts.join(', ')}';
+}
+
 /// Compact day cell matching the planner grid calendar view.
 class PlannerDaySummaryTile extends StatelessWidget {
   const PlannerDaySummaryTile({

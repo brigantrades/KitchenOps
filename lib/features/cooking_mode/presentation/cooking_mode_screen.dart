@@ -865,9 +865,13 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
 
           final measurementSystem = ref.watch(measurementSystemProvider);
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
               Text(recipe.title,
                   style: Theme.of(context).textTheme.headlineMedium),
               const SizedBox(height: 10),
@@ -995,16 +999,6 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                     onPressed: () => unawaited(_addIngredientLine(recipe)),
                     icon: const Icon(Icons.add_rounded),
                     label: const Text('Add ingredient'),
-                  ),
-                ),
-              ],
-              if (_checkedIngredients.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                FilledButton.icon(
-                  onPressed: () => _addCheckedIngredientsToList(recipe),
-                  icon: const Icon(Icons.playlist_add_rounded),
-                  label: Text(
-                    'Add ${_checkedIngredients.length} item${_checkedIngredients.length == 1 ? '' : 's'} to List',
                   ),
                 ),
               ],
@@ -1172,6 +1166,27 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                   ),
                 ),
               ],
+            ],
+                ),
+              ),
+              if (_checkedIngredients.isNotEmpty)
+                Material(
+                  elevation: 3,
+                  color: scheme.surfaceContainerLow,
+                  child: SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: FilledButton.icon(
+                        onPressed: () => _addCheckedIngredientsToList(recipe),
+                        icon: const Icon(Icons.playlist_add_rounded),
+                        label: Text(
+                          'Add ${_checkedIngredients.length} item${_checkedIngredients.length == 1 ? '' : 's'} to List',
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           );
         },

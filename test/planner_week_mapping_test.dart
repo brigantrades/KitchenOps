@@ -98,6 +98,26 @@ void main() {
     });
   });
 
+  group('plannerUiDayIndexForDate', () {
+    test('returns index for date inside window', () {
+      const pref = PlannerWindowPreference(startDay: 0, dayCount: 5);
+      final anchor = DateTime(2026, 4, 6); // Monday
+      expect(
+        plannerUiDayIndexForDate(anchor, pref, DateTime(2026, 4, 8)),
+        2,
+      );
+    });
+
+    test('returns null when date outside window', () {
+      const pref = PlannerWindowPreference(startDay: 0, dayCount: 5);
+      final anchor = DateTime(2026, 4, 6);
+      expect(
+        plannerUiDayIndexForDate(anchor, pref, DateTime(2026, 4, 5)),
+        isNull,
+      );
+    });
+  });
+
   group('dedupeMealPlannerSlotsByCalendarDayAndSlotOrder', () {
     test('merges duplicate slot positions and prefers planned content', () {
       final mon = DateTime(2026, 3, 30);
