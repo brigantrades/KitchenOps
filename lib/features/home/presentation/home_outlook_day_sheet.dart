@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/planner_slot_labels.dart';
 import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
+import 'package:plateplan/core/ui/mint_date_header_card.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/home/presentation/home_outlook_day_card.dart';
 import 'package:plateplan/features/household/data/household_providers.dart';
@@ -51,24 +51,6 @@ Future<void> showHomeOutlookDayDetailSheet({
       final isDark = Theme.of(sheetContext).brightness == Brightness.dark;
       final ctaColor = isDark ? scheme.primary : AppBrand.deepTeal;
 
-      final topGradient = isDark
-          ? const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF1A2E2C),
-                Color(0xFF152A28),
-              ],
-            )
-          : LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                AppBrand.paleMint,
-                AppBrand.offWhite,
-              ],
-            );
-
       return DraggableScrollableSheet(
         expand: false,
         initialChildSize: 0.72,
@@ -78,10 +60,22 @@ Future<void> showHomeOutlookDayDetailSheet({
           return ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: topGradient,
-                boxShadow: AppShadows.floating,
-              ),
+              decoration: isDark
+                  ? const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF1A2E2C),
+                          Color(0xFF152A28),
+                        ],
+                      ),
+                      boxShadow: AppShadows.floating,
+                    )
+                  : BoxDecoration(
+                      color: scheme.surface,
+                      boxShadow: AppShadows.floating,
+                    ),
               child: SafeArea(
                 top: false,
                 child: Column(
@@ -103,7 +97,7 @@ Future<void> showHomeOutlookDayDetailSheet({
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                      child: _OutlookSheetHeader(date: date),
+                      child: MintDateHeaderCard(date: date),
                     ),
                     Expanded(
                       child: sortedSlots.isEmpty
@@ -219,67 +213,6 @@ Future<void> showHomeOutlookDayDetailSheet({
       );
     },
   );
-}
-
-class _OutlookSheetHeader extends StatelessWidget {
-  const _OutlookSheetHeader({required this.date});
-
-  final DateTime date;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: isDark ? AppBrand.headerGradientDark : AppBrand.headerGradient,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: AppShadows.soft,
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppBrand.offWhite.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              Icons.restaurant_menu_rounded,
-              color: AppBrand.offWhite.withValues(alpha: 0.95),
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  DateFormat('EEEE').format(date).toUpperCase(),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppBrand.offWhite.withValues(alpha: 0.88),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.1,
-                      ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  DateFormat('MMM d, yyyy').format(date),
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: AppBrand.offWhite,
-                        fontWeight: FontWeight.w800,
-                        height: 1.05,
-                      ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _EmptyDayCallout extends StatelessWidget {

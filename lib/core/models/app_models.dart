@@ -50,10 +50,7 @@ class PlannerWindowPreference {
   int get navigationStepDays => 7;
 
   bool get isValid =>
-      startDay >= 0 &&
-      startDay <= 6 &&
-      dayCount >= 1 &&
-      dayCount <= 14;
+      startDay >= 0 && startDay <= 6 && dayCount >= 1 && dayCount <= 14;
 
   /// Shared by all household members; [appDefault] when not in a household.
   static PlannerWindowPreference resolve({required Household? household}) {
@@ -210,6 +207,42 @@ class Nutrition {
       );
 }
 
+/// Sauce or icing stored on the main recipe row (not a separate [MealType.sauce] recipe).
+class RecipeEmbeddedSauce {
+  const RecipeEmbeddedSauce({
+    this.title,
+    this.ingredients = const [],
+    this.instructions = const [],
+  });
+
+  final String? title;
+  final List<Ingredient> ingredients;
+  final List<String> instructions;
+
+  Map<String, dynamic> toJson() => {
+        if (title != null && title!.trim().isNotEmpty) 'title': title,
+        'ingredients': ingredients.map((e) => e.toJson()).toList(),
+        'instructions': instructions,
+      };
+
+  factory RecipeEmbeddedSauce.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const RecipeEmbeddedSauce();
+    }
+    return RecipeEmbeddedSauce(
+      title: json['title']?.toString(),
+      ingredients: (json['ingredients'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .map(Ingredient.fromJson)
+              .toList() ??
+          const [],
+      instructions:
+          (json['instructions'] as List?)?.map((e) => e.toString()).toList() ??
+              const [],
+    );
+  }
+}
+
 class Recipe {
   const Recipe({
     required this.id,
@@ -235,6 +268,8 @@ class Recipe {
     this.nutritionSource,
     this.copiedFromPersonalRecipeId,
     this.createdAt,
+    this.defaultSauceRecipeId,
+    this.embeddedSauce,
   });
 
   final String id;
@@ -267,6 +302,13 @@ class Recipe {
   final String? copiedFromPersonalRecipeId;
   final DateTime? createdAt;
 
+  /// Optional linked sauce/icing recipe ([MealType.sauce]) suggested for this dish.
+  /// Prefer [embeddedSauce] for user-authored entrees (single recipe row).
+  final String? defaultSauceRecipeId;
+
+  /// Sauce or icing content stored on this recipe (same servings as main).
+  final RecipeEmbeddedSauce? embeddedSauce;
+
   Recipe copyWith({
     String? id,
     String? title,
@@ -294,6 +336,10 @@ class Recipe {
     String? nutritionSource,
     String? copiedFromPersonalRecipeId,
     DateTime? createdAt,
+    String? defaultSauceRecipeId,
+    bool clearDefaultSauceRecipeId = false,
+    RecipeEmbeddedSauce? embeddedSauce,
+    bool clearEmbeddedSauce = false,
   }) =>
       Recipe(
         id: id ?? this.id,
@@ -320,6 +366,11 @@ class Recipe {
         copiedFromPersonalRecipeId:
             copiedFromPersonalRecipeId ?? this.copiedFromPersonalRecipeId,
         createdAt: createdAt ?? this.createdAt,
+        defaultSauceRecipeId: clearDefaultSauceRecipeId
+            ? null
+            : (defaultSauceRecipeId ?? this.defaultSauceRecipeId),
+        embeddedSauce:
+            clearEmbeddedSauce ? null : (embeddedSauce ?? this.embeddedSauce),
       );
 
   Map<String, dynamic> toJson() => {
@@ -348,6 +399,8 @@ class Recipe {
         if (copiedFromPersonalRecipeId != null &&
             copiedFromPersonalRecipeId!.isNotEmpty)
           'copied_from_personal_recipe_id': copiedFromPersonalRecipeId,
+        'default_sauce_recipe_id': defaultSauceRecipeId,
+        'embedded_sauce': embeddedSauce?.toJson(),
       };
 
   factory Recipe.fromJson(Map<String, dynamic> json) => Recipe(
@@ -389,6 +442,12 @@ class Recipe {
         copiedFromPersonalRecipeId:
             json['copied_from_personal_recipe_id']?.toString(),
         createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+        defaultSauceRecipeId: json['default_sauce_recipe_id']?.toString(),
+        embeddedSauce: json['embedded_sauce'] is Map
+            ? RecipeEmbeddedSauce.fromJson(
+                Map<String, dynamic>.from(json['embedded_sauce'] as Map),
+              )
+            : null,
       );
 }
 
@@ -1091,8 +1150,10 @@ class HouseholdInvite {
   final String householdId;
   final String householdName;
   final HouseholdRole role;
+
   /// Email address the invite was sent to (the invitee).
   final String? invitedEmail;
+
   /// Account email of the user who sent the invite.
   final String? invitedByEmail;
 
@@ -1201,12 +1262,10 @@ class PantryItem {
         unit: json['unit']?.toString() ?? 'g',
         bufferThreshold: (json['buffer_threshold'] as num?)?.toDouble(),
         fdcId: (json['fdc_id'] as num?)?.toInt(),
-        lastAuditAt:
-            DateTime.tryParse(json['last_audit_at']?.toString() ?? ''),
+        lastAuditAt: DateTime.tryParse(json['last_audit_at']?.toString() ?? ''),
         sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
         createdBy: json['created_by']?.toString(),
         createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
         updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? ''),
       );
 }
-

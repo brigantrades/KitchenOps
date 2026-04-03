@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+import 'package:plateplan/core/strings/html_entities.dart';
 
 /// Prefix for stored web-import payloads (Re-parse and retry).
 const String kWebRecipeImportPayloadPrefix = '__LECKERLY_WEB_RECIPE_V1__';
@@ -77,9 +80,11 @@ Future<RecipePageFetchResult> fetchRecipePagePlainText(Uri uri) async {
       );
     }
     final resolved = response.request?.url ?? uri;
+    final heroImageUrl = extractRecipeImageUrlFromHtml(body);
     return RecipePageFetchResult.ok(
       canonicalUrl: resolved.toString(),
       plainText: plain,
+      heroImageUrl: heroImageUrl,
     );
   } catch (_) {
     return const RecipePageFetchResult.error(
@@ -91,6 +96,10 @@ Future<RecipePageFetchResult> fetchRecipePagePlainText(Uri uri) async {
 }
 
 /// Strip tags and boilerplate noise from HTML.
+///
+/// Inserts newlines at block boundaries so recipe import can find sections like
+/// "Ingredients", "Instructions", and "Orange Sauce" on separate lines (required
+/// by [supplementWebImportJsonWithEmbeddedSauceFromPlainText]).
 String htmlToPlainRecipeText(String html) {
   var s = html
       .replaceAll(
@@ -99,7 +108,7 @@ String htmlToPlainRecipeText(String html) {
           caseSensitive: false,
           dotAll: true,
         ),
-        ' ',
+        '\n',
       )
       .replaceAll(
         RegExp(
@@ -107,35 +116,162 @@ String htmlToPlainRecipeText(String html) {
           caseSensitive: false,
           dotAll: true,
         ),
-        ' ',
+        '\n',
+      );
+  // Block boundaries → line breaks before stripping remaining tags.
+  s = s
+      .replaceAll(RegExp(r'<\s*br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(
+        RegExp(
+          r'</\s*(p|div|h[1-6]|li|tr|section|article|header|footer|ul|ol)\s*>',
+          caseSensitive: false,
+        ),
+        '\n',
       )
-      .replaceAll(RegExp(r'<[^>]+>'), ' ')
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#39;', "'")
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
-  return s;
+      .replaceAll(
+        RegExp(
+          r'<\s*(p|div|h[1-6]|li|tr|section|article)\b[^>]*>',
+          caseSensitive: false,
+        ),
+        '\n',
+      );
+  s = s.replaceAll(RegExp(r'<[^>]+>'), ' ');
+  s = decodeHtmlEntities(s);
+  // Collapse horizontal space per line; keep newlines.
+  final lines = s.split(RegExp(r'\r?\n'));
+  final buf = StringBuffer();
+  for (final raw in lines) {
+    final line = raw.replaceAll(RegExp(r'[ \t\f\v]+'), ' ').trim();
+    if (line.isEmpty) continue;
+    if (buf.isNotEmpty) buf.writeln();
+    buf.write(line);
+  }
+  return buf.toString().trim();
 }
 
 class RecipePageFetchResult {
   const RecipePageFetchResult.ok({
     required this.canonicalUrl,
     required this.plainText,
+    this.heroImageUrl,
   }) : errorMessage = null;
 
   const RecipePageFetchResult.error(this.errorMessage)
       : canonicalUrl = null,
-        plainText = null;
+        plainText = null,
+        heroImageUrl = null;
 
   final String? canonicalUrl;
   final String? plainText;
+  /// From JSON-LD [Recipe.image] or `og:image` in raw HTML (Gemini never sees this).
+  final String? heroImageUrl;
   final String? errorMessage;
 
   bool get isOk => canonicalUrl != null && plainText != null;
+}
+
+/// Best-effort hero image from page HTML before scripts are stripped for Gemini.
+///
+/// Tries `application/ld+json` [Recipe] nodes first, then Open Graph `og:image`.
+String? extractRecipeImageUrlFromHtml(String html) {
+  final fromLd = _recipeImageUrlFromAllJsonLd(html);
+  if (fromLd != null && fromLd.isNotEmpty) return fromLd;
+  return _ogImageFromHtml(html);
+}
+
+String? _recipeImageUrlFromAllJsonLd(String html) {
+  // Match common variants (Food.com uses type="application/ld+json").
+  final scripts = RegExp(
+    r'<script[^>]*type\s*=\s*"application/ld\+json"[^>]*>([\s\S]*?)</script>',
+    caseSensitive: false,
+  ).allMatches(html);
+  for (final match in scripts) {
+    final raw = match.group(1)?.trim();
+    if (raw == null || raw.isEmpty) continue;
+    try {
+      final decoded = jsonDecode(raw);
+      final url = _recipeImageUrlFromLdNode(decoded);
+      if (url != null && url.isNotEmpty) return url;
+    } catch (_) {}
+  }
+  return null;
+}
+
+String? _recipeImageUrlFromLdNode(dynamic node) {
+  if (node is Map<String, dynamic>) {
+    final type = node['@type'];
+    final isRecipe = type == 'Recipe' ||
+        (type is List && type.any((t) => t.toString() == 'Recipe'));
+    if (isRecipe) {
+      return _coerceSchemaImageToUrl(node['image']);
+    }
+    if (node['@graph'] is List) {
+      for (final child in node['@graph'] as List) {
+        final url = _recipeImageUrlFromLdNode(child);
+        if (url != null && url.isNotEmpty) return url;
+      }
+    }
+  } else if (node is List) {
+    for (final child in node) {
+      final url = _recipeImageUrlFromLdNode(child);
+      if (url != null && url.isNotEmpty) return url;
+    }
+  }
+  return null;
+}
+
+String? _coerceSchemaImageToUrl(dynamic imageNode) {
+  if (imageNode == null) return null;
+  if (imageNode is String) {
+    final s = imageNode.trim();
+    if (s.isEmpty) return null;
+    if (s.startsWith('http')) return s;
+    return null;
+  }
+  if (imageNode is List && imageNode.isNotEmpty) {
+    for (final item in imageNode) {
+      final u = _coerceSchemaImageToUrl(item);
+      if (u != null) return u;
+    }
+    return null;
+  }
+  if (imageNode is Map) {
+    final m = Map<String, dynamic>.from(imageNode);
+    for (final key in <String>['url', 'contentUrl', 'thumbnailUrl']) {
+      final v = m[key]?.toString().trim();
+      if (v != null && v.startsWith('http')) return v;
+    }
+  }
+  return null;
+}
+
+String? _ogImageFromHtml(String html) {
+  final patterns = <RegExp>[
+    RegExp(
+      r'<meta\s+property="og:image"\s+content="([^"]+)"',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r"<meta\s+property='og:image'\s+content='([^']+)'",
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'<meta\s+content="([^"]+)"\s+property="og:image"',
+      caseSensitive: false,
+    ),
+  ];
+  for (final re in patterns) {
+    final m = re.firstMatch(html);
+    if (m != null) {
+      final raw = m.group(1)?.trim();
+      if (raw != null &&
+          raw.isNotEmpty &&
+          (raw.startsWith('http://') || raw.startsWith('https://'))) {
+        return decodeHtmlEntities(raw);
+      }
+    }
+  }
+  return null;
 }
 
 /// Decoded payload for web import (Re-parse / retry).

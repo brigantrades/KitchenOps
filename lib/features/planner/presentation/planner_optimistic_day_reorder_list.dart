@@ -15,6 +15,7 @@ class PlannerOptimisticDayReorderList extends ConsumerStatefulWidget {
     required this.syncKey,
     required this.providerDaySlots,
     required this.itemBuilder,
+    this.shrinkWrap = true,
   });
 
   /// Changes when week or selected day changes; resets optimistic state.
@@ -30,6 +31,11 @@ class PlannerOptimisticDayReorderList extends ConsumerStatefulWidget {
     List<MealPlanSlot> displaySlots,
   ) itemBuilder;
 
+  /// When true (default), the list sizes to its children and is meant for a parent
+  /// [ScrollView]. When false, use inside [Expanded] so the list scrolls and fills
+  /// the remaining height.
+  final bool shrinkWrap;
+
   @override
   ConsumerState<PlannerOptimisticDayReorderList> createState() =>
       _PlannerOptimisticDayReorderListState();
@@ -39,7 +45,8 @@ class _PlannerOptimisticDayReorderListState
     extends ConsumerState<PlannerOptimisticDayReorderList> {
   List<MealPlanSlot>? _optimistic;
 
-  List<MealPlanSlot> get _displaySlots => _optimistic ?? widget.providerDaySlots;
+  List<MealPlanSlot> get _displaySlots =>
+      _optimistic ?? widget.providerDaySlots;
 
   @override
   void didUpdateWidget(covariant PlannerOptimisticDayReorderList oldWidget) {
@@ -110,8 +117,10 @@ class _PlannerOptimisticDayReorderListState
     final slots = _displaySlots;
     return ReorderableListView.builder(
       key: ValueKey('planner-day-${widget.syncKey}'),
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: widget.shrinkWrap,
+      physics: widget.shrinkWrap
+          ? const NeverScrollableScrollPhysics()
+          : const AlwaysScrollableScrollPhysics(),
       buildDefaultDragHandles: false,
       itemCount: slots.length,
       onReorder: _onReorder,

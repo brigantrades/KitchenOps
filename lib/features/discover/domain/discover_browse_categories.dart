@@ -8,6 +8,7 @@ class BrowseCategory {
     required this.mealScope,
     this.graphicUrl,
     this.excludedByDiets = const {},
+    this.hiddenFromBrowse = false,
   });
 
   final String id;
@@ -16,6 +17,9 @@ class BrowseCategory {
   final DiscoverMealType mealScope;
   final String? graphicUrl;
   final Set<String> excludedByDiets;
+
+  /// When true, omitted from Discover cuisine tiles (see [browseCategoriesForMeal]).
+  final bool hiddenFromBrowse;
 }
 
 const _twemoji = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72';
@@ -55,7 +59,7 @@ const kBrowseCategories = <BrowseCategory>[
     label: 'Indian',
     keywords: ['indian', 'tikka', 'masala', 'korma', 'curry', 'dal', 'biryani', 'naan', 'tandoori'],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f35b.png',
+    graphicUrl: '$_twemoji/1f9c8.png',
   ),
   BrowseCategory(
     id: 'dinner-mediterranean',
@@ -63,6 +67,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['mediterranean', 'greek', 'orzo', 'falafel', 'hummus', 'tzatziki', 'pita', 'shawarma'],
     mealScope: DiscoverMealType.sauce,
     graphicUrl: '$_twemoji/1f9c6.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dinner-japanese',
@@ -79,6 +84,54 @@ const kBrowseCategories = <BrowseCategory>[
     graphicUrl: '$_twemoji/1f35c.png',
   ),
   BrowseCategory(
+    id: 'dinner-spanish',
+    label: 'Spanish',
+    keywords: [
+      'spanish',
+      'paella',
+      'tapas',
+      'gazpacho',
+      'chorizo',
+      'manchego',
+      'patatas',
+      'sangria',
+    ],
+    mealScope: DiscoverMealType.sauce,
+    graphicUrl: '$_twemoji/1f377.png',
+  ),
+  BrowseCategory(
+    id: 'dinner-french',
+    label: 'French',
+    keywords: [
+      'french',
+      'ratatouille',
+      'bourguignon',
+      'quiche',
+      'gratin',
+      'coq au vin',
+      'bistro',
+      'cassoulet',
+    ],
+    mealScope: DiscoverMealType.sauce,
+    graphicUrl: '$_twemoji/1f956.png',
+  ),
+  BrowseCategory(
+    id: 'dinner-latin-american',
+    label: 'Latin American',
+    keywords: [
+      'latin american',
+      'ceviche',
+      'empanada',
+      'pernil',
+      'sofrito',
+      'gallo pinto',
+      'moqueca',
+      'pupusa',
+    ],
+    mealScope: DiscoverMealType.sauce,
+    graphicUrl: '$_twemoji/1f32d.png',
+  ),
+  BrowseCategory(
     id: 'dinner-american',
     label: 'American Classics',
     keywords: ['american', 'burger', 'meatloaf', 'mac and cheese', 'bbq', 'grilled'],
@@ -93,11 +146,31 @@ const kBrowseCategories = <BrowseCategory>[
     graphicUrl: '$_twemoji/1f372.png',
   ),
   BrowseCategory(
-    id: 'dinner-one-pan',
-    label: 'One-Pan & Sheet Pan',
-    keywords: ['one-pan', 'one pan', 'sheet pan', 'sheet-pan', 'skillet'],
+    id: 'dinner-instant-pot',
+    label: 'Instant Pot',
+    keywords: [
+      'instant pot',
+      'instant-pot',
+      'pressure cooker',
+      'electric pressure',
+      'multicooker',
+      'instapot',
+    ],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f373.png',
+    graphicUrl: '$_twemoji/1f372.png',
+  ),
+  BrowseCategory(
+    id: 'dinner-crock-pot',
+    label: 'Crock Pot',
+    keywords: [
+      'crock pot',
+      'crockpot',
+      'crock-pot',
+      'slow cooker',
+      'slow-cooker',
+    ],
+    mealScope: DiscoverMealType.sauce,
+    graphicUrl: '$_twemoji/1f958.png',
   ),
   BrowseCategory(
     id: 'dinner-soups',
@@ -139,15 +212,42 @@ const kBrowseCategories = <BrowseCategory>[
   ),
   BrowseCategory(
     id: 'breakfast-savory',
-    label: 'Savory Breakfasts',
-    keywords: ['hash', 'breakfast casserole', 'breakfast burrito', 'breakfast sandwich', 'avocado toast'],
+    label: 'Burritos & Sandwiches',
+    keywords: [
+      'burrito',
+      'breakfast burrito',
+      'sandwich',
+      'breakfast sandwich',
+      'wrap',
+      'panini',
+      'melt',
+      'stromboli',
+      'chimichanga',
+      'croque',
+    ],
     mealScope: DiscoverMealType.entree,
     graphicUrl: '$_twemoji/1f96a.png',
   ),
   BrowseCategory(
+    id: 'breakfast-casseroles',
+    label: 'Casseroles',
+    keywords: [
+      'casserole',
+      'breakfast casserole',
+      'strata',
+      'egg bake',
+      'breakfast bake',
+      'french toast casserole',
+      'hash brown',
+      'tater tot',
+    ],
+    mealScope: DiscoverMealType.entree,
+    graphicUrl: '$_twemoji/1f958.png',
+  ),
+  BrowseCategory(
     id: 'breakfast-healthy',
     label: 'Healthy & Light',
-    keywords: ['healthy', 'clean', 'nourishing', 'protein', 'whole30', 'paleo'],
+    keywords: ['healthy', 'clean', 'nourishing', 'whole30', 'paleo'],
     mealScope: DiscoverMealType.entree,
     graphicUrl: '$_twemoji/1f957.png',
   ),
@@ -159,6 +259,47 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['salad', 'vinaigrette', 'greens', 'caesar', 'grain bowl'],
     mealScope: DiscoverMealType.side,
     graphicUrl: '$_twemoji/1f96c.png',
+  ),
+  BrowseCategory(
+    id: 'lunch-five-ingredients',
+    label: '5 Ingredients or Less',
+    keywords: [
+      '5 ingredients or less',
+      'five ingredients or less',
+      '5-ingredient',
+      'five-ingredient',
+      '5 ingredient',
+      'five ingredient',
+    ],
+    mealScope: DiscoverMealType.side,
+    graphicUrl: '$_twemoji/1f4dd.png',
+  ),
+  BrowseCategory(
+    id: 'lunch-school',
+    label: 'School Lunch',
+    keywords: [
+      'school lunch',
+      'lunchbox',
+      'kids lunch',
+      'school lunch ideas',
+      'bento',
+    ],
+    mealScope: DiscoverMealType.side,
+    graphicUrl: '$_twemoji/1f392.png',
+  ),
+  BrowseCategory(
+    id: 'lunch-quick-easy',
+    label: 'Quick & Easy',
+    keywords: [
+      'quick & easy',
+      'quick and easy',
+      'easy lunch',
+      'quick lunch',
+      '20 minute',
+      '20 minutes',
+    ],
+    mealScope: DiscoverMealType.side,
+    graphicUrl: '$_twemoji/26a1.png',
   ),
   BrowseCategory(
     id: 'lunch-sandwiches',
@@ -180,6 +321,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['mexican', 'taco', 'burrito', 'quesadilla', 'tostada'],
     mealScope: DiscoverMealType.side,
     graphicUrl: '$_twemoji/1f32e.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'lunch-mediterranean',
@@ -187,6 +329,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['mediterranean', 'greek', 'falafel', 'hummus', 'shawarma'],
     mealScope: DiscoverMealType.side,
     graphicUrl: '$_twemoji/1f9c6.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'lunch-asian',
@@ -194,6 +337,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['asian', 'noodle', 'rice bowl', 'stir-fry', 'dumpling', 'bao'],
     mealScope: DiscoverMealType.side,
     graphicUrl: '$_twemoji/1f961.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'lunch-meal-prep',
@@ -201,6 +345,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['meal prep', 'batch', 'make ahead', 'weekly'],
     mealScope: DiscoverMealType.side,
     graphicUrl: '$_twemoji/1f371.png',
+    hiddenFromBrowse: true,
   ),
 
   // ── Appetizers & Snacks ─────────────────────────────────────────────
@@ -212,11 +357,39 @@ const kBrowseCategories = <BrowseCategory>[
     graphicUrl: '$_twemoji/1f95f.png',
   ),
   BrowseCategory(
+    id: 'snack-cheese-balls',
+    label: 'Cheese Balls',
+    keywords: [
+      'cheese ball',
+      'cheeseball',
+      'cream cheese',
+      'cheddar',
+      'goat cheese',
+      'pecan',
+    ],
+    mealScope: DiscoverMealType.snack,
+    graphicUrl: '$_twemoji/1f37d.png',
+  ),
+  BrowseCategory(
+    id: 'snack-crowd-favorites',
+    label: 'Crowd Favorites',
+    keywords: [
+      'crowd favorites',
+      'for a crowd',
+      'potluck',
+      'party',
+      'entertaining',
+    ],
+    mealScope: DiscoverMealType.snack,
+    graphicUrl: '$_twemoji/1f389.png',
+  ),
+  BrowseCategory(
     id: 'snack-finger-foods',
     label: 'Finger Foods',
     keywords: ['bites', 'skewer', 'roll', 'taquito', 'dumpling', 'poppers', 'spring roll'],
     mealScope: DiscoverMealType.snack,
     graphicUrl: '$_twemoji/1f96f.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'snack-boards',
@@ -225,6 +398,7 @@ const kBrowseCategories = <BrowseCategory>[
     mealScope: DiscoverMealType.snack,
     graphicUrl: '$_twemoji/1f9c0.png',
     excludedByDiets: {'vegan'},
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'snack-crispy',
@@ -232,6 +406,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['fries', 'onion rings', 'chips', 'popcorn', 'fried pickles', 'fritters'],
     mealScope: DiscoverMealType.snack,
     graphicUrl: '$_twemoji/1f35f.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'snack-healthy',
@@ -239,6 +414,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['veggie', 'nuts', 'seeds', 'energy balls', 'fruit', 'yogurt', 'edamame'],
     mealScope: DiscoverMealType.snack,
     graphicUrl: '$_twemoji/1f96c.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'snack-seafood',
@@ -247,6 +423,7 @@ const kBrowseCategories = <BrowseCategory>[
     mealScope: DiscoverMealType.snack,
     graphicUrl: '$_twemoji/1f990.png',
     excludedByDiets: {'vegetarian', 'vegan'},
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'snack-wings-meaty',
@@ -255,15 +432,58 @@ const kBrowseCategories = <BrowseCategory>[
     mealScope: DiscoverMealType.snack,
     graphicUrl: '$_twemoji/1f357.png',
     excludedByDiets: {'vegetarian', 'vegan', 'pescatarian'},
+    hiddenFromBrowse: true,
   ),
 
   // ── Desserts ────────────────────────────────────────────────────────
+  BrowseCategory(
+    id: 'dessert-sweet-bites',
+    label: 'Sweet Bites',
+    keywords: [
+      'sweet bites',
+      'finger food',
+      'mini',
+      'small bite',
+      'bite-sized',
+    ],
+    mealScope: DiscoverMealType.dessert,
+    graphicUrl: '$_twemoji/1f36c.png',
+  ),
+  BrowseCategory(
+    id: 'dessert-summer-delights',
+    label: 'Summer Delights',
+    keywords: [
+      'summer delights',
+      'summer pie',
+      'cobbler',
+      'crisp',
+      'berry',
+      'peach',
+      'strawberry',
+    ],
+    mealScope: DiscoverMealType.dessert,
+    graphicUrl: '$_twemoji/1f31e.png',
+  ),
+  BrowseCategory(
+    id: 'dessert-jello',
+    label: 'Jello',
+    keywords: [
+      'jello',
+      'jell-o',
+      'gelatin',
+      'gelatine',
+      'rainbow',
+    ],
+    mealScope: DiscoverMealType.dessert,
+    graphicUrl: '$_twemoji/1f36d.png',
+  ),
   BrowseCategory(
     id: 'dessert-chocolate',
     label: 'Chocolate',
     keywords: ['chocolate', 'brownie', 'mousse', 'cacao', 'fudge'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f36b.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-cookies',
@@ -271,6 +491,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['cookie', 'bars', 'shortbread', 'snickerdoodle', 'biscotti'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f36a.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-cakes',
@@ -278,6 +499,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['cake', 'cupcake', 'layer cake', 'pound cake', 'bundt'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f370.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-pies',
@@ -285,6 +507,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['pie', 'cobbler', 'crisp', 'crumble', 'tart', 'galette'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f967.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-fruit',
@@ -292,6 +515,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['fruit', 'berries', 'strawberry', 'peach', 'apple', 'cherry', 'compote'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f352.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-frozen',
@@ -299,6 +523,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['ice cream', 'pudding', 'panna cotta', 'sorbet', 'custard', 'gelato'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f366.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-no-bake',
@@ -306,6 +531,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['no-bake', 'energy balls', 'truffles', 'protein balls'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f95c.png',
+    hiddenFromBrowse: true,
   ),
   BrowseCategory(
     id: 'dessert-breads',
@@ -313,6 +539,7 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: ['muffin', 'banana bread', 'zucchini bread', 'quick bread', 'scone'],
     mealScope: DiscoverMealType.dessert,
     graphicUrl: '$_twemoji/1f9c1.png',
+    hiddenFromBrowse: true,
   ),
 ];
 
@@ -332,6 +559,7 @@ List<BrowseCategory> browseCategoriesForMeal(
 ) {
   return kBrowseCategories.where((cat) {
     if (cat.mealScope != mealScope) return false;
+    if (cat.hiddenFromBrowse) return false;
     if (activeDiets.isNotEmpty &&
         cat.excludedByDiets.intersection(activeDiets).isNotEmpty) {
       return false;

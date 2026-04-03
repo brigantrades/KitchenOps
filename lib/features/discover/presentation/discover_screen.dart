@@ -1,3 +1,5 @@
+import 'dart:math' show Random;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -36,6 +38,15 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     _searchController = TextEditingController(
       text: ref.read(discoverSearchQueryProvider),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(discoverBreakfastFeaturedShuffleSeedProvider.notifier).state =
+          Random().nextInt(0x3fffffff);
+      ref.read(discoverLunchFeaturedShuffleSeedProvider.notifier).state =
+          Random().nextInt(0x3fffffff);
+      ref.read(discoverDinnerFeaturedShuffleSeedProvider.notifier).state =
+          Random().nextInt(0x3fffffff);
+    });
   }
 
   @override
@@ -46,6 +57,20 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<DiscoverMealType>(discoverMealTypeProvider, (previous, next) {
+      if (next == DiscoverMealType.entree && previous != DiscoverMealType.entree) {
+        ref.read(discoverBreakfastFeaturedShuffleSeedProvider.notifier).state =
+            Random().nextInt(0x3fffffff);
+      }
+      if (next == DiscoverMealType.side && previous != DiscoverMealType.side) {
+        ref.read(discoverLunchFeaturedShuffleSeedProvider.notifier).state =
+            Random().nextInt(0x3fffffff);
+      }
+      if (next == DiscoverMealType.sauce && previous != DiscoverMealType.sauce) {
+        ref.read(discoverDinnerFeaturedShuffleSeedProvider.notifier).state =
+            Random().nextInt(0x3fffffff);
+      }
+    });
     final selectedMeal = ref.watch(discoverMealTypeProvider);
     final isBreakfastOnlySelected = selectedMeal == DiscoverMealType.entree;
     final isLunchOnlySelected = selectedMeal == DiscoverMealType.side;
@@ -61,14 +86,14 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                     ? ref.watch(discoverDessertIdeasRecipesProvider)
                     : ref.watch(discoverQuickEasyRecipesProvider);
     final featuredSectionTitle = isBreakfastOnlySelected
-        ? 'Lazy Breakfast Ideas'
+        ? 'Breakfast Ideas'
         : isLunchOnlySelected
-            ? 'Quick & Easy Lunch Ideas'
+            ? 'Lunch Ideas'
             : isSnackOnlySelected
                 ? 'Snack Ideas'
                 : isDessertOnlySelected
                     ? 'Dessert Ideas'
-                    : 'Quick & Easy Dinners';
+                    : 'Dinner Ideas';
     final cuisinesAsync = ref.watch(discoverCuisineTilesProvider);
     final searchQuery = ref.watch(discoverSearchQueryProvider);
     final isSearchActive = searchQuery.trim().isNotEmpty;
@@ -2109,8 +2134,6 @@ String _cuisineGraphicForLabel(String label) {
         'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f331.png',
     'seafood':
         'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f41f.png',
-    'one-pan & sheet pan':
-        'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f373.png',
     'southern comfort':
         'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f372.png',
     'crockpot':

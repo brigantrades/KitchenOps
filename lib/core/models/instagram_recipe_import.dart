@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:plateplan/core/measurement/ingredient_display_units.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/recipes/ingredient_line_parser.dart';
+import 'package:plateplan/core/strings/html_entities.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 
 /// Removes Instagram / reel / ig.me URL tokens line-by-line. Preserves newlines
@@ -209,9 +210,19 @@ Ingredient _ingredientWith(
   );
 }
 
+String _cleanImportedIngredientText(String raw) =>
+    stripLeadingIngredientListDecorations(decodeHtmlEntities(raw.trim()));
+
 /// Normalizes Gemini/book-scan [Ingredient] rows to canonical unit keys and
 /// recovers amount/unit/name splits when the model merged fields.
 Ingredient normalizeImportedIngredient(Ingredient i) {
+  i = _ingredientWith(
+    i,
+    name: _cleanImportedIngredientText(i.name),
+    amount: i.amount,
+    unit: _cleanImportedIngredientText(i.unit),
+    qualitative: i.qualitative,
+  );
   if (i.qualitative) {
     final combined = [i.unit, i.name]
         .map((s) => s.trim())
@@ -598,6 +609,339 @@ bool _ingredientLooksLikeHallucinatedCarbNotInCaption(
   return false;
 }
 
+RecipeEmbeddedSauce? _embeddedSauceFromGeminiJson(
+  Map<String, dynamic> root, {
+  required bool applyInstagramCarbFilter,
+  String? captionLower,
+}) {
+  final raw = root['embedded_sauce'] ?? root['sauce'];
+  if (raw == null) return null;
+  if (raw is! Map) return null;
+  final m = Map<String, dynamic>.from(raw);
+  final titleTrim = m['title']?.toString().trim();
+  final titleNonEmpty =
+      titleTrim != null && titleTrim.isNotEmpty ? titleTrim : null;
+
+  var sauceIngs = (m['ingredients'] as List?)
+          ?.whereType<Map>()
+          .map((e) => _ingredientFromInstagramJson(Map<String, dynamic>.from(e)))
+          .map(normalizeImportedIngredient)
+          .where((i) => i.name.isNotEmpty)
+          .toList() ??
+      const <Ingredient>[];
+  if (applyInstagramCarbFilter &&
+      captionLower != null &&
+      captionLower.isNotEmpty) {
+    sauceIngs = sauceIngs
+        .where(
+          (i) => !_ingredientLooksLikeHallucinatedCarbNotInCaption(i, captionLower),
+        )
+        .toList();
+  }
+
+  final sauceInstructions = (m['instructions'] as List?)
+          ?.map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .toList() ??
+      const <String>[];
+
+  if (titleNonEmpty == null &&
+      sauceIngs.isEmpty &&
+      sauceInstructions.isEmpty) {
+    return null;
+  }
+
+  return RecipeEmbeddedSauce(
+    title: titleNonEmpty,
+    ingredients: sauceIngs,
+    instructions: sauceInstructions,
+  );
+}
+
+bool _webJsonHasUsableEmbeddedSauce(Map<String, dynamic> json) {
+  final raw = json['embedded_sauce'] ?? json['sauce'];
+  if (raw is! Map) return false;
+  final m = Map<String, dynamic>.from(raw);
+  final ings = m['ingredients'];
+  final instr = m['instructions'];
+  if (ings is List && ings.isNotEmpty) return true;
+  if (instr is List &&
+      instr.any((e) => e.toString().trim().isNotEmpty)) {
+    return true;
+  }
+  return (m['title'] ?? '').toString().trim().isNotEmpty;
+}
+
+String? _markdownSubsectionTitle(String line) {
+  var m = RegExp(r'^\s*#{3,6}\s+(.+?)\s*:?\s*$').firstMatch(line.trim());
+  if (m != null) {
+    return m.group(1)!.replaceAll(RegExp(r'\*+'), '').trim();
+  }
+  m = RegExp(r'^\s*#{1,6}\s*\*\*(.+?)\*\*\s*:?\s*$')
+      .firstMatch(line.trim());
+  if (m != null) return m.group(1)!.trim();
+  return null;
+}
+
+/// Heuristic: lines like `1/4 cup water` must not become subsection titles.
+bool _plainLineLooksLikeMeasuredIngredient(String t) {
+  if (RegExp(r'^\d').hasMatch(t)) return true;
+  if (RegExp(r'/\d').hasMatch(t)) return true;
+  return RegExp(
+    r'\b(cup|cups|tbsp|tsp|ml|oz|lb|g|gram|tablespoons?|teaspoons?|ounces?|pounds?|mg)\b',
+    caseSensitive: false,
+  ).hasMatch(t);
+}
+
+/// Plain-line headings from typical WP / recipe-card HTML (no markdown `#`).
+String? _wpStyleSubsectionTitle(String line) {
+  final t = line.trim();
+  if (t.isEmpty || t.length > 72) return null;
+  if (RegExp(r'^[\-\*•▢]').hasMatch(t)) return null;
+  if (RegExp(r'^\d+[\.)]\s').hasMatch(t)) return null;
+  if (RegExp(r'\b(kcal|calories:|protein:|carbs:|fiber:|sodium:)\b',
+          caseSensitive: false)
+      .hasMatch(t)) {
+    return null;
+  }
+  if (RegExp(r':\s*\d').hasMatch(t)) return null;
+  if (t.endsWith('.')) return null;
+
+  final words = t.split(RegExp(r'\s+'));
+  if (words.length > 12) return null;
+
+  if (RegExp(r'^for\s+the\s+', caseSensitive: false).hasMatch(t)) {
+    return t.replaceFirst(RegExp(r':\s*$'), '').trim();
+  }
+
+  if (_plainLineLooksLikeMeasuredIngredient(t)) return null;
+
+  if (words.length <= 8) {
+    const badFirst = {
+      'skip',
+      'submit',
+      'home',
+      'search',
+      'menu',
+      'close',
+      'next',
+      'previous',
+      'facebook',
+      'twitter',
+      'instagram',
+      'pinterest',
+      'print',
+      'pin',
+      'save',
+      'jump',
+      'cook',
+      'rating',
+      'servings',
+      'prep',
+      'total',
+      'author',
+      'comment',
+      'related',
+      'more',
+      'share',
+      'subscribe',
+    };
+    final first = words.first.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+    if (badFirst.contains(first)) return null;
+    if (!RegExp(r'[a-zA-Z]').hasMatch(t)) return null;
+    if (words.length >= 5 &&
+        !RegExp(
+          r'\b(sauce|dressing|glaze|tofu|chicken|salmon|pasta|noodles|rice|bowl|salad|sandwich|wraps?|filling|topping|crust|batter|dough|marinade|dip|veggies?)\b',
+          caseSensitive: false,
+        ).hasMatch(t)) {
+      return null;
+    }
+    return t.replaceFirst(RegExp(r':\s*$'), '').trim();
+  }
+  return null;
+}
+
+String? _recipeSubsectionTitle(String line) {
+  final md = _markdownSubsectionTitle(line);
+  if (md != null) return md;
+  return _wpStyleSubsectionTitle(line);
+}
+
+bool _titleSoundsLikeSauceSection(String raw) {
+  final s = raw.toLowerCase().replaceAll(RegExp(r':\s*$'), '').trim();
+  if (s.isEmpty) return false;
+  if (RegExp(r'\b(air fryer tofu|the tofu)\b').hasMatch(s) &&
+      !RegExp(r'\b(sauce|glaze|dressing)\b').hasMatch(s)) {
+    return false;
+  }
+  return RegExp(
+    r'\b(sauce|dressing|glaze|icing|frosting|aioli|vinaigrette|marinade|dip)\b',
+  ).hasMatch(s);
+}
+
+String? _stripRecipeBullet(String line) {
+  var s = line.trim();
+  if (s.isEmpty) return null;
+  s = s.replaceFirst(RegExp(r'^[\-\*•]\s*'), '');
+  s = s.replaceFirst(RegExp(r'^▢\s*'), '');
+  s = s.replaceFirst(RegExp(r'^\d+\.\s+'), '');
+  s = s.trim();
+  return s.isEmpty ? null : s;
+}
+
+bool _lineIsIngredientsHeader(String line) {
+  final t = line.trim();
+  return RegExp(r'^#{1,3}\s+ingredients\b', caseSensitive: false)
+          .hasMatch(t) ||
+      RegExp(r'^ingredients\s*$', caseSensitive: false).hasMatch(t);
+}
+
+bool _lineIsInstructionsHeader(String line) {
+  final t = line.trim();
+  return RegExp(r'^#{1,3}\s+instructions\b', caseSensitive: false)
+          .hasMatch(t) ||
+      RegExp(r'^instructions\s*$', caseSensitive: false).hasMatch(t);
+}
+
+/// Prefers the last Ingredients block that is followed by Instructions (skips nav).
+int? _lineIndexOfRecipeIngredientsHeader(List<String> lines) {
+  int? best;
+  for (var i = 0; i < lines.length; i++) {
+    if (!_lineIsIngredientsHeader(lines[i])) continue;
+    if (_lineIndexOfInstructionsHeader(lines, i + 1) != null) {
+      best = i;
+    }
+  }
+  return best;
+}
+
+int? _lineIndexOfInstructionsHeader(List<String> lines, [int start = 0]) {
+  for (var i = start; i < lines.length; i++) {
+    if (_lineIsInstructionsHeader(lines[i])) {
+      return i;
+    }
+  }
+  return null;
+}
+
+int _endOfInstructionsRegion(List<String> lines, int firstLineAfterInstr) {
+  for (var i = firstLineAfterInstr; i < lines.length; i++) {
+    final t = lines[i].trim();
+    if (RegExp(
+      r'^\s*#{1,2}\s+(notes|tips|nutrition|video|comments|print|leave a reply)\b',
+      caseSensitive: false,
+    ).hasMatch(t)) {
+      return i;
+    }
+    if (RegExp(
+      r'^(notes|nutrition|video|comments|print recipe|leave a reply)\s*$',
+      caseSensitive: false,
+    ).hasMatch(t)) {
+      return i;
+    }
+  }
+  return lines.length;
+}
+
+Map<String, dynamic> _ingredientBulletToGeminiJson(String bullet) {
+  final pm = tryParseMeasuredIngredientLine(bullet);
+  if (pm != null) {
+    return {
+      'name': pm.name,
+      'amount': pm.amount.toString(),
+      'unit': pm.unit,
+    };
+  }
+  return {'name': bullet, 'amount': '', 'unit': ''};
+}
+
+void _collectBulletsBySectionKind(
+  List<String> lines,
+  int start,
+  int end,
+  List<String> mainOut,
+  List<String> sauceOut,
+  void Function(String heading) onSauceHeading,
+) {
+  String? heading;
+  for (var i = start; i < end && i < lines.length; i++) {
+    final t = _recipeSubsectionTitle(lines[i]);
+    if (t != null) {
+      heading = t;
+      continue;
+    }
+    final bullet = _stripRecipeBullet(lines[i]);
+    if (bullet == null) continue;
+    if (heading == null) continue;
+    if (_titleSoundsLikeSauceSection(heading)) {
+      onSauceHeading(heading);
+      sauceOut.add(bullet);
+    } else {
+      mainOut.add(bullet);
+    }
+  }
+}
+
+/// When web AI omits [embedded_sauce], split blog subsections from plain text
+/// (e.g. `#### Orange Sauce` vs `#### Air Fryer Tofu` on recipe card layouts).
+Map<String, dynamic> supplementWebImportJsonWithEmbeddedSauceFromPlainText(
+  Map<String, dynamic> json,
+  String plainText,
+) {
+  if (plainText.trim().isEmpty) return json;
+  if (_webJsonHasUsableEmbeddedSauce(json)) return json;
+
+  final lines = plainText.split(RegExp(r'\r?\n'));
+  final ingHdr = _lineIndexOfRecipeIngredientsHeader(lines);
+  if (ingHdr == null) return json;
+  final instrHdr = _lineIndexOfInstructionsHeader(lines, ingHdr + 1);
+  if (instrHdr == null) return json;
+
+  final mainIng = <String>[];
+  final sauceIng = <String>[];
+  String? sauceTitle;
+  void onSauce(String h) {
+    sauceTitle ??=
+        h.replaceAll(RegExp(r'\*+'), '').replaceAll(RegExp(r':\s*$'), '').trim();
+  }
+
+  _collectBulletsBySectionKind(
+    lines,
+    ingHdr + 1,
+    instrHdr,
+    mainIng,
+    sauceIng,
+    onSauce,
+  );
+  if (sauceIng.isEmpty) return json;
+  if (mainIng.isEmpty) return json;
+
+  final instrEnd = _endOfInstructionsRegion(lines, instrHdr + 1);
+  final mainSteps = <String>[];
+  final sauceSteps = <String>[];
+  _collectBulletsBySectionKind(
+    lines,
+    instrHdr + 1,
+    instrEnd,
+    mainSteps,
+    sauceSteps,
+    (_) {},
+  );
+
+  final out = Map<String, dynamic>.from(json);
+  out['ingredients'] =
+      mainIng.map(_ingredientBulletToGeminiJson).toList();
+  out['embedded_sauce'] = {
+    if (sauceTitle != null && sauceTitle!.isNotEmpty) 'title': sauceTitle,
+    'ingredients': sauceIng.map(_ingredientBulletToGeminiJson).toList(),
+    'instructions': sauceSteps,
+  };
+  if (mainSteps.isNotEmpty) {
+    out['instructions'] = mainSteps;
+  }
+  return out;
+}
+
 /// Builds a [Recipe] from Gemini JSON for Instagram or book-scan import (see [GeminiService]).
 Recipe recipeFromInstagramGeminiMap(
   Map<String, dynamic> json, {
@@ -647,6 +991,15 @@ Recipe recipeFromInstagramGeminiMap(
     captionStripped: captionStripped,
   );
 
+  final capLower = sharedContent != null && sharedContent.trim().isNotEmpty
+      ? sharedContent.toLowerCase()
+      : null;
+  final embeddedSauce = _embeddedSauceFromGeminiJson(
+    json,
+    applyInstagramCarbFilter: source == 'instagram_import' && capLower != null,
+    captionLower: capLower,
+  );
+
   return Recipe(
     id: tempId,
     title: title,
@@ -669,5 +1022,6 @@ Recipe recipeFromInstagramGeminiMap(
     source: source,
     sourceUrl: sourceUrl,
     visibility: RecipeVisibility.personal,
+    embeddedSauce: embeddedSauce,
   );
 }

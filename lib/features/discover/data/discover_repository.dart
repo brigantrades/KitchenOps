@@ -852,6 +852,21 @@ final generatedWeeklyProvider = FutureProvider<List<Recipe>>((ref) async {
 final discoverMealTypeProvider =
     StateProvider<DiscoverMealType>((ref) => DiscoverMealType.entree);
 
+/// Drives shuffle order for [discoverLazyBreakfastRecipesProvider]. Rolled when
+/// Discover opens or when the user switches to Breakfast.
+final discoverBreakfastFeaturedShuffleSeedProvider =
+    StateProvider<int>((ref) => 0);
+
+/// Drives shuffle order for [discoverQuickLunchRecipesProvider]. Rolled when
+/// Discover opens or when the user switches to Lunch.
+final discoverLunchFeaturedShuffleSeedProvider =
+    StateProvider<int>((ref) => 0);
+
+/// Drives shuffle order for [discoverQuickEasyRecipesProvider]. Rolled when
+/// Discover opens or when the user switches to Dinner.
+final discoverDinnerFeaturedShuffleSeedProvider =
+    StateProvider<int>((ref) => 0);
+
 final discoverChipIdProvider = StateProvider<String>((ref) => 'all');
 
 final discoverSearchQueryProvider = StateProvider<String>((ref) => '');
@@ -1073,17 +1088,27 @@ const _discoverQuickEasyApiIds = <String>{
 
 final discoverQuickEasyRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
   final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
-  return recipesAsync.whenData(
-    (recipes) => recipes
+  final shuffleSeed = ref.watch(discoverDinnerFeaturedShuffleSeedProvider);
+  return recipesAsync.whenData((recipes) {
+    final allowlisted = recipes
         .where((recipe) => _discoverQuickEasyApiIds.contains(recipe.apiId))
-        .toList(),
-  );
+        .toList();
+    // Curated Pinch of Yum ids; if none are present (slug drift, different DB),
+    // fall back to all public dinner recipes so the strip isn't empty.
+    final pool = allowlisted.isNotEmpty
+        ? allowlisted
+        : recipes.where((r) => r.mealType == MealType.sauce).toList();
+    if (pool.isEmpty) return const <Recipe>[];
+    final shuffled = [...pool]..shuffle(Random(shuffleSeed));
+    return shuffled;
+  });
 });
 
 final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
   final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
+  final shuffleSeed = ref.watch(discoverBreakfastFeaturedShuffleSeedProvider);
   return recipesAsync.whenData((recipes) {
-    return recipes.where((recipe) {
+    final filtered = recipes.where((recipe) {
       final haystack =
           '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
       final isBreakfastMeal = recipe.mealType == MealType.entree;
@@ -1095,14 +1120,18 @@ final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>(
           haystack.contains('casserole') ||
           haystack.contains('whole30');
       return isBreakfastMeal && isLazyBreakfast;
-    }).take(12).toList();
+    }).toList();
+    if (filtered.isEmpty) return const <Recipe>[];
+    final shuffled = [...filtered]..shuffle(Random(shuffleSeed));
+    return shuffled.take(12).toList();
   });
 });
 
 final discoverQuickLunchRecipesProvider = Provider<AsyncValue<List<Recipe>>>((ref) {
   final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
+  final shuffleSeed = ref.watch(discoverLunchFeaturedShuffleSeedProvider);
   return recipesAsync.whenData((recipes) {
-    return recipes.where((recipe) {
+    final filtered = recipes.where((recipe) {
       final haystack =
           '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
       final isLunchMeal = recipe.mealType == MealType.side;
@@ -1113,7 +1142,10 @@ final discoverQuickLunchRecipesProvider = Provider<AsyncValue<List<Recipe>>>((re
           haystack.contains('bento') ||
           haystack.contains('whole30');
       return isLunchMeal && isQuickLunch;
-    }).take(12).toList();
+    }).toList();
+    if (filtered.isEmpty) return const <Recipe>[];
+    final shuffled = [...filtered]..shuffle(Random(shuffleSeed));
+    return shuffled.take(12).toList();
   });
 });
 

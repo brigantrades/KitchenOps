@@ -16,7 +16,9 @@ import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/core/ui/action_pill.dart';
 import 'package:plateplan/core/ui/discover_shell.dart';
 import 'package:plateplan/core/ui/recipo_kit.dart';
+import 'package:plateplan/core/theme/app_brand.dart';
 import 'package:plateplan/core/theme/design_tokens.dart';
+import 'package:plateplan/core/ui/mint_date_header_card.dart';
 import 'package:plateplan/core/ui/section_card.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
@@ -65,7 +67,8 @@ class _PlannerDaySyncListener extends ConsumerStatefulWidget {
       _PlannerDaySyncListenerState();
 }
 
-class _PlannerDaySyncListenerState extends ConsumerState<_PlannerDaySyncListener> {
+class _PlannerDaySyncListenerState
+    extends ConsumerState<_PlannerDaySyncListener> {
   @override
   void initState() {
     super.initState();
@@ -92,8 +95,9 @@ Future<void> showPlannerWindowSettingsSheet(
   final household = ref.read(activeHouseholdProvider).valueOrNull;
   final user = ref.read(currentUserProvider);
   final members = ref.read(householdMembersProvider).valueOrNull ?? const [];
-  final currentMember =
-      user == null ? null : members.firstWhereOrNull((m) => m.userId == user.id);
+  final currentMember = user == null
+      ? null
+      : members.firstWhereOrNull((m) => m.userId == user.id);
   final isOwner = currentMember?.role == HouseholdRole.owner;
 
   await showModalBottomSheet<void>(
@@ -271,7 +275,9 @@ Future<void> showPlannerWindowSettingsSheet(
                 FilledButton(
                   onPressed: () async {
                     try {
-                      await ref.read(householdRepositoryProvider).updateHouseholdPlannerWindow(
+                      await ref
+                          .read(householdRepositoryProvider)
+                          .updateHouseholdPlannerWindow(
                             householdId: household.id,
                             plannerStartDay: startDay,
                             plannerDayCount: dayCount,
@@ -521,8 +527,9 @@ Widget buildPlannerDaySlotCard({
             text: slot.sideText,
           ),
         ].where((e) => !e.isEmpty).toList();
-  final mealSource =
-      slot.mealText?.trim().isNotEmpty == true ? 'Typed' : (recipe != null ? 'Recipe' : null);
+  final mealSource = slot.mealText?.trim().isNotEmpty == true
+      ? 'Typed'
+      : (recipe != null ? 'Recipe' : null);
   final slotNutrition = recipe?.nutrition ?? const Nutrition();
   final hasSlotNutrition = recipe != null &&
       (slotNutrition.calories > 0 ||
@@ -536,17 +543,20 @@ Widget buildPlannerDaySlotCard({
   final sauceRecipe = slot.sauceRecipeId == null
       ? null
       : recipes.firstWhereOrNull((r) => r.id == slot.sauceRecipeId);
-  final sauceLabel =
-      slot.sauceText?.trim().isNotEmpty == true ? slot.sauceText!.trim() : sauceRecipe?.title;
-  final sauceSource =
-      slot.sauceText?.trim().isNotEmpty == true ? 'Typed' : (sauceRecipe != null ? 'Recipe' : null);
+  final sauceLabel = slot.sauceText?.trim().isNotEmpty == true
+      ? slot.sauceText!.trim()
+      : sauceRecipe?.title;
+  final sauceSource = slot.sauceText?.trim().isNotEmpty == true
+      ? 'Typed'
+      : (sauceRecipe != null ? 'Recipe' : null);
   final hasTypedSource = mealSource == 'Typed' ||
       sideItems.any((side) => side.text?.trim().isNotEmpty == true) ||
       sauceSource == 'Typed';
   final hasRecipeSource = mealSource == 'Recipe' ||
       sideItems.any(
         (side) =>
-            side.text?.trim().isNotEmpty != true && (side.recipeId?.isNotEmpty ?? false),
+            side.text?.trim().isNotEmpty != true &&
+            (side.recipeId?.isNotEmpty ?? false),
       ) ||
       sauceSource == 'Recipe';
   final relatedGroceryForSlot = groceryItems.where((i) {
@@ -557,28 +567,35 @@ Widget buildPlannerDaySlotCard({
     return false;
   }).toList();
   final hasPlannerGroceryItems = relatedGroceryForSlot.isNotEmpty;
-  final assignedIdsRaw =
-      slot.assignedUserIds.isNotEmpty ? slot.assignedUserIds : activeMembers.map((m) => m.userId).toList();
-  final assignedIds =
-      assignedIdsRaw.map((id) => id.trim()).where((id) => id.isNotEmpty).toList();
+  final assignedIdsRaw = slot.assignedUserIds.isNotEmpty
+      ? slot.assignedUserIds
+      : activeMembers.map((m) => m.userId).toList();
+  final assignedIds = assignedIdsRaw
+      .map((id) => id.trim())
+      .where((id) => id.isNotEmpty)
+      .toList();
   final assignedNames =
       assignedIds.map((id) => memberNameById[id]).whereType<String>().toList();
   final activeMemberIds = activeMembers.map((m) => m.userId).toSet();
   final assignedIdSet = assignedIds.toSet();
   // Treat "All" as: every active member is included, even if the slot also
   // contains stale/extra ids (e.g. removed household members).
-  final allSelected =
-      activeMemberIds.isNotEmpty && activeMemberIds.every(assignedIdSet.contains);
-  final canAddToGrocery = recipe != null || (slot.mealText?.trim().isNotEmpty == true);
+  final allSelected = activeMemberIds.isNotEmpty &&
+      activeMemberIds.every(assignedIdSet.contains);
+  final canAddToGrocery =
+      recipe != null || (slot.mealText?.trim().isNotEmpty == true);
   final assignmentLabel = allSelected
       ? 'Assigned: All'
-      : (assignedNames.isEmpty ? 'Assigned: Unknown' : 'Assigned: ${assignedNames.join(', ')}');
+      : (assignedNames.isEmpty
+          ? 'Assigned: Unknown'
+          : 'Assigned: ${assignedNames.join(', ')}');
   final slotCalendarDate =
       plannerDateOnly(slot.weekStart).add(Duration(days: slot.dayOfWeek));
   final showSourceChips = hasTypedSource && hasRecipeSource;
   final metaParts = <String>[];
   if (mealSource == 'Recipe') {
-    metaParts.add(hasSlotNutrition ? slotNutritionLabel : 'Nutrition unavailable');
+    metaParts
+        .add(hasSlotNutrition ? slotNutritionLabel : 'Nutrition unavailable');
   }
   if (mealSource == 'Typed' && !showSourceChips) {
     metaParts.add('Nutrition unavailable');
@@ -613,6 +630,7 @@ Widget buildPlannerDaySlotCard({
     if (recipeId == null || recipeId.isEmpty) return;
     await context.push('/cooking/$recipeId');
   }
+
   Future<void> addToGrocery() async {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
@@ -696,7 +714,8 @@ Widget buildPlannerDaySlotCard({
     } on PostgrestException catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update grocery items: ${error.message}')),
+        SnackBar(
+            content: Text('Could not update grocery items: ${error.message}')),
       );
     }
   }
@@ -744,14 +763,14 @@ Widget buildPlannerDaySlotCard({
       children: [
         InkWell(
           borderRadius: BorderRadius.circular(24),
-          onTap: openRecipeOnTap &&
-                  (slot.recipeId?.trim().isNotEmpty ?? false)
+          onTap: openRecipeOnTap && (slot.recipeId?.trim().isNotEmpty ?? false)
               ? openRecipeIfLinked
               : editSlotPlan,
           child: Stack(
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                 child: Row(
                   children: [
                     ReorderableDragStartListener(
@@ -771,7 +790,10 @@ Widget buildPlannerDaySlotCard({
                               Expanded(
                                 child: Text(
                                   plannerSlotDisplayLabel(displaySlots, slot),
-                                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelLarge
+                                      ?.copyWith(
                                         color: scheme.onSurfaceVariant,
                                       ),
                                 ),
@@ -799,14 +821,20 @@ Widget buildPlannerDaySlotCard({
                           if (metaParts.isNotEmpty)
                             Text(
                               metaParts.join(' · '),
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
                                     color: scheme.onSurfaceVariant,
                                   ),
                             ),
                           if (openRecipeOnTap && recipe == null)
                             Text(
                               'No recipe linked',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
                                     color: scheme.onSurfaceVariant,
                                   ),
                             ),
@@ -847,14 +875,18 @@ Widget buildPlannerDaySlotCard({
                     }
                     if (action == _SlotCardAction.clearMeal) {
                       try {
-                        await ref.read(plannerRepositoryProvider).unassignSlot(slotId: slot.id);
+                        await ref
+                            .read(plannerRepositoryProvider)
+                            .unassignSlot(slotId: slot.id);
                         onInvalidatePlanner();
                       } on PostgrestException catch (error) {
                         if (!context.mounted) {
                           return;
                         }
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Could not clear meal: ${error.message}')),
+                          SnackBar(
+                              content: Text(
+                                  'Could not clear meal: ${error.message}')),
                         );
                       }
                       return;
@@ -925,8 +957,9 @@ Widget buildPlannerDaySlotCard({
                             ),
                         ],
                       ),
-                      onPressed:
-                          hasPlannerGroceryItems ? editGroceryItems : addToGrocery,
+                      onPressed: hasPlannerGroceryItems
+                          ? editGroceryItems
+                          : addToGrocery,
                     ),
                   Tooltip(
                     message: hasReminder
@@ -1009,11 +1042,10 @@ Future<bool> _plannerAddMealSlotFlow(
   final userPreview = ref.read(currentUserProvider);
   if (userPreview != null) {
     try {
-      final weekSlots =
-          await ref.read(plannerRepositoryProvider).listSlots(
-                userPreview.id,
-                storageWeek,
-              );
+      final weekSlots = await ref.read(plannerRepositoryProvider).listSlots(
+            userPreview.id,
+            storageWeek,
+          );
       final freshDay = weekSlots
           .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
           .toList()
@@ -1048,8 +1080,9 @@ Future<bool> _plannerAddMealSlotFlow(
     // After creating the slot, open the slot editor (typed meal or recipe) instead
     // of forcing a recipe picker first.
     try {
-      final weekSlots =
-          await ref.read(plannerRepositoryProvider).listSlots(user.id, storageWeek);
+      final weekSlots = await ref
+          .read(plannerRepositoryProvider)
+          .listSlots(user.id, storageWeek);
       final freshDay = weekSlots
           .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
           .toList()
@@ -1063,7 +1096,8 @@ Future<bool> _plannerAddMealSlotFlow(
           context,
           slot: created,
           recipes: recipes,
-          slotDisplayLabel: plannerNewSlotRecipePickerDisplayLabel(label, ordinal),
+          slotDisplayLabel:
+              plannerNewSlotRecipePickerDisplayLabel(label, ordinal),
           activeMembers: activeMembers,
           currentUserId: currentUserId,
           showMemberAssignment: showMemberAssignment,
@@ -1076,7 +1110,8 @@ Future<bool> _plannerAddMealSlotFlow(
             storageWeek: storageWeek,
             storageDow: storageDow,
             draft: draft,
-            onInvalidatePlanner: () => invalidatePlannerSlotCaches(ref, dayOnly),
+            onInvalidatePlanner: () =>
+                invalidatePlannerSlotCaches(ref, dayOnly),
           );
         }
       }
@@ -1087,8 +1122,7 @@ Future<bool> _plannerAddMealSlotFlow(
   } on PostgrestException catch (error) {
     if (!context.mounted) return false;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text('Could not add meal slot: ${error.message}')),
+      SnackBar(content: Text('Could not add meal slot: ${error.message}')),
     );
     return false;
   }
@@ -1213,115 +1247,136 @@ Future<void> showPlannerDayDetailSheet(
   }
 
   if (!context.mounted) return;
+
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    // Framework drag handle is painted in a Stack *above* the builder child, at y=0
+    // of the sheet — padding inside the builder cannot move it. SafeArea on the route
+    // (useSafeArea: true) wraps the whole sheet so the handle clears status bar/cutout.
     showDragHandle: true,
+    useSafeArea: true,
     builder: (sheetCtx) {
-      return SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 8,
-            bottom: MediaQuery.viewInsetsOf(sheetCtx).bottom + 16,
-          ),
-          child: Consumer(
-            builder: (context, ref, _) {
-              final monthAsync = ref.watch(
-                plannerMonthSlotsProvider(firstDayOfPlannerMonth(dayOnly)),
-              );
-              // Prefer a completed month snapshot when it exists. While loading (or
-              // before first emission), keep [effectiveMonthSlots] from the awaited
-              // bootstrap so we never show an empty reorder list just because
-              // [valueOrNull] is [] from cache/stale state (AsyncData([]) is not null).
-              final asyncVal = monthAsync.valueOrNull;
-              final resolvedSlots = monthAsync.hasValue
-                  ? (asyncVal ?? const <MealPlanSlot>[])
-                  : (effectiveMonthSlots.isNotEmpty
-                      ? effectiveMonthSlots
-                      : (asyncVal ?? const <MealPlanSlot>[]));
-              var daySlotsNow = resolvedSlots
+      final viewInsetsBottom = MediaQuery.viewInsetsOf(sheetCtx).bottom;
+      return Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 8,
+          bottom: viewInsetsBottom,
+        ),
+        child: Consumer(
+          builder: (context, ref, _) {
+            final monthAsync = ref.watch(
+              plannerMonthSlotsProvider(firstDayOfPlannerMonth(dayOnly)),
+            );
+            // Prefer a completed month snapshot when it exists. While loading (or
+            // before first emission), keep [effectiveMonthSlots] from the awaited
+            // bootstrap so we never show an empty reorder list just because
+            // [valueOrNull] is [] from cache/stale state (AsyncData([]) is not null).
+            final asyncVal = monthAsync.valueOrNull;
+            final resolvedSlots = monthAsync.hasValue
+                ? (asyncVal ?? const <MealPlanSlot>[])
+                : (effectiveMonthSlots.isNotEmpty
+                    ? effectiveMonthSlots
+                    : (asyncVal ?? const <MealPlanSlot>[]));
+            var daySlotsNow = resolvedSlots
+                .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
+                .sorted((a, b) => a.slotOrder.compareTo(b.slotOrder))
+                .toList();
+            if (daySlotsNow.isEmpty && weekSlotsForFallback.isNotEmpty) {
+              daySlotsNow = weekSlotsForFallback
                   .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
                   .sorted((a, b) => a.slotOrder.compareTo(b.slotOrder))
                   .toList();
-              if (daySlotsNow.isEmpty && weekSlotsForFallback.isNotEmpty) {
-                daySlotsNow = weekSlotsForFallback
-                    .where((s) => mealPlanSlotMatchesCalendarDay(s, dayOnly))
-                    .sorted((a, b) => a.slotOrder.compareTo(b.slotOrder))
-                    .toList();
-              }
+            }
 
-              return SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      DateFormat('EEEE, MMM d').format(dayOnly),
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 12),
-                    PlannerOptimisticDayReorderList(
-                      syncKey:
-                          'sheet-${dayOnly.toIso8601String()}-${daySlotsNow.length}',
-                      providerDaySlots: daySlotsNow,
-                      itemBuilder: (context, i, slot, displaySlots) =>
-                          buildPlannerDaySlotCard(
-                        context: context,
-                        ref: ref,
-                        index: i,
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                MintDateHeaderCard(
+                  date: dayOnly,
+                  icon: Icons.calendar_month_rounded,
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: PlannerOptimisticDayReorderList(
+                    shrinkWrap: false,
+                    syncKey:
+                        'sheet-${dayOnly.toIso8601String()}-${daySlotsNow.length}',
+                    providerDaySlots: daySlotsNow,
+                    itemBuilder: (context, i, slot, displaySlots) =>
+                        buildPlannerDaySlotCard(
+                      context: context,
+                      ref: ref,
+                      index: i,
+                      slot: slot,
+                      displaySlots: displaySlots,
+                      recipes: recipes,
+                      groceryItems: groceryItems,
+                      activeMembers: activeMembers,
+                      memberNameById: memberNameById,
+                      storageWeek: storageWeek,
+                      storageDow: storageDow,
+                      onEditSlotPlan: (c,
+                              {required slot, required slotDisplayLabel}) =>
+                          PlannerScreen.editSlotPlan(
+                        c,
                         slot: slot,
-                        displaySlots: displaySlots,
                         recipes: recipes,
-                        groceryItems: groceryItems,
+                        slotDisplayLabel: slotDisplayLabel,
                         activeMembers: activeMembers,
-                        memberNameById: memberNameById,
-                        storageWeek: storageWeek,
-                        storageDow: storageDow,
-                        onEditSlotPlan:
-                            (c, {required slot, required slotDisplayLabel}) =>
-                                PlannerScreen.editSlotPlan(
-                          c,
-                          slot: slot,
-                          recipes: recipes,
-                          slotDisplayLabel: slotDisplayLabel,
-                          activeMembers: activeMembers,
-                          currentUserId: currentUserId ?? '',
-                          showMemberAssignment: showMemberAssignment,
+                        currentUserId: currentUserId ?? '',
+                        showMemberAssignment: showMemberAssignment,
+                      ),
+                      onEditSlotGroceryItems: onEditSlotGroceryItems,
+                      onInvalidatePlanner: () =>
+                          invalidatePlannerSlotCaches(ref, dayOnly),
+                      onRemoveMealSlot: removeMealSlot,
+                      openRecipeOnTap: true,
+                    ),
+                  ),
+                ),
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          await _plannerAddMealSlotFlow(
+                            context,
+                            ref,
+                            day: dayOnly,
+                            daySlots: daySlotsNow,
+                            recipes: recipes,
+                            activeMembers: activeMembers,
+                            currentUserId: currentUserId ?? '',
+                            showMemberAssignment: showMemberAssignment,
+                          );
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppBrand.deepTeal,
+                          foregroundColor: AppBrand.offWhite,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 0,
                         ),
-                        onEditSlotGroceryItems: onEditSlotGroceryItems,
-                        onInvalidatePlanner: () =>
-                            invalidatePlannerSlotCaches(ref, dayOnly),
-                        onRemoveMealSlot: removeMealSlot,
-                        openRecipeOnTap: true,
+                        icon: const Icon(Icons.add_circle_outline_rounded),
+                        label: const Text('Add meal or snack'),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    FilledButton.tonalIcon(
-                      onPressed: () async {
-                        await _plannerAddMealSlotFlow(
-                          context,
-                          ref,
-                          day: dayOnly,
-                          daySlots: daySlotsNow,
-                          recipes: recipes,
-                          activeMembers: activeMembers,
-                          currentUserId: currentUserId ?? '',
-                          showMemberAssignment: showMemberAssignment,
-                        );
-                      },
-                      icon: const Icon(Icons.add_circle_outline),
-                      label: const Text('Add meal or snack'),
-                    ),
-                  ],
+                  ),
                 ),
-              );
-            },
-          ),
+              ],
+            );
+          },
         ),
       );
     },
@@ -1371,7 +1426,8 @@ class _PlannerWindowSummaryPaneState
   @override
   void didUpdateWidget(covariant _PlannerWindowSummaryPane oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.pref != widget.pref || oldWidget.dayCount != widget.dayCount) {
+    if (oldWidget.pref != widget.pref ||
+        oldWidget.dayCount != widget.dayCount) {
       _showFullWeek = false;
     }
   }
@@ -1546,11 +1602,11 @@ class _PlannerWindowSummaryPaneState
                               daySlots: effectiveSlots
                                   .where((s) =>
                                       plannerUiDayIndexForSlot(
-                                            s,
-                                            anchor,
-                                            pref,
-                                          ) ==
-                                          e.value)
+                                        s,
+                                        anchor,
+                                        pref,
+                                      ) ==
+                                      e.value)
                                   .sorted(
                                     (a, b) =>
                                         a.slotOrder.compareTo(b.slotOrder),
@@ -2629,8 +2685,7 @@ class PlannerScreen extends ConsumerWidget {
       if (anchorMismatched) {
         final dates = calendarDatesForPlannerWindow(anchor, next);
         final today = plannerDateOnly(now);
-        final viewingToday =
-            dates.any((d) => plannerDateOnly(d) == today);
+        final viewingToday = dates.any((d) => plannerDateOnly(d) == today);
         if (!viewingToday) {
           return;
         }
@@ -2675,9 +2730,9 @@ class PlannerScreen extends ConsumerWidget {
                       dayCount: dayCount,
                       effectiveDay: effectiveDay,
                     ),
-                    onEditSlotGroceryItems:
-                        (c, {required slot, recipe, required groceryItems}) =>
-                            _editPlannerSlotGroceryItems(
+                    onEditSlotGroceryItems: (c,
+                            {required slot, recipe, required groceryItems}) =>
+                        _editPlannerSlotGroceryItems(
                       c,
                       slot: slot,
                       recipe: recipe,
@@ -2687,289 +2742,329 @@ class PlannerScreen extends ConsumerWidget {
                         showPlannerWindowSettingsSheet(context, ref),
                   )
                 : slotsAsync.when(
-        skipLoadingOnReload: true,
-        loading: () => _PlannerLoadingShell(
-          weekStart: weekStart,
-          pref: pref,
-          dayCount: dayCount,
-          effectiveDay: effectiveDay,
-        ),
-        error: (error, _) => Center(child: Text('Error: $error')),
-        data: (slots) {
-          final reloadingWithoutOverlap = slotsAsync.isReloading &&
-              !slots.any((s) => slotBelongsToPlannerWindow(s, weekStart, pref));
-          final effectiveSlots =
-              reloadingWithoutOverlap ? <MealPlanSlot>[] : slots;
-          return recipesAsync.when(
-          skipLoadingOnReload: true,
-          loading: () => _PlannerLoadingShell(
-            weekStart: weekStart,
-            pref: pref,
-            dayCount: dayCount,
-            effectiveDay: effectiveDay,
-          ),
-          error: (e, _) => Center(child: Text('Error loading recipes: $e')),
-          data: (recipes) {
-            final memberNameById = <String, String>{
-              for (final member in activeMembers)
-                member.userId: member.displayName,
-            };
-            final nutrition = effectiveSlots.fold<Nutrition>(
-              const Nutrition(),
-              (sum, slot) =>
-                  sum +
-                  (recipes
-                          .firstWhereOrNull((r) => r.id == slot.recipeId)
-                          ?.nutrition ??
-                      const Nutrition()),
-            );
-            final selectedDate = calendarDateForPlannerUiDay(
-              weekStart,
-              effectiveDay,
-              pref,
-            );
-            final daySlots = effectiveSlots
-                .where((s) =>
-                    plannerUiDayIndexForSlot(s, weekStart, pref) ==
-                    effectiveDay)
-                .sorted((a, b) => a.slotOrder.compareTo(b.slotOrder))
-                .toList();
-            final dayTotals = <int, int>{
-              for (var day = 0; day < dayCount; day++) day: 0,
-            };
-            final dayAssigned = <int, int>{
-              for (var day = 0; day < dayCount; day++) day: 0,
-            };
-            for (final slot in effectiveSlots) {
-              final ui = plannerUiDayIndexForSlot(slot, weekStart, pref);
-              if (ui == null) continue;
-              dayTotals[ui] = (dayTotals[ui] ?? 0) + 1;
-              if (slot.hasPlannedContent) {
-                dayAssigned[ui] = (dayAssigned[ui] ?? 0) + 1;
-              }
-            }
-            final storageWeek =
-                slotStorageWeekStartFromUiDay(weekStart, effectiveDay, pref);
-            final storageDow =
-                slotStorageDayOfWeekFromUiDay(weekStart, effectiveDay, pref);
+                    skipLoadingOnReload: true,
+                    loading: () => _PlannerLoadingShell(
+                      weekStart: weekStart,
+                      pref: pref,
+                      dayCount: dayCount,
+                      effectiveDay: effectiveDay,
+                    ),
+                    error: (error, _) => Center(child: Text('Error: $error')),
+                    data: (slots) {
+                      final reloadingWithoutOverlap = slotsAsync.isReloading &&
+                          !slots.any((s) =>
+                              slotBelongsToPlannerWindow(s, weekStart, pref));
+                      final effectiveSlots =
+                          reloadingWithoutOverlap ? <MealPlanSlot>[] : slots;
+                      return recipesAsync.when(
+                        skipLoadingOnReload: true,
+                        loading: () => _PlannerLoadingShell(
+                          weekStart: weekStart,
+                          pref: pref,
+                          dayCount: dayCount,
+                          effectiveDay: effectiveDay,
+                        ),
+                        error: (e, _) =>
+                            Center(child: Text('Error loading recipes: $e')),
+                        data: (recipes) {
+                          final memberNameById = <String, String>{
+                            for (final member in activeMembers)
+                              member.userId: member.displayName,
+                          };
+                          final nutrition = effectiveSlots.fold<Nutrition>(
+                            const Nutrition(),
+                            (sum, slot) =>
+                                sum +
+                                (recipes
+                                        .firstWhereOrNull(
+                                            (r) => r.id == slot.recipeId)
+                                        ?.nutrition ??
+                                    const Nutrition()),
+                          );
+                          final selectedDate = calendarDateForPlannerUiDay(
+                            weekStart,
+                            effectiveDay,
+                            pref,
+                          );
+                          final daySlots = effectiveSlots
+                              .where((s) =>
+                                  plannerUiDayIndexForSlot(
+                                      s, weekStart, pref) ==
+                                  effectiveDay)
+                              .sorted(
+                                  (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                              .toList();
+                          final dayTotals = <int, int>{
+                            for (var day = 0; day < dayCount; day++) day: 0,
+                          };
+                          final dayAssigned = <int, int>{
+                            for (var day = 0; day < dayCount; day++) day: 0,
+                          };
+                          for (final slot in effectiveSlots) {
+                            final ui =
+                                plannerUiDayIndexForSlot(slot, weekStart, pref);
+                            if (ui == null) continue;
+                            dayTotals[ui] = (dayTotals[ui] ?? 0) + 1;
+                            if (slot.hasPlannedContent) {
+                              dayAssigned[ui] = (dayAssigned[ui] ?? 0) + 1;
+                            }
+                          }
+                          final storageWeek = slotStorageWeekStartFromUiDay(
+                              weekStart, effectiveDay, pref);
+                          final storageDow = slotStorageDayOfWeekFromUiDay(
+                              weekStart, effectiveDay, pref);
 
-            Future<void> removeMealSlot(
-              MealPlanSlot slot,
-              List<MealPlanSlot> slotsForLabel,
-            ) async {
-              final confirmed = await showDialog<bool>(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) => AlertDialog(
-                  title: const Text('Delete meal slot?'),
-                  content: Text(
-                    'Delete ${plannerSlotDisplayLabel(slotsForLabel, slot)} from ${DateFormat('EEEE').format(selectedDate)}? This cannot be undone.',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.error,
-                        foregroundColor: Theme.of(context).colorScheme.onError,
-                      ),
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Delete'),
-                    ),
-                  ],
-                ),
-              );
-              if (confirmed != true) {
-                return;
-              }
-              try {
-                await ref.read(plannerRepositoryProvider).removeSlot(
-                      slotId: slot.id,
-                    );
-                invalidatePlannerSlotCaches(ref, calendarDateForSlot(slot));
-              } on PostgrestException catch (error) {
-                if (!context.mounted) {
-                  return;
-                }
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content:
-                        Text('Could not remove meal slot: ${error.message}'),
-                  ),
-                );
-              }
-            }
-
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
-              children: [
-                if (reloadingWithoutOverlap)
-                  const LinearProgressIndicator(minHeight: 2),
-                PlannerMagazineWeekHeader(
-                  rangeTitle: plannerMagazineWindowTitle(weekStart, pref),
-                  subtitle: 'CURRENT WEEK',
-                  onPrevious: () {
-                    ref.read(weekStartProvider.notifier).state =
-                        plannerShiftAnchorByCalendarWeeks(weekStart, -1);
-                  },
-                  onNext: () {
-                    ref.read(weekStartProvider.notifier).state =
-                        plannerShiftAnchorByCalendarWeeks(weekStart, 1);
-                  },
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'Pick a day, drag to reorder meals, and tap a meal to assign a recipe.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                ),
-                SectionCard(
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: List.generate(dayCount, (dayIndex) {
-                      final day = calendarDateForPlannerUiDay(
-                        weekStart,
-                        dayIndex,
-                        pref,
-                      );
-                      final total = dayTotals[dayIndex] ?? 0;
-                      final assigned = dayAssigned[dayIndex] ?? 0;
-                      return ActionPill(
-                        label:
-                            '${DateFormat('EEE d').format(day)}  $assigned/$total',
-                        selected: effectiveDay == dayIndex,
-                        onTap: () => ref
-                            .read(selectedPlannerDayProvider.notifier)
-                            .state = dayIndex,
-                      );
-                    }),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SectionCard(
-                        child: Row(
-                          children: [
-                            const Icon(Icons.local_fire_department_rounded),
-                            const SizedBox(width: 8),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Calories'),
-                                Text('${nutrition.calories} kcal'),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: SectionCard(
-                        child: Row(
-                          children: [
-                            const Icon(Icons.fitness_center_rounded),
-                            const SizedBox(width: 8),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Protein'),
-                                Text(
-                                    '${nutrition.protein.toStringAsFixed(0)}g'),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          DateFormat('EEEE, MMM d').format(selectedDate),
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 8),
-                        PlannerOptimisticDayReorderList(
-                          syncKey:
-                              '${weekStart.toIso8601String()}-$effectiveDay-${pref.startDay}-${pref.dayCount}',
-                          providerDaySlots: daySlots,
-                          itemBuilder: (context, i, slot, displaySlots) =>
-                              buildPlannerDaySlotCard(
-                            context: context,
-                            ref: ref,
-                            index: i,
-                            slot: slot,
-                            displaySlots: displaySlots,
-                            recipes: recipes,
-                            groceryItems: groceryItems,
-                            activeMembers: activeMembers,
-                            memberNameById: memberNameById,
-                            storageWeek: storageWeek,
-                            storageDow: storageDow,
-                            onEditSlotPlan:
-                                (ctx, {required slot, required slotDisplayLabel}) =>
-                                    PlannerScreen.editSlotPlan(
-                              ctx,
-                              slot: slot,
-                              recipes: recipes,
-                              slotDisplayLabel: slotDisplayLabel,
-                              activeMembers: activeMembers,
-                              currentUserId: currentUser?.id ?? '',
-                              showMemberAssignment: showMemberAssignment,
-                            ),
-                            onEditSlotGroceryItems: _editPlannerSlotGroceryItems,
-                            onInvalidatePlanner: () =>
-                                invalidatePlannerSlotCaches(ref, selectedDate),
-                            onRemoveMealSlot: removeMealSlot,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        FilledButton.tonalIcon(
-                          onPressed: () async {
-                            await _plannerAddMealSlotFlow(
-                              context,
-                              ref,
-                              day: selectedDate,
-                              daySlots: daySlots,
-                              recipes: recipes,
-                              activeMembers: activeMembers,
-                              currentUserId: currentUser?.id ?? '',
-                              showMemberAssignment: showMemberAssignment,
+                          Future<void> removeMealSlot(
+                            MealPlanSlot slot,
+                            List<MealPlanSlot> slotsForLabel,
+                          ) async {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Delete meal slot?'),
+                                content: Text(
+                                  'Delete ${plannerSlotDisplayLabel(slotsForLabel, slot)} from ${DateFormat('EEEE').format(selectedDate)}? This cannot be undone.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor:
+                                          Theme.of(context).colorScheme.error,
+                                      foregroundColor:
+                                          Theme.of(context).colorScheme.onError,
+                                    ),
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                    child: const Text('Delete'),
+                                  ),
+                                ],
+                              ),
                             );
-                          },
-                          icon: const Icon(Icons.add_circle_outline),
-                          label: const Text('Add meal or snack'),
-                        ),
-                      ],
-                    ),
+                            if (confirmed != true) {
+                              return;
+                            }
+                            try {
+                              await ref
+                                  .read(plannerRepositoryProvider)
+                                  .removeSlot(
+                                    slotId: slot.id,
+                                  );
+                              invalidatePlannerSlotCaches(
+                                  ref, calendarDateForSlot(slot));
+                            } on PostgrestException catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                      'Could not remove meal slot: ${error.message}'),
+                                ),
+                              );
+                            }
+                          }
+
+                          return ListView(
+                            padding: const EdgeInsets.fromLTRB(12, 10, 12, 18),
+                            children: [
+                              if (reloadingWithoutOverlap)
+                                const LinearProgressIndicator(minHeight: 2),
+                              PlannerMagazineWeekHeader(
+                                rangeTitle:
+                                    plannerMagazineWindowTitle(weekStart, pref),
+                                subtitle: 'CURRENT WEEK',
+                                onPrevious: () {
+                                  ref.read(weekStartProvider.notifier).state =
+                                      plannerShiftAnchorByCalendarWeeks(
+                                          weekStart, -1);
+                                },
+                                onNext: () {
+                                  ref.read(weekStartProvider.notifier).state =
+                                      plannerShiftAnchorByCalendarWeeks(
+                                          weekStart, 1);
+                                },
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Text(
+                                  'Pick a day, drag to reorder meals, and tap a meal to assign a recipe.',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                              ),
+                              SectionCard(
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: List.generate(dayCount, (dayIndex) {
+                                    final day = calendarDateForPlannerUiDay(
+                                      weekStart,
+                                      dayIndex,
+                                      pref,
+                                    );
+                                    final total = dayTotals[dayIndex] ?? 0;
+                                    final assigned = dayAssigned[dayIndex] ?? 0;
+                                    return ActionPill(
+                                      label:
+                                          '${DateFormat('EEE d').format(day)}  $assigned/$total',
+                                      selected: effectiveDay == dayIndex,
+                                      onTap: () => ref
+                                          .read(selectedPlannerDayProvider
+                                              .notifier)
+                                          .state = dayIndex,
+                                    );
+                                  }),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: SectionCard(
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons
+                                              .local_fire_department_rounded),
+                                          const SizedBox(width: 8),
+                                          Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text('Calories'),
+                                              Text(
+                                                  '${nutrition.calories} kcal'),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: SectionCard(
+                                      child: Row(
+                                        children: [
+                                          const Icon(
+                                              Icons.fitness_center_rounded),
+                                          const SizedBox(width: 8),
+                                          Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text('Protein'),
+                                              Text(
+                                                  '${nutrition.protein.toStringAsFixed(0)}g'),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Card(
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        DateFormat('EEEE, MMM d')
+                                            .format(selectedDate),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w700),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      PlannerOptimisticDayReorderList(
+                                        syncKey:
+                                            '${weekStart.toIso8601String()}-$effectiveDay-${pref.startDay}-${pref.dayCount}',
+                                        providerDaySlots: daySlots,
+                                        itemBuilder:
+                                            (context, i, slot, displaySlots) =>
+                                                buildPlannerDaySlotCard(
+                                          context: context,
+                                          ref: ref,
+                                          index: i,
+                                          slot: slot,
+                                          displaySlots: displaySlots,
+                                          recipes: recipes,
+                                          groceryItems: groceryItems,
+                                          activeMembers: activeMembers,
+                                          memberNameById: memberNameById,
+                                          storageWeek: storageWeek,
+                                          storageDow: storageDow,
+                                          onEditSlotPlan: (ctx,
+                                                  {required slot,
+                                                  required slotDisplayLabel}) =>
+                                              PlannerScreen.editSlotPlan(
+                                            ctx,
+                                            slot: slot,
+                                            recipes: recipes,
+                                            slotDisplayLabel: slotDisplayLabel,
+                                            activeMembers: activeMembers,
+                                            currentUserId:
+                                                currentUser?.id ?? '',
+                                            showMemberAssignment:
+                                                showMemberAssignment,
+                                          ),
+                                          onEditSlotGroceryItems:
+                                              _editPlannerSlotGroceryItems,
+                                          onInvalidatePlanner: () =>
+                                              invalidatePlannerSlotCaches(
+                                                  ref, selectedDate),
+                                          onRemoveMealSlot: removeMealSlot,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      FilledButton.tonalIcon(
+                                        onPressed: () async {
+                                          await _plannerAddMealSlotFlow(
+                                            context,
+                                            ref,
+                                            day: selectedDate,
+                                            daySlots: daySlots,
+                                            recipes: recipes,
+                                            activeMembers: activeMembers,
+                                            currentUserId:
+                                                currentUser?.id ?? '',
+                                            showMemberAssignment:
+                                                showMemberAssignment,
+                                          );
+                                        },
+                                        icon: const Icon(
+                                            Icons.add_circle_outline),
+                                        label: const Text('Add meal or snack'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
                   ),
-                ),
-              ],
-            );
-          },
-        );
-        },
-      ),
-    ),
+          ),
         ],
       ),
     );
@@ -3032,9 +3127,9 @@ class _PlannerLoadingShell extends ConsumerWidget {
               return ActionPill(
                 label: '${DateFormat('EEE d').format(day)}  0/0',
                 selected: effectiveDay == dayIndex,
-                onTap: () =>
-                    ref.read(selectedPlannerDayProvider.notifier).state =
-                        dayIndex,
+                onTap: () => ref
+                    .read(selectedPlannerDayProvider.notifier)
+                    .state = dayIndex,
               );
             }),
           ),
@@ -3552,6 +3647,32 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
     if (_sauceTextCtrl.text.trim().isNotEmpty && _sauceRecipe == null) {
       _sauceMode = 1;
     }
+    if (_sauceRecipe == null &&
+        widget.slot.sauceRecipeId == null &&
+        _sauceTextCtrl.text.trim().isEmpty &&
+        _mealRecipe != null) {
+      final emb = _mealRecipe!.embeddedSauce;
+      if (emb != null &&
+          (emb.ingredients.isNotEmpty || emb.instructions.isNotEmpty)) {
+        _showSauce = true;
+        _sauceMode = 1;
+        if (_sauceTextCtrl.text.trim().isEmpty) {
+          final t = emb.title?.trim();
+          _sauceTextCtrl.text = (t != null && t.isNotEmpty)
+              ? t
+              : 'Sauce (with ${_mealRecipe!.title})';
+        }
+      } else {
+        final def = _mealRecipe!.defaultSauceRecipeId?.trim();
+        if (def != null && def.isNotEmpty) {
+          final linked = widget.recipes.firstWhereOrNull((r) => r.id == def);
+          if (linked != null) {
+            _sauceRecipe = linked;
+            _showSauce = true;
+          }
+        }
+      }
+    }
   }
 
   @override
@@ -3734,7 +3855,8 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
     );
   }
 
-  TableRow _nutritionTableRow(BuildContext context, String label, String value) {
+  TableRow _nutritionTableRow(
+      BuildContext context, String label, String value) {
     final textTheme = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
     return TableRow(
@@ -3814,7 +3936,35 @@ class _SlotPlanEditorDialogState extends State<_SlotPlanEditorDialog> {
                       recipes: widget.recipes,
                     );
                     if (picked == null) return;
-                    setState(() => _mealRecipe = picked);
+                    setState(() {
+                      _mealRecipe = picked;
+                      final hadSlotSauce = widget.slot.sauceRecipeId != null ||
+                          (widget.slot.sauceText?.trim().isNotEmpty ?? false);
+                      if (!hadSlotSauce && _sauceTextCtrl.text.trim().isEmpty) {
+                        final emb = picked.embeddedSauce;
+                        if (emb != null &&
+                            (emb.ingredients.isNotEmpty ||
+                                emb.instructions.isNotEmpty)) {
+                          _showSauce = true;
+                          _sauceMode = 1;
+                          final t = emb.title?.trim();
+                          _sauceTextCtrl.text = (t != null && t.isNotEmpty)
+                              ? t
+                              : 'Sauce (with ${picked.title})';
+                        } else {
+                          final def = picked.defaultSauceRecipeId?.trim();
+                          if (def != null && def.isNotEmpty) {
+                            final sauce = widget.recipes
+                                .firstWhereOrNull((r) => r.id == def);
+                            if (sauce != null) {
+                              _sauceRecipe = sauce;
+                              _sauceMode = 0;
+                              _showSauce = true;
+                            }
+                          }
+                        }
+                      }
+                    });
                   },
                   onRemove: () => setState(() => _mealRecipe = null),
                 )

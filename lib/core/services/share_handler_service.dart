@@ -268,11 +268,17 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       state = state.copyWith(lastCombinedPayload: encodedPayload);
 
       final gemini = ref.read(geminiServiceProvider);
-      final map = await gemini.extractRecipeFromWebPageText(
+      var map = await gemini.extractRecipeFromWebPageText(
         canonicalUrl: fetch.canonicalUrl!,
         pagePlainText: fetch.plainText!,
         userNotes: n,
       );
+      if (map != null && map.isNotEmpty) {
+        map = supplementWebImportJsonWithEmbeddedSauceFromPlainText(
+          map,
+          fetch.plainText!,
+        );
+      }
       if (map == null || map.isEmpty) {
         final failure = gemini.lastGenerateFailure ?? '';
         if (failure.toLowerCase().contains('quota exceeded')) {
@@ -291,6 +297,7 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
       }
       var recipe = recipeFromInstagramGeminiMap(
         map,
+        imageUrl: fetch.heroImageUrl,
         sourceUrl: fetch.canonicalUrl,
         sharedContent: null,
         source: 'web_import',
@@ -325,11 +332,17 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
     );
     try {
       final gemini = ref.read(geminiServiceProvider);
-      final map = await gemini.extractRecipeFromWebPageText(
+      var map = await gemini.extractRecipeFromWebPageText(
         canonicalUrl: decoded.canonicalUrl,
         pagePlainText: decoded.pageText,
         userNotes: decoded.notes,
       );
+      if (map != null && map.isNotEmpty) {
+        map = supplementWebImportJsonWithEmbeddedSauceFromPlainText(
+          map,
+          decoded.pageText,
+        );
+      }
       if (map == null || map.isEmpty) {
         final failure = gemini.lastGenerateFailure ?? '';
         if (failure.toLowerCase().contains('quota exceeded')) {
@@ -346,8 +359,16 @@ class ShareImportNotifier extends Notifier<ShareImportState> {
         pageText: decoded.pageText,
         notes: decoded.notes,
       );
+      String? heroImageUrl;
+      try {
+        final refetch = await fetchRecipePagePlainText(
+          Uri.parse(decoded.canonicalUrl),
+        );
+        if (refetch.isOk) heroImageUrl = refetch.heroImageUrl;
+      } catch (_) {}
       final recipe = recipeFromInstagramGeminiMap(
         map,
+        imageUrl: heroImageUrl,
         sourceUrl: decoded.canonicalUrl,
         sharedContent: null,
         source: 'web_import',

@@ -79,6 +79,19 @@ class SpoonacularService {
 }
 
 class GeminiService {
+  /// Shared recipe-import guidance so Gemini can split sauce/icing into `embedded_sauce`.
+  static const String _kRecipeImportEmbeddedSauceSchema = r'''
+Optional top-level key "embedded_sauce": use null or omit when there is no separate sauce block; otherwise an object with:
+- "title" (string, optional): e.g. "Lemon butter sauce", "Vanilla icing"
+- "ingredients": same array shape as root [{ "name", "amount", "unit" }]
+- "instructions": array of strings (steps only for the sauce, dressing, glaze, icing, frosting, aioli, or similar sub-recipe)
+
+Sauce rules:
+- If the source clearly separates Sauce, Dressing, Glaze, Icing, Frosting, or Aioli (or similar) with its own ingredient list and/or steps, put that content in "embedded_sauce" and keep the main dish in root "ingredients" and "instructions".
+- Do not duplicate the same lines in both places.
+- Food blogs often use subheadings such as "For the air fryer tofu" vs "For the orange sauce", or "#### Orange Sauce:" under Ingredients, and separate instruction sections (e.g. "Orange Sauce" then "Air Fryer Tofu"). In those cases root "ingredients" must be ONLY the main component (e.g. tofu and its coating), and ALL sauce-related ingredients and sauce-only steps belong in "embedded_sauce" (use a clear title like "Orange sauce").
+''';
+
   GeminiService()
       : _apiKey = Env.geminiApiKey,
         _model = Env.hasGemini
@@ -565,8 +578,10 @@ Return ONLY valid JSON with these keys:
   "prep_time": number (minutes, null if missing),
   "cook_time": number (minutes, null if missing),
   "meal_type": "dinner" or "lunch" etc (best guess),
-  "cuisine_tags": array of strings
+  "cuisine_tags": array of strings,
+  "embedded_sauce": null or { "title": string (optional), "ingredients": same as root, "instructions": array of strings }
 }
+$_kRecipeImportEmbeddedSauceSchema
 Title:
 - Set "title" to the first non-empty line of the caption (the dish name as written there). If that line is only hashtags or not a dish name, use the next line that names the dish.
 - Never invent a different recipe name: words in "title" must appear in the caption (e.g. do not use "pesto", "chicken", or "creamy" in the title if those words do not appear in the caption).
@@ -690,6 +705,8 @@ $url
 $notesBlock
 The text is from an HTML page (navigation, ads, and chrome may be mixed in). Ignore site navigation, "jump to recipe", newsletter prompts, comments, and unrelated sections. Focus on ingredients and cooking steps for one dish.
 
+When the page splits ingredients or instructions into a main item and a separate sauce, glaze, or dressing (common on recipe blogs), you MUST populate "embedded_sauce" with the sauce part and keep the primary dish in the root arrays. Never put sauce ingredients only in root "ingredients" when the source labeled them as a distinct block.
+
 Return ONLY valid JSON with these keys:
 {
   "title": string,
@@ -700,8 +717,10 @@ Return ONLY valid JSON with these keys:
   "prep_time": number (minutes, null if missing),
   "cook_time": number (minutes, null if missing),
   "meal_type": "dinner" or "lunch" etc (best guess),
-  "cuisine_tags": array of strings
+  "cuisine_tags": array of strings,
+  "embedded_sauce": null or { "title": string (optional), "ingredients": same as root, "instructions": array of strings }
 }
+$_kRecipeImportEmbeddedSauceSchema
 
 Rules (critical):
 - Return ONLY a single JSON object. No markdown code fences, no commentary.
@@ -761,8 +780,10 @@ Return ONLY valid JSON with these keys:
   "prep_time": number (minutes, null if missing),
   "cook_time": number (minutes, null if missing),
   "meal_type": string (best guess),
-  "cuisine_tags": array of strings
+  "cuisine_tags": array of strings,
+  "embedded_sauce": null or { "title": string (optional), "ingredients": same as root, "instructions": array of strings }
 }
+$_kRecipeImportEmbeddedSauceSchema
 
 Rules:
 - Use ONLY text visible in the image. Do not invent ingredients or steps.
@@ -809,8 +830,10 @@ Return ONLY valid JSON (no extra text) with these exact keys:
   "prep_time": number (minutes, null if missing),
   "cook_time": number (minutes, null if missing),
   "meal_type": string (best guess: breakfast, lunch, dinner, snack, dessert),
-  "cuisine_tags": array of strings
+  "cuisine_tags": array of strings,
+  "embedded_sauce": null or { "title": string (optional), "ingredients": same as root, "instructions": array of strings }
 }
+$_kRecipeImportEmbeddedSauceSchema
 Ingredient rules (strict):
 - "name": ingredient name only — no leading quantities or units.
 - "amount": numeric quantity only (a number or numeric string) — no unit words in this field.
@@ -834,8 +857,10 @@ Return ONLY valid JSON (no extra text) with these exact keys:
   "prep_time": number (minutes, null if missing),
   "cook_time": number (minutes, null if missing),
   "meal_type": string (best guess: breakfast, lunch, dinner, snack, dessert),
-  "cuisine_tags": array of strings
+  "cuisine_tags": array of strings,
+  "embedded_sauce": null or { "title": string (optional), "ingredients": same as root, "instructions": array of strings }
 }
+$_kRecipeImportEmbeddedSauceSchema
 Ingredient rules (strict):
 - "name": ingredient name only — no leading quantities or units.
 - "amount": numeric quantity only — no unit words in this field.

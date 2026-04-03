@@ -209,7 +209,6 @@ class _AppScaffold extends ConsumerWidget {
     ];
     final currentIndex = items.indexWhere(
         (item) => item == '/' ? location == '/' : location.startsWith(item));
-    final recipeGuard = ref.watch(recipeCreationGuardProvider);
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -230,6 +229,7 @@ class _AppScaffold extends ConsumerWidget {
                 child: GestureDetector(
                   onTap: () async {
                     if (index == currentIndex) return;
+                    final recipeGuard = ref.read(recipeCreationGuardProvider);
                     final shouldPrompt =
                         recipeGuard.isOpen && recipeGuard.stepIndex >= 1;
                     if (!shouldPrompt) {

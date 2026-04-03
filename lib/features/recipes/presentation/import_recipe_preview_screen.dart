@@ -21,6 +21,8 @@ import 'package:plateplan/features/recipes/presentation/recipe_editor_modals.dar
 import 'package:plateplan/features/recipes/presentation/recipe_ingredient_edit_chip.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+enum _ImportRecipePartTab { main, sauce }
+
 /// Passed via [GoRouterState.extra] when opening [ImportRecipePreviewScreen].
 class ImportRecipePreviewArgs {
   const ImportRecipePreviewArgs({
@@ -52,10 +54,14 @@ class _ImportRecipePreviewScreenState
   late Recipe _recipe;
   late TextEditingController _titleCtrl;
   late TextEditingController _descCtrl;
+  late TextEditingController _sauceTitleCtrl;
   late List<String> _instructionDrafts;
+  late List<String> _sauceInstructionDrafts;
   late bool _servingsEstimated;
   bool _reparseBusy = false;
   bool _saveBusy = false;
+  _ImportRecipePartTab _ingredientsPartTab = _ImportRecipePartTab.main;
+  _ImportRecipePartTab _instructionsPartTab = _ImportRecipePartTab.main;
 
   bool _myFavorite = true;
   bool _myToTry = false;
@@ -73,6 +79,13 @@ class _ImportRecipePreviewScreenState
     _descCtrl = TextEditingController(text: _recipe.description ?? '');
     _instructionDrafts =
         _recipe.instructions.isEmpty ? [''] : _recipe.instructions.toList();
+    final emb = _recipe.embeddedSauce;
+    _sauceTitleCtrl = TextEditingController(text: emb?.title ?? '');
+    _sauceInstructionDrafts = emb == null
+        ? <String>[]
+        : (emb.instructions.isEmpty
+            ? ['']
+            : List<String>.from(emb.instructions));
     _servingsEstimated = _isServingsLikelyEstimated(
       servings: _recipe.servings,
       sourcePayload: widget.args.sourcePayload,
@@ -83,6 +96,7 @@ class _ImportRecipePreviewScreenState
   void dispose() {
     _titleCtrl.dispose();
     _descCtrl.dispose();
+    _sauceTitleCtrl.dispose();
     super.dispose();
   }
 
@@ -92,7 +106,7 @@ class _ImportRecipePreviewScreenState
     setState(() => _reparseBusy = true);
     try {
       final gemini = ref.read(geminiServiceProvider);
-      final Map<String, dynamic>? map;
+      Map<String, dynamic>? map;
       if (widget.args.reparseKind == RecipeImportReparseKind.instagramCaption) {
         map = await gemini.extractRecipeFromInstagramContent(payload);
       } else {
@@ -104,6 +118,14 @@ class _ImportRecipePreviewScreenState
                 pagePlainText: decoded.pageText,
                 userNotes: decoded.notes,
               );
+        if (map != null &&
+            decoded != null &&
+            decoded.pageText.trim().isNotEmpty) {
+          map = supplementWebImportJsonWithEmbeddedSauceFromPlainText(
+            map,
+            decoded.pageText,
+          );
+        }
       }
       if (map == null) {
         if (mounted) {
@@ -132,6 +154,16 @@ class _ImportRecipePreviewScreenState
         _descCtrl.text = _recipe.description ?? '';
         _instructionDrafts =
             _recipe.instructions.isEmpty ? [''] : _recipe.instructions.toList();
+        final sauceEmb = _recipe.embeddedSauce;
+        if (sauceEmb != null) {
+          _sauceTitleCtrl.text = sauceEmb.title ?? '';
+          _sauceInstructionDrafts = sauceEmb.instructions.isEmpty
+              ? ['']
+              : List<String>.from(sauceEmb.instructions);
+        } else {
+          _sauceTitleCtrl.clear();
+          _sauceInstructionDrafts = [];
+        }
         _servingsEstimated = _isServingsLikelyEstimated(
           servings: _recipe.servings,
           sourcePayload: payload,
@@ -150,7 +182,13 @@ class _ImportRecipePreviewScreenState
     final ingredients = _recipe.ingredients
         .where((i) => i.name.trim().isNotEmpty)
         .toList();
-    return _recipe.copyWith(
+    final sauceInstructions = _sauceInstructionDrafts
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final emb = _recipe.embeddedSauce;
+
+    var out = _recipe.copyWith(
       title: _titleCtrl.text.trim().isEmpty
           ? _recipe.title
           : formatRecipeTitlePerWord(_titleCtrl.text.trim()),
@@ -162,7 +200,55 @@ class _ImportRecipePreviewScreenState
       source: _recipe.source,
       visibility: RecipeVisibility.personal,
     );
+
+    if (emb != null) {
+      final sauceTitle = _sauceTitleCtrl.text.trim();
+      final sauceIngs =
+          emb.ingredients.where((i) => i.name.trim().isNotEmpty).toList();
+      if (sauceTitle.isEmpty &&
+          sauceIngs.isEmpty &&
+          sauceInstructions.isEmpty) {
+        out = out.copyWith(clearEmbeddedSauce: true);
+      } else {
+        out = out.copyWith(
+          embeddedSauce: RecipeEmbeddedSauce(
+            title: sauceTitle.isEmpty ? null : sauceTitle,
+            ingredients: sauceIngs,
+            instructions: sauceInstructions,
+          ),
+        );
+      }
+    }
+
+    return out;
   }
+
+  void _enableSauceSection() {
+    setState(() {
+      _recipe = _recipe.copyWith(
+        embeddedSauce: const RecipeEmbeddedSauce(),
+      );
+      _sauceTitleCtrl.clear();
+      _sauceInstructionDrafts = [''];
+      _ingredientsPartTab = _ImportRecipePartTab.sauce;
+      _instructionsPartTab = _ImportRecipePartTab.sauce;
+    });
+  }
+
+  void _removeSauceSection() {
+    setState(() {
+      _recipe = _recipe.copyWith(clearEmbeddedSauce: true);
+      _sauceTitleCtrl.clear();
+      _sauceInstructionDrafts = [];
+      _ingredientsPartTab = _ImportRecipePartTab.main;
+      _instructionsPartTab = _ImportRecipePartTab.main;
+    });
+  }
+
+  String get _sauceTabSegmentLabel =>
+      _recipe.mealType == MealType.dessert ? 'Frosting' : 'Sauce';
+
+  bool get _hasSauceSection => _recipe.embeddedSauce != null;
 
   Future<void> _save() async {
     final user = ref.read(currentUserProvider);
@@ -484,11 +570,30 @@ class _ImportRecipePreviewScreenState
                   ),
                   const SizedBox(height: AppSpacing.sm),
                 ],
-                if (_recipe.source == 'book_scan') ...[
+                if (_recipe.source == 'web_import') ...[
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: const [
+                    children: [
+                      const Chip(
+                        avatar: Icon(Icons.public_rounded, size: 16),
+                        label: Text('Website'),
+                      ),
+                      if (_recipe.sourceUrl != null &&
+                          _recipe.sourceUrl!.trim().isNotEmpty)
+                        const Chip(
+                          avatar: Icon(Icons.link_rounded, size: 16),
+                          label: Text('Source page linked'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                if (_recipe.source == 'book_scan') ...[
+                  const Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
                       Chip(
                         avatar: Icon(Icons.menu_book_rounded, size: 16),
                         label: Text('Cookbook scan'),
@@ -591,178 +696,97 @@ class _ImportRecipePreviewScreenState
           const SizedBox(height: AppSpacing.md),
           SectionCard(
             title: 'Ingredients',
+            subtitle: _hasSauceSection
+                ? 'Main is the entrée or primary dish. Use the ${_sauceTabSegmentLabel.toLowerCase()} tab when the recipe lists those ingredients separately (same servings).'
+                : 'List ingredients for the main part of the dish. Add a separate section below if the recipe also lists ${_sauceTabSegmentLabel.toLowerCase()} ingredients.',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (var i = 0; i < _recipe.ingredients.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-                    child: RecipeIngredientEditChip(
-                      label: RecipeIngredientEditChip.labelForIngredient(
-                        _recipe.ingredients[i],
+                if (_hasSauceSection) ...[
+                  SegmentedButton<_ImportRecipePartTab>(
+                    segments: [
+                      const ButtonSegment<_ImportRecipePartTab>(
+                        value: _ImportRecipePartTab.main,
+                        label: Text('Main'),
                       ),
-                      style: RecipeIngredientChipStyle.importPink,
-                      onTap: () async {
-                        final out = await showImportIngredientEditorDialog(
-                          context,
-                          ref,
-                          initial: _recipe.ingredients[i],
-                        );
-                        if (out == null) return;
-                        if (out is ImportIngredientEditorDeleted) {
-                          setState(() {
-                            final list = [..._recipe.ingredients]
-                              ..removeAt(i);
-                            _recipe =
-                                _recipe.copyWith(ingredients: list);
-                          });
-                          return;
-                        }
-                        if (out is ImportIngredientEditorSaved) {
-                          setState(() {
-                            final list = [..._recipe.ingredients];
-                            list[i] = out.ingredient;
-                            _recipe =
-                                _recipe.copyWith(ingredients: list);
-                          });
-                        }
-                      },
-                      onDelete: () {
-                        setState(() {
-                          final list = [..._recipe.ingredients]..removeAt(i);
-                          _recipe = _recipe.copyWith(ingredients: list);
-                        });
-                      },
+                      ButtonSegment<_ImportRecipePartTab>(
+                        value: _ImportRecipePartTab.sauce,
+                        label: Text(_sauceTabSegmentLabel),
+                      ),
+                    ],
+                    selected: {_ingredientsPartTab},
+                    onSelectionChanged: (next) {
+                      if (next.isEmpty) return;
+                      setState(() => _ingredientsPartTab = next.first);
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: _ingredientsPartTab == _ImportRecipePartTab.main
+                        ? _mainIngredientsColumn(scheme)
+                        : _sauceIngredientsOnlyColumn(scheme),
+                  ),
+                ] else ...[
+                  _mainIngredientsColumn(scheme),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'If the page lists a sauce separately (e.g. “Orange sauce”, “For the dressing”), tap Re-parse — the importer tries to split it automatically. You can also add a section by hand.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          height: 1.35,
+                        ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton.icon(
+                    onPressed: _enableSauceSection,
+                    icon: const Icon(Icons.water_drop_outlined),
+                    label: Text(
+                      _recipe.mealType == MealType.dessert
+                          ? 'Add frosting, icing, or sauce'
+                          : 'Add sauce, dressing, or glaze',
                     ),
                   ),
-                TextButton.icon(
-                  onPressed: () async {
-                    final out =
-                        await showImportIngredientEditorDialog(context, ref);
-                    if (out == null || out is ImportIngredientEditorDeleted) {
-                      return;
-                    }
-                    if (out is ImportIngredientEditorSaved) {
-                      setState(() {
-                        _recipe = _recipe.copyWith(
-                          ingredients: [
-                            ..._recipe.ingredients,
-                            out.ingredient,
-                          ],
-                        );
-                      });
-                    }
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Add ingredient'),
-                ),
+                ],
               ],
             ),
           ),
           const SizedBox(height: AppSpacing.md),
           SectionCard(
             title: 'Instructions',
+            subtitle: _hasSauceSection
+                ? 'Main is for the primary cooking steps. The ${_sauceTabSegmentLabel.toLowerCase()} tab is only for steps that apply to that part alone.'
+                : 'Edit, reorder, and add steps. Add a ${_sauceTabSegmentLabel.toLowerCase()} section under Ingredients if the recipe splits them.',
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ReorderableListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  buildDefaultDragHandles: false,
-                  itemCount: _instructionDrafts.length,
-                  onReorder: (oldIndex, newIndex) {
-                    setState(() {
-                      if (newIndex > oldIndex) newIndex -= 1;
-                      final item = _instructionDrafts.removeAt(oldIndex);
-                      _instructionDrafts.insert(newIndex, item);
-                    });
-                  },
-                  itemBuilder: (context, index) {
-                    final step = _instructionDrafts[index];
-                    return Padding(
-                      key: ValueKey('step-$index-$step'),
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _InstructionChip(
-                        index: index,
-                        text: step,
-                        onEdit: () async {
-                          final out = await showImportDirectionStepDialog(
-                            context,
-                            stepIndex: index,
-                            initialText: step,
-                            isNewStep: false,
-                            showRemoveButton:
-                                _instructionDrafts.length > 1,
-                          );
-                          if (out == null) return;
-                          if (out is ImportDirectionEditorDeleted) {
-                            setState(() {
-                              if (_instructionDrafts.length <= 1) {
-                                _instructionDrafts[0] = '';
-                              } else {
-                                _instructionDrafts.removeAt(index);
-                              }
-                            });
-                            return;
-                          }
-                          if (out is ImportDirectionEditorSaved) {
-                            setState(() {
-                              _instructionDrafts[index] = out.text;
-                            });
-                          }
-                        },
-                        onDelete: () {
-                          setState(() {
-                            if (_instructionDrafts.length <= 1) {
-                              _instructionDrafts[0] = '';
-                              return;
-                            }
-                            _instructionDrafts.removeAt(index);
-                          });
-                        },
-                        dragHandle: ReorderableDragStartListener(
-                          index: index,
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: Icon(
-                              Icons.drag_handle_rounded,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
+                if (_hasSauceSection) ...[
+                  SegmentedButton<_ImportRecipePartTab>(
+                    segments: [
+                      const ButtonSegment<_ImportRecipePartTab>(
+                        value: _ImportRecipePartTab.main,
+                        label: Text('Main'),
                       ),
-                    );
-                  },
-                ),
-                TextButton.icon(
-                  onPressed: () async {
-                    final isReplacingEmptyOnly =
-                        _instructionDrafts.length == 1 &&
-                            _instructionDrafts.first.trim().isEmpty;
-                    final newIndex = isReplacingEmptyOnly
-                        ? 0
-                        : _instructionDrafts.length;
-                    final out = await showImportDirectionStepDialog(
-                      context,
-                      stepIndex: newIndex,
-                      initialText: '',
-                      isNewStep: true,
-                      showRemoveButton: !isReplacingEmptyOnly,
-                    );
-                    if (out == null) return;
-                    if (out is ImportDirectionEditorDeleted) return;
-                    if (out is ImportDirectionEditorSaved) {
-                      setState(() {
-                        if (isReplacingEmptyOnly) {
-                          _instructionDrafts[0] = out.text;
-                        } else {
-                          _instructionDrafts.add(out.text);
-                        }
-                      });
-                    }
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Add step'),
-                ),
+                      ButtonSegment<_ImportRecipePartTab>(
+                        value: _ImportRecipePartTab.sauce,
+                        label: Text(_sauceTabSegmentLabel),
+                      ),
+                    ],
+                    selected: {_instructionsPartTab},
+                    onSelectionChanged: (next) {
+                      if (next.isEmpty) return;
+                      setState(() => _instructionsPartTab = next.first);
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: _instructionsPartTab == _ImportRecipePartTab.main
+                        ? _mainInstructionsColumn(scheme)
+                        : _sauceInstructionsColumn(scheme),
+                  ),
+                ] else
+                  _mainInstructionsColumn(scheme),
               ],
             ),
           ),
@@ -926,6 +950,407 @@ class _ImportRecipePreviewScreenState
       caseSensitive: false,
     ).hasMatch(text);
     return !mentionsServings && servings == 2;
+  }
+
+  Widget _mainIngredientsColumn(ColorScheme scheme) {
+    return Column(
+      key: const ValueKey('imp-ing-main'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _recipe.ingredients.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+            child: RecipeIngredientEditChip(
+              label: RecipeIngredientEditChip.labelForIngredient(
+                _recipe.ingredients[i],
+              ),
+              style: RecipeIngredientChipStyle.importPink,
+              onTap: () async {
+                final out = await showImportIngredientEditorDialog(
+                  context,
+                  ref,
+                  initial: _recipe.ingredients[i],
+                );
+                if (out == null) return;
+                if (out is ImportIngredientEditorDeleted) {
+                  setState(() {
+                    final list = [..._recipe.ingredients]..removeAt(i);
+                    _recipe = _recipe.copyWith(ingredients: list);
+                  });
+                  return;
+                }
+                if (out is ImportIngredientEditorSaved) {
+                  setState(() {
+                    final list = [..._recipe.ingredients];
+                    list[i] = out.ingredient;
+                    _recipe = _recipe.copyWith(ingredients: list);
+                  });
+                }
+              },
+              onDelete: () {
+                setState(() {
+                  final list = [..._recipe.ingredients]..removeAt(i);
+                  _recipe = _recipe.copyWith(ingredients: list);
+                });
+              },
+            ),
+          ),
+        TextButton.icon(
+          onPressed: () async {
+            final out = await showImportIngredientEditorDialog(context, ref);
+            if (out == null || out is ImportIngredientEditorDeleted) {
+              return;
+            }
+            if (out is ImportIngredientEditorSaved) {
+              setState(() {
+                _recipe = _recipe.copyWith(
+                  ingredients: [..._recipe.ingredients, out.ingredient],
+                );
+              });
+            }
+          },
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add ingredient'),
+        ),
+      ],
+    );
+  }
+
+  Widget _sauceIngredientsOnlyColumn(ColorScheme scheme) {
+    return Column(
+      key: const ValueKey('imp-ing-sauce'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: scheme.primary.withValues(alpha: 0.45),
+            ),
+            color: scheme.primaryContainer.withValues(alpha: 0.22),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _removeSauceSection,
+                    child: const Text('Remove this section'),
+                  ),
+                ),
+                TextField(
+                  controller: _sauceTitleCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Name (optional)',
+                    border: OutlineInputBorder(),
+                    filled: true,
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                for (var i = 0;
+                    i < _recipe.embeddedSauce!.ingredients.length;
+                    i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                    child: RecipeIngredientEditChip(
+                      label: RecipeIngredientEditChip.labelForIngredient(
+                        _recipe.embeddedSauce!.ingredients[i],
+                      ),
+                      style: RecipeIngredientChipStyle.importPink,
+                      onTap: () async {
+                        final out = await showImportIngredientEditorDialog(
+                          context,
+                          ref,
+                          initial: _recipe.embeddedSauce!.ingredients[i],
+                        );
+                        if (out == null) return;
+                        if (out is ImportIngredientEditorDeleted) {
+                          setState(() {
+                            final e = _recipe.embeddedSauce!;
+                            final list = [...e.ingredients]..removeAt(i);
+                            _recipe = _recipe.copyWith(
+                              embeddedSauce: RecipeEmbeddedSauce(
+                                title: e.title,
+                                ingredients: list,
+                                instructions: e.instructions,
+                              ),
+                            );
+                          });
+                          return;
+                        }
+                        if (out is ImportIngredientEditorSaved) {
+                          setState(() {
+                            final e = _recipe.embeddedSauce!;
+                            final list = [...e.ingredients];
+                            list[i] = out.ingredient;
+                            _recipe = _recipe.copyWith(
+                              embeddedSauce: RecipeEmbeddedSauce(
+                                title: e.title,
+                                ingredients: list,
+                                instructions: e.instructions,
+                              ),
+                            );
+                          });
+                        }
+                      },
+                      onDelete: () {
+                        setState(() {
+                          final e = _recipe.embeddedSauce!;
+                          final list = [...e.ingredients]..removeAt(i);
+                          _recipe = _recipe.copyWith(
+                            embeddedSauce: RecipeEmbeddedSauce(
+                              title: e.title,
+                              ingredients: list,
+                              instructions: e.instructions,
+                            ),
+                          );
+                        });
+                      },
+                    ),
+                  ),
+                TextButton.icon(
+                  onPressed: () async {
+                    final out =
+                        await showImportIngredientEditorDialog(context, ref);
+                    if (out == null || out is ImportIngredientEditorDeleted) {
+                      return;
+                    }
+                    if (out is ImportIngredientEditorSaved) {
+                      setState(() {
+                        final e = _recipe.embeddedSauce!;
+                        _recipe = _recipe.copyWith(
+                          embeddedSauce: RecipeEmbeddedSauce(
+                            title: e.title,
+                            ingredients: [...e.ingredients, out.ingredient],
+                            instructions: e.instructions,
+                          ),
+                        );
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Add sauce ingredient'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _mainInstructionsColumn(ColorScheme scheme) {
+    return Column(
+      key: const ValueKey('imp-dir-main'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: _instructionDrafts.length,
+          onReorder: (oldIndex, newIndex) {
+            setState(() {
+              if (newIndex > oldIndex) newIndex -= 1;
+              final item = _instructionDrafts.removeAt(oldIndex);
+              _instructionDrafts.insert(newIndex, item);
+            });
+          },
+          itemBuilder: (context, index) {
+            final step = _instructionDrafts[index];
+            return Padding(
+              key: ValueKey('step-$index-$step'),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _InstructionChip(
+                index: index,
+                text: step,
+                onEdit: () async {
+                  final out = await showImportDirectionStepDialog(
+                    context,
+                    stepIndex: index,
+                    initialText: step,
+                    isNewStep: false,
+                    showRemoveButton: _instructionDrafts.length > 1,
+                  );
+                  if (out == null) return;
+                  if (out is ImportDirectionEditorDeleted) {
+                    setState(() {
+                      if (_instructionDrafts.length <= 1) {
+                        _instructionDrafts[0] = '';
+                      } else {
+                        _instructionDrafts.removeAt(index);
+                      }
+                    });
+                    return;
+                  }
+                  if (out is ImportDirectionEditorSaved) {
+                    setState(() {
+                      _instructionDrafts[index] = out.text;
+                    });
+                  }
+                },
+                onDelete: () {
+                  setState(() {
+                    if (_instructionDrafts.length <= 1) {
+                      _instructionDrafts[0] = '';
+                      return;
+                    }
+                    _instructionDrafts.removeAt(index);
+                  });
+                },
+                dragHandle: ReorderableDragStartListener(
+                  index: index,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Icon(
+                      Icons.drag_handle_rounded,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        TextButton.icon(
+          onPressed: () async {
+            final isReplacingEmptyOnly = _instructionDrafts.length == 1 &&
+                _instructionDrafts.first.trim().isEmpty;
+            final newIndex =
+                isReplacingEmptyOnly ? 0 : _instructionDrafts.length;
+            final out = await showImportDirectionStepDialog(
+              context,
+              stepIndex: newIndex,
+              initialText: '',
+              isNewStep: true,
+              showRemoveButton: !isReplacingEmptyOnly,
+            );
+            if (out == null) return;
+            if (out is ImportDirectionEditorDeleted) return;
+            if (out is ImportDirectionEditorSaved) {
+              setState(() {
+                if (isReplacingEmptyOnly) {
+                  _instructionDrafts[0] = out.text;
+                } else {
+                  _instructionDrafts.add(out.text);
+                }
+              });
+            }
+          },
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add step'),
+        ),
+      ],
+    );
+  }
+
+  Widget _sauceInstructionsColumn(ColorScheme scheme) {
+    return Column(
+      key: const ValueKey('imp-dir-sauce'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: _sauceInstructionDrafts.length,
+          onReorder: (oldIndex, newIndex) {
+            setState(() {
+              if (newIndex > oldIndex) newIndex -= 1;
+              final item = _sauceInstructionDrafts.removeAt(oldIndex);
+              _sauceInstructionDrafts.insert(newIndex, item);
+            });
+          },
+          itemBuilder: (context, index) {
+            final step = _sauceInstructionDrafts[index];
+            return Padding(
+              key: ValueKey('sauce-step-$index-$step'),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _InstructionChip(
+                index: index,
+                text: step,
+                onEdit: () async {
+                  final out = await showImportDirectionStepDialog(
+                    context,
+                    stepIndex: index,
+                    initialText: step,
+                    isNewStep: false,
+                    showRemoveButton: _sauceInstructionDrafts.length > 1,
+                  );
+                  if (out == null) return;
+                  if (out is ImportDirectionEditorDeleted) {
+                    setState(() {
+                      if (_sauceInstructionDrafts.length <= 1) {
+                        _sauceInstructionDrafts[0] = '';
+                      } else {
+                        _sauceInstructionDrafts.removeAt(index);
+                      }
+                    });
+                    return;
+                  }
+                  if (out is ImportDirectionEditorSaved) {
+                    setState(() {
+                      _sauceInstructionDrafts[index] = out.text;
+                    });
+                  }
+                },
+                onDelete: () {
+                  setState(() {
+                    if (_sauceInstructionDrafts.length <= 1) {
+                      _sauceInstructionDrafts[0] = '';
+                      return;
+                    }
+                    _sauceInstructionDrafts.removeAt(index);
+                  });
+                },
+                dragHandle: ReorderableDragStartListener(
+                  index: index,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Icon(
+                      Icons.drag_handle_rounded,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        TextButton.icon(
+          onPressed: () async {
+            final isReplacingEmptyOnly = _sauceInstructionDrafts.length == 1 &&
+                _sauceInstructionDrafts.first.trim().isEmpty;
+            final newIndex =
+                isReplacingEmptyOnly ? 0 : _sauceInstructionDrafts.length;
+            final out = await showImportDirectionStepDialog(
+              context,
+              stepIndex: newIndex,
+              initialText: '',
+              isNewStep: true,
+              showRemoveButton: !isReplacingEmptyOnly,
+            );
+            if (out == null) return;
+            if (out is ImportDirectionEditorDeleted) return;
+            if (out is ImportDirectionEditorSaved) {
+              setState(() {
+                if (isReplacingEmptyOnly) {
+                  _sauceInstructionDrafts[0] = out.text;
+                } else {
+                  _sauceInstructionDrafts.add(out.text);
+                }
+              });
+            }
+          },
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add sauce step'),
+        ),
+      ],
+    );
   }
 }
 

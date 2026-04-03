@@ -12,7 +12,6 @@ import 'package:plateplan/core/ui/measurement_system_toggle.dart';
 import 'package:plateplan/core/models/app_models.dart';
 import 'package:plateplan/core/services/nutrition_estimation.dart';
 import 'package:plateplan/core/services/recipe_nutrition_lines.dart';
-import 'package:plateplan/core/strings/ingredient_amount_display.dart';
 import 'package:plateplan/core/storage/local_cache.dart';
 import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/auth/data/auth_providers.dart';
@@ -24,6 +23,23 @@ import 'package:plateplan/features/recipes/presentation/recipe_direction_edit_ch
 import 'package:plateplan/features/recipes/presentation/recipe_ingredient_edit_chip.dart';
 import 'package:plateplan/features/recipes/presentation/recipe_lists_sharing_sheet.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+/// Heading for the optional sauce block (cooking view), by main recipe meal type.
+String _sauceSectionHeading(Recipe recipe) {
+  if (recipe.mealType == MealType.dessert) return 'Sauce or Icing';
+  return 'Sauce';
+}
+
+String _directionsSauceSegmentLabel(Recipe recipe) =>
+    recipe.mealType == MealType.dessert ? 'Frosting' : 'Sauce';
+
+bool _showCookingEmbeddedSauceBlock(Recipe recipe) {
+  final emb = recipe.embeddedSauce;
+  if (emb == null) return false;
+  return emb.ingredients.isNotEmpty || emb.instructions.isNotEmpty;
+}
+
+enum _CookingDirectionsTab { main, sauce }
 
 class CookingModeScreen extends ConsumerStatefulWidget {
   const CookingModeScreen({super.key, required this.recipeId});
@@ -37,9 +53,11 @@ class CookingModeScreen extends ConsumerStatefulWidget {
 class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   final FlutterTts _tts = FlutterTts();
   int _stepIndex = 0;
+  int _sauceStepIndex = 0;
+  _CookingDirectionsTab _directionsTab = _CookingDirectionsTab.main;
   final Set<int> _checkedIngredients = {};
-  bool _ingredientsEditMode = false;
-  bool _directionsEditMode = false;
+  final Set<int> _checkedSauceIngredients = {};
+  bool _recipeEditMode = false;
   bool _nutritionShowPerServing = false;
   bool _nutritionBusy = false;
   DateTime? _recipeMissingSince;
@@ -49,8 +67,13 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
   @override
   void initState() {
     super.initState();
-    unawaited(ref.read(localCacheProvider).recordViewedRecipeId(widget.recipeId));
+    unawaited(
+        ref.read(localCacheProvider).recordViewedRecipeId(widget.recipeId));
     unawaited(ref.read(groceryRepositoryProvider).ensureCatalogLoaded());
+  }
+
+  void _setRecipeEditMode(bool value) {
+    setState(() => _recipeEditMode = value);
   }
 
   bool _isInstagramSourceUrl(String? raw) {
@@ -68,7 +91,8 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     if (uri == null || !_isInstagramSourceUrl(text)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No valid Instagram post link available.')),
+        const SnackBar(
+            content: Text('No valid Instagram post link available.')),
       );
       return;
     }
@@ -76,6 +100,32 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open the Instagram post.')),
+      );
+    }
+  }
+
+  bool _isHttpOrHttpsSourceUrl(String? raw) {
+    final u = Uri.tryParse(raw?.trim() ?? '');
+    if (u == null || u.host.isEmpty) return false;
+    return u.scheme == 'http' || u.scheme == 'https';
+  }
+
+  Future<void> _openWebRecipeSource(String? raw) async {
+    final text = raw?.trim() ?? '';
+    final uri = Uri.tryParse(text);
+    if (uri == null || !_isHttpOrHttpsSourceUrl(text)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No valid recipe page link available.'),
+        ),
+      );
+      return;
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the recipe page.')),
       );
     }
   }
@@ -129,7 +179,10 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                           style: Theme.of(context)
                               .textTheme
                               .bodyMedium
-                              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                              ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant),
                         ),
                       );
                     }
@@ -173,7 +226,8 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                           if (next.isEmpty) return;
                           // If the current selection isn't in the active tab, move
                           // selection to the first list in that tab.
-                          final stillVisible = next.any((l) => l.id == selectedId);
+                          final stillVisible =
+                              next.any((l) => l.id == selectedId);
                           if (!stillVisible) {
                             setModalState(() => selectedId = next.first.id);
                           }
@@ -210,8 +264,9 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
 
-    final checked = _checkedIngredients.toList()..sort();
-    if (checked.isEmpty) return;
+    final mainChecked = _checkedIngredients.toList()..sort();
+    final sauceChecked = _checkedSauceIngredients.toList()..sort();
+    if (mainChecked.isEmpty && sauceChecked.isEmpty) return;
 
     final lists = await ref.read(listsProvider.future);
     if (!mounted) return;
@@ -223,16 +278,17 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     }
 
     final currentSelected = ref.read(selectedListIdProvider);
+    final totalCount = mainChecked.length + sauceChecked.length;
     final targetListId = await _pickTargetListId(
       lists: lists,
       initialListId: currentSelected,
-      itemCount: checked.length,
+      itemCount: totalCount,
     );
     if (!mounted || targetListId == null || targetListId.isEmpty) return;
 
     final repo = ref.read(groceryRepositoryProvider);
     var added = 0;
-    for (final idx in checked) {
+    for (final idx in mainChecked) {
       if (idx < 0 || idx >= recipe.ingredients.length) continue;
       final ing = recipe.ingredients[idx];
       final name = ing.name.trim();
@@ -246,10 +302,9 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
           userId: user.id,
           listId: targetListId,
           name: name,
-          quantity: ing.qualitative
-              ? ing.unit
-              : cols!.amount,
-          unit: ing.qualitative ? null : (cols!.unit.isEmpty ? null : cols.unit),
+          quantity: ing.qualitative ? ing.unit : cols!.amount,
+          unit:
+              ing.qualitative ? null : (cols!.unit.isEmpty ? null : cols.unit),
           fromRecipeId: recipe.id,
         );
         added++;
@@ -257,14 +312,46 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
         // Ignore individual failures (e.g. duplicates); keep going.
       }
     }
+    final emb = recipe.embeddedSauce;
+    if (emb != null) {
+      for (final idx in sauceChecked) {
+        if (idx < 0 || idx >= emb.ingredients.length) continue;
+        final ing = emb.ingredients[idx];
+        final name = ing.name.trim();
+        if (name.isEmpty) continue;
+        try {
+          final measurementSystem = ref.read(measurementSystemProvider);
+          final cols = ing.qualitative
+              ? null
+              : ingredientDisplayColumns(ing, measurementSystem);
+          await repo.addItem(
+            userId: user.id,
+            listId: targetListId,
+            name: name,
+            quantity: ing.qualitative ? ing.unit : cols!.amount,
+            unit: ing.qualitative
+                ? null
+                : (cols!.unit.isEmpty ? null : cols.unit),
+            fromRecipeId: recipe.id,
+          );
+          added++;
+        } catch (_) {
+          // Ignore individual failures (e.g. duplicates); keep going.
+        }
+      }
+    }
 
     ref.read(selectedListIdProvider.notifier).state = targetListId;
     invalidateActiveGroceryStreams(ref);
 
     if (!mounted) return;
-    setState(() => _checkedIngredients.clear());
+    setState(() {
+      _checkedIngredients.clear();
+      _checkedSauceIngredients.clear();
+    });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Added $added item${added == 1 ? '' : 's'} to list.')),
+      SnackBar(
+          content: Text('Added $added item${added == 1 ? '' : 's'} to list.')),
     );
   }
 
@@ -282,7 +369,10 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
       await ref.read(recipesRepositoryProvider).updateRecipe(base.id, updated);
       ref.invalidate(recipesProvider);
       if (mounted) {
-        setState(() => _checkedIngredients.clear());
+        setState(() {
+          _checkedIngredients.clear();
+          _checkedSauceIngredients.clear();
+        });
       }
     } on StateError {
       if (!mounted) return;
@@ -297,6 +387,245 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _persistEmbeddedSauce(
+    Recipe base,
+    RecipeEmbeddedSauce embedded,
+  ) async {
+    final emptyEmbedded = embedded.ingredients.isEmpty &&
+        embedded.instructions.isEmpty &&
+        (embedded.title == null || embedded.title!.trim().isEmpty);
+    final updated = emptyEmbedded
+        ? base.copyWith(clearEmbeddedSauce: true)
+        : base.copyWith(embeddedSauce: embedded);
+    try {
+      await ref.read(recipesRepositoryProvider).updateRecipe(base.id, updated);
+      ref.invalidate(recipesProvider);
+      if (mounted) {
+        setState(() {
+          _checkedIngredients.clear();
+          _checkedSauceIngredients.clear();
+          if (emptyEmbedded) {
+            _directionsTab = _CookingDirectionsTab.main;
+            _sauceStepIndex = 0;
+          } else {
+            final n = embedded.instructions.length;
+            if (n == 0) {
+              _sauceStepIndex = 0;
+            } else if (_sauceStepIndex >= n) {
+              _sauceStepIndex = n - 1;
+            }
+          }
+        });
+      }
+    } on StateError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save sauce details. Try again.'),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save sauce details. Check your connection.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editSauceIngredientLine(Recipe recipe, int index) async {
+    final emb = recipe.embeddedSauce;
+    if (emb == null || index < 0 || index >= emb.ingredients.length) return;
+    final initial = emb.ingredients[index];
+    final outcome =
+        await showImportIngredientEditorDialog(context, ref, initial: initial);
+    if (!mounted || outcome == null) return;
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh?.embeddedSauce == null) return;
+    final list = [...fresh!.embeddedSauce!.ingredients];
+    if (index < 0 || index >= list.length) return;
+    if (outcome is ImportIngredientEditorSaved) {
+      list[index] = outcome.ingredient;
+      await _persistEmbeddedSauce(
+        fresh,
+        RecipeEmbeddedSauce(
+          title: fresh.embeddedSauce!.title,
+          ingredients: list,
+          instructions: fresh.embeddedSauce!.instructions,
+        ),
+      );
+    } else if (outcome is ImportIngredientEditorDeleted) {
+      list.removeAt(index);
+      await _persistEmbeddedSauce(
+        fresh,
+        RecipeEmbeddedSauce(
+          title: fresh.embeddedSauce!.title,
+          ingredients: list,
+          instructions: fresh.embeddedSauce!.instructions,
+        ),
+      );
+    }
+  }
+
+  Future<void> _removeSauceIngredientLine(Recipe recipe, int index) async {
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh?.embeddedSauce == null) return;
+    final emb = fresh!.embeddedSauce!;
+    final list = [...emb.ingredients];
+    if (index < 0 || index >= list.length) return;
+    list.removeAt(index);
+    await _persistEmbeddedSauce(
+      fresh,
+      RecipeEmbeddedSauce(
+        title: emb.title,
+        ingredients: list,
+        instructions: emb.instructions,
+      ),
+    );
+  }
+
+  Future<void> _addSauceIngredientLine(Recipe recipe) async {
+    final outcome =
+        await showImportIngredientEditorDialog(context, ref, initial: null);
+    if (!mounted || outcome == null) return;
+    if (outcome is! ImportIngredientEditorSaved) return;
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final emb = fresh.embeddedSauce ??
+        const RecipeEmbeddedSauce(ingredients: [], instructions: []);
+    await _persistEmbeddedSauce(
+      fresh,
+      RecipeEmbeddedSauce(
+        title: emb.title,
+        ingredients: [...emb.ingredients, outcome.ingredient],
+        instructions: emb.instructions,
+      ),
+    );
+  }
+
+  Future<void> _editSauceDirectionLine(Recipe recipe, int index) async {
+    final emb = recipe.embeddedSauce;
+    if (emb == null || index < 0 || index >= emb.instructions.length) return;
+    final initialText = emb.instructions[index];
+    final outcome = await showImportDirectionStepDialog(
+      context,
+      stepIndex: index,
+      initialText: initialText,
+      isNewStep: false,
+      showRemoveButton: emb.instructions.length > 1,
+    );
+    if (!mounted || outcome == null) return;
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh?.embeddedSauce == null) return;
+    final e = fresh!.embeddedSauce!;
+    final list = [...e.instructions];
+    if (index < 0 || index >= list.length) return;
+    if (outcome is ImportDirectionEditorSaved) {
+      list[index] = outcome.text;
+      await _persistEmbeddedSauce(
+        fresh,
+        RecipeEmbeddedSauce(
+          title: e.title,
+          ingredients: e.ingredients,
+          instructions: list,
+        ),
+      );
+    } else if (outcome is ImportDirectionEditorDeleted) {
+      if (list.length <= 1) {
+        await _persistEmbeddedSauce(
+          fresh,
+          RecipeEmbeddedSauce(
+            title: e.title,
+            ingredients: e.ingredients,
+            instructions: const [],
+          ),
+        );
+      } else {
+        list.removeAt(index);
+        await _persistEmbeddedSauce(
+          fresh,
+          RecipeEmbeddedSauce(
+            title: e.title,
+            ingredients: e.ingredients,
+            instructions: list,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _removeSauceDirectionLine(Recipe recipe, int index) async {
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh?.embeddedSauce == null) return;
+    final e = fresh!.embeddedSauce!;
+    final list = [...e.instructions];
+    if (index < 0 || index >= list.length) return;
+    if (list.length <= 1) {
+      await _persistEmbeddedSauce(
+        fresh,
+        RecipeEmbeddedSauce(
+          title: e.title,
+          ingredients: e.ingredients,
+          instructions: const [],
+        ),
+      );
+    } else {
+      list.removeAt(index);
+      await _persistEmbeddedSauce(
+        fresh,
+        RecipeEmbeddedSauce(
+          title: e.title,
+          ingredients: e.ingredients,
+          instructions: list,
+        ),
+      );
+    }
+  }
+
+  Future<void> _addSauceDirectionLine(Recipe recipe) async {
+    final fresh = _recipeSnapshot(recipe.id);
+    if (fresh == null) return;
+    final emb = fresh.embeddedSauce ??
+        const RecipeEmbeddedSauce(ingredients: [], instructions: []);
+    final list = [...emb.instructions];
+    final isReplacingEmptyOnly = list.length == 1 && list.first.trim().isEmpty;
+    final isEmpty = list.isEmpty;
+    final newIndex = isReplacingEmptyOnly ? 0 : (isEmpty ? 0 : list.length);
+    final outcome = await showImportDirectionStepDialog(
+      context,
+      stepIndex: newIndex,
+      initialText: '',
+      isNewStep: true,
+      showRemoveButton: !isEmpty && !isReplacingEmptyOnly,
+    );
+    if (!mounted || outcome == null) return;
+    if (outcome is ImportDirectionEditorDeleted) return;
+    if (outcome is! ImportDirectionEditorSaved) return;
+    final text = outcome.text.trim();
+    if (text.isEmpty) return;
+    final fresh2 = _recipeSnapshot(recipe.id);
+    if (fresh2 == null) return;
+    final e = fresh2.embeddedSauce ??
+        const RecipeEmbeddedSauce(ingredients: [], instructions: []);
+    var next = [...e.instructions];
+    if (isReplacingEmptyOnly) {
+      next = [text];
+    } else if (isEmpty) {
+      next = [text];
+    } else {
+      next.add(text);
+    }
+    await _persistEmbeddedSauce(
+      fresh2,
+      RecipeEmbeddedSauce(
+        title: e.title,
+        ingredients: e.ingredients,
+        instructions: next,
+      ),
+    );
   }
 
   Future<void> _editIngredientLine(Recipe recipe, int index) async {
@@ -350,6 +679,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
       ref.invalidate(recipesProvider);
       if (mounted) {
         setState(() {
+          _checkedSauceIngredients.clear();
           if (instructions.isEmpty) {
             _stepIndex = 0;
           } else if (_stepIndex >= instructions.length) {
@@ -417,8 +747,7 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     final fresh = _recipeSnapshot(recipe.id);
     if (fresh == null) return;
     final list = [...fresh.instructions];
-    final isReplacingEmptyOnly =
-        list.length == 1 && list.first.trim().isEmpty;
+    final isReplacingEmptyOnly = list.length == 1 && list.first.trim().isEmpty;
     final isEmpty = list.isEmpty;
     final newIndex = isReplacingEmptyOnly ? 0 : (isEmpty ? 0 : list.length);
     final outcome = await showImportDirectionStepDialog(
@@ -530,7 +859,9 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
         nutrition: result.nutrition,
         nutritionSource: result.source,
       );
-      await ref.read(recipesRepositoryProvider).updateRecipe(recipe.id, updated);
+      await ref
+          .read(recipesRepositoryProvider)
+          .updateRecipe(recipe.id, updated);
       ref.invalidate(recipesProvider);
       if (mounted) {
         setState(() {
@@ -580,6 +911,317 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     );
   }
 
+  Widget _cookingMainDirectionsView(
+    BuildContext context,
+    Recipe recipe,
+    ColorScheme scheme,
+  ) {
+    if (recipe.instructions.isEmpty) {
+      return Column(
+        key: const ValueKey('cd-main-view'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'No directions for this recipe. Tap the edit button above to add steps, or add them in the full recipe editor.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonal(
+              onPressed: () async {
+                await showTimePicker(
+                  context: context,
+                  initialTime: TimeOfDay.now(),
+                );
+              },
+              child: const Text('Timer'),
+            ),
+          ),
+        ],
+      );
+    }
+    return Column(
+      key: const ValueKey('cd-main-view'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Builder(
+          builder: (ctx) {
+            final instr = recipe.instructions;
+            final idx = _stepIndex.clamp(0, instr.length - 1);
+            final stepText = instr[idx];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Step ${idx + 1}/${instr.length}',
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Text(
+                    stepText,
+                    style: Theme.of(ctx).textTheme.bodyLarge,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed:
+                            idx == 0 ? null : () => setState(() => _stepIndex--),
+                        child: const Text('Previous'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: idx >= instr.length - 1
+                            ? null
+                            : () => setState(() => _stepIndex++),
+                        child: const Text('Next Step'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => _tts.speak(stepText),
+                      child: const Text('Voice'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () async {
+                        await showTimePicker(
+                          context: ctx,
+                          initialTime: TimeOfDay.now(),
+                        );
+                      },
+                      child: const Text('Timer'),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _cookingSauceDirectionsView(
+    BuildContext context,
+    Recipe recipe,
+    ColorScheme scheme,
+  ) {
+    final emb = recipe.embeddedSauce!;
+    final sauceInstr = emb.instructions;
+    if (sauceInstr.isEmpty) {
+      return Column(
+        key: const ValueKey('cd-sauce-view'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'No ${_directionsSauceSegmentLabel(recipe).toLowerCase()} steps yet. Turn on edit to add them.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonal(
+              onPressed: () async {
+                await showTimePicker(
+                  context: context,
+                  initialTime: TimeOfDay.now(),
+                );
+              },
+              child: const Text('Timer'),
+            ),
+          ),
+        ],
+      );
+    }
+    return Column(
+      key: const ValueKey('cd-sauce-view'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Builder(
+          builder: (ctx) {
+            final idx = _sauceStepIndex.clamp(0, sauceInstr.length - 1);
+            final stepText = sauceInstr[idx];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '${_directionsSauceSegmentLabel(recipe)} · Step ${idx + 1}/${sauceInstr.length}',
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Text(
+                    stepText,
+                    style: Theme.of(ctx).textTheme.bodyLarge,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: idx == 0
+                            ? null
+                            : () => setState(() => _sauceStepIndex--),
+                        child: const Text('Previous'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: idx >= sauceInstr.length - 1
+                            ? null
+                            : () => setState(() => _sauceStepIndex++),
+                        child: const Text('Next Step'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => _tts.speak(stepText),
+                      child: const Text('Voice'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () async {
+                        await showTimePicker(
+                          context: ctx,
+                          initialTime: TimeOfDay.now(),
+                        );
+                      },
+                      child: const Text('Timer'),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _cookingMainDirectionsEdit(
+    BuildContext context,
+    Recipe recipe,
+    ColorScheme scheme,
+  ) {
+    return Column(
+      key: const ValueKey('cd-main-edit'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (recipe.instructions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'No steps yet. Add one below.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            ),
+          )
+        else
+          ...recipe.instructions.asMap().entries.map(
+                (e) => RecipeDirectionEditChip(
+                  label: RecipeDirectionEditChip.labelForStep(
+                    e.key + 1,
+                    e.value,
+                  ),
+                  onTap: () => unawaited(
+                    _editDirectionLine(recipe, e.key),
+                  ),
+                  onDelete: () => unawaited(
+                    _removeDirectionLine(recipe, e.key),
+                  ),
+                ),
+              ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => unawaited(_addDirectionLine(recipe)),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Add step'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cookingSauceDirectionsEdit(
+    BuildContext context,
+    Recipe recipe,
+    ColorScheme scheme,
+  ) {
+    final emb = recipe.embeddedSauce!;
+    return Column(
+      key: const ValueKey('cd-sauce-edit'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (emb.instructions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'No ${_directionsSauceSegmentLabel(recipe).toLowerCase()} steps yet. Add one below.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            ),
+          )
+        else
+          ...emb.instructions.asMap().entries.map(
+                (e) => RecipeDirectionEditChip(
+                  label: RecipeDirectionEditChip.labelForStep(
+                    e.key + 1,
+                    e.value,
+                  ),
+                  onTap: () => unawaited(
+                    _editSauceDirectionLine(recipe, e.key),
+                  ),
+                  onDelete: () => unawaited(
+                    _removeSauceDirectionLine(recipe, e.key),
+                  ),
+                ),
+              ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => unawaited(_addSauceDirectionLine(recipe)),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Add sauce step'),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildNutritionSection(BuildContext context, Recipe recipe) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
@@ -593,11 +1235,9 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
     if (!hasTotals) {
       subtitle = 'Not calculated — use Estimate below';
     } else if (showPerServing) {
-      subtitle =
-          '${(n.calories / servings).round()} cal per serving (approx.)';
+      subtitle = '${(n.calories / servings).round()} cal per serving (approx.)';
     } else {
-      subtitle =
-          '${n.calories} cal total (approx.)';
+      subtitle = '${n.calories} cal total (approx.)';
     }
 
     return Card(
@@ -783,9 +1423,8 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
                 ],
                 const SizedBox(height: 12),
                 FilledButton.tonalIcon(
-                  onPressed: _nutritionBusy
-                      ? null
-                      : () => _estimateNutrition(recipe),
+                  onPressed:
+                      _nutritionBusy ? null : () => _estimateNutrition(recipe),
                   icon: _nutritionBusy
                       ? const SizedBox(
                           width: 18,
@@ -864,326 +1503,454 @@ class _CookingModeScreenState extends ConsumerState<CookingModeScreen> {
           _recipeMissingSince = null;
 
           final measurementSystem = ref.watch(measurementSystemProvider);
+          final mediaQuery = MediaQuery.of(context);
+          final hasCheckedStrip = _checkedIngredients.isNotEmpty ||
+              _checkedSauceIngredients.isNotEmpty;
+          const addToListStripHeight = 72.0;
+          final editFabLift =
+              (hasCheckedStrip ? addToListStripHeight : 0.0) + mediaQuery.padding.bottom;
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          return Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.bottomCenter,
             children: [
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-              Text(recipe.title,
-                  style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  Chip(
-                    avatar: const Icon(Icons.shopping_basket_rounded, size: 16),
-                    label: Text('${recipe.ingredients.length} ingredients'),
-                  ),
-                  Chip(
-                    avatar: const Icon(Icons.format_list_numbered_rounded, size: 16),
-                    label: Text(
-                      recipe.instructions.isEmpty
-                          ? 'No directions'
-                          : '${recipe.instructions.length} steps',
-                    ),
-                  ),
-                  Chip(
-                    avatar: const Icon(Icons.people_alt_rounded, size: 16),
-                    label: Text('${recipe.servings} servings'),
-                  ),
-                  if (recipe.source == 'instagram_import')
-                    ActionChip(
-                      avatar: const Icon(Icons.camera_alt_rounded, size: 16),
-                      label: const Text('Instagram'),
-                      side: BorderSide(
-                        color: scheme.error.withValues(alpha: 0.35),
-                      ),
-                      onPressed: _isInstagramSourceUrl(recipe.sourceUrl)
-                          ? () => _openSourcePost(recipe.sourceUrl)
-                          : null,
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _buildNutritionSection(context, recipe),
-              const SizedBox(height: 16),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Ingredients',
-                        style: Theme.of(context).textTheme.titleLarge,
+                    child: ListView(
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        16,
+                        16,
+                        16 +
+                            (_recipeEditMode ? 76 : 0) +
+                            mediaQuery.padding.bottom,
                       ),
+                      children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            recipe.title,
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 40,
+                            minHeight: 36,
+                          ),
+                          tooltip:
+                              _recipeEditMode ? 'Done editing' : 'Edit recipe',
+                          icon: Icon(
+                            _recipeEditMode
+                                ? Icons.check_rounded
+                                : Icons.edit_outlined,
+                          ),
+                          onPressed: () =>
+                              _setRecipeEditMode(!_recipeEditMode),
+                        ),
+                      ],
                     ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 40,
-                          minHeight: 36,
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        Chip(
+                          avatar: const Icon(Icons.shopping_basket_rounded,
+                              size: 16),
+                          label:
+                              Text('${recipe.ingredients.length} ingredients'),
                         ),
-                        tooltip: _ingredientsEditMode
-                            ? 'Done editing ingredients'
-                            : 'Edit ingredients',
-                        icon: Icon(
-                          _ingredientsEditMode
-                              ? Icons.check_rounded
-                              : Icons.edit_outlined,
+                        Chip(
+                          avatar: const Icon(Icons.format_list_numbered_rounded,
+                              size: 16),
+                          label: Text(
+                            recipe.instructions.isEmpty
+                                ? 'No directions'
+                                : '${recipe.instructions.length} steps',
+                          ),
                         ),
-                        onPressed: () {
-                          setState(() {
-                            _ingredientsEditMode = !_ingredientsEditMode;
-                          });
+                        Chip(
+                          avatar:
+                              const Icon(Icons.people_alt_rounded, size: 16),
+                          label: Text('${recipe.servings} servings'),
+                        ),
+                        if (recipe.source == 'instagram_import')
+                          ActionChip(
+                            avatar:
+                                const Icon(Icons.camera_alt_rounded, size: 16),
+                            label: const Text('Instagram'),
+                            side: BorderSide(
+                              color: scheme.error.withValues(alpha: 0.35),
+                            ),
+                            onPressed: _isInstagramSourceUrl(recipe.sourceUrl)
+                                ? () => _openSourcePost(recipe.sourceUrl)
+                                : null,
+                          ),
+                        if (recipe.source == 'web_import')
+                          ActionChip(
+                            avatar:
+                                const Icon(Icons.link_rounded, size: 16),
+                            label: const Text('Recipe page'),
+                            side: BorderSide(
+                              color: scheme.primary.withValues(alpha: 0.35),
+                            ),
+                            onPressed: _isHttpOrHttpsSourceUrl(recipe.sourceUrl)
+                                ? () => _openWebRecipeSource(recipe.sourceUrl)
+                                : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildNutritionSection(context, recipe),
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              'Ingredients',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                          ),
+                        ),
+                        const MeasurementSystemToggle(),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    if (!_recipeEditMode)
+                      ...recipe.ingredients.asMap().entries.map(
+                            (entry) => Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              child: CheckboxListTile(
+                                value: _checkedIngredients.contains(entry.key),
+                                title: Text(
+                                  entry.value.qualitative
+                                      ? '${entry.value.name} · ${entry.value.unit}'
+                                      : '${ingredientDisplayQuantityLabel(entry.value, measurementSystem)} ${entry.value.name}',
+                                ),
+                                onChanged: (_) {
+                                  setState(() {
+                                    if (_checkedIngredients
+                                        .contains(entry.key)) {
+                                      _checkedIngredients.remove(entry.key);
+                                    } else {
+                                      _checkedIngredients.add(entry.key);
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                          )
+                    else ...[
+                      ...recipe.ingredients.asMap().entries.map(
+                            (entry) => RecipeIngredientEditChip(
+                              label: RecipeIngredientEditChip
+                                  .labelForIngredientWithSystem(
+                                entry.value,
+                                measurementSystem,
+                              ),
+                              onTap: () => unawaited(
+                                _editIngredientLine(recipe, entry.key),
+                              ),
+                              onDelete: () => unawaited(
+                                _removeIngredientLine(recipe, entry.key),
+                              ),
+                            ),
+                          ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              unawaited(_addIngredientLine(recipe)),
+                          icon: const Icon(Icons.add_rounded),
+                          label: const Text('Add ingredient'),
+                        ),
+                      ),
+                    ],
+                    if (_showCookingEmbeddedSauceBlock(recipe)) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _sauceSectionHeading(recipe),
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (!_recipeEditMode) ...[
+                        ...() {
+                          final emb = recipe.embeddedSauce!;
+                          final title = emb.title?.trim();
+                          return <Widget>[
+                            Card(
+                              margin: EdgeInsets.zero,
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (title != null && title.isNotEmpty)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 8),
+                                        child: Text(
+                                          title,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                        ),
+                                      ),
+                                    ...emb.ingredients.asMap().entries.map(
+                                          (entry) => Card(
+                                            margin: const EdgeInsets.only(
+                                                bottom: 8),
+                                            child: CheckboxListTile(
+                                              value: _checkedSauceIngredients
+                                                  .contains(entry.key),
+                                              title: Text(
+                                                entry.value.qualitative
+                                                    ? '${entry.value.name} · ${entry.value.unit}'
+                                                    : '${ingredientDisplayQuantityLabel(entry.value, measurementSystem)} ${entry.value.name}',
+                                              ),
+                                              onChanged: (_) {
+                                                setState(() {
+                                                  if (_checkedSauceIngredients
+                                                      .contains(entry.key)) {
+                                                    _checkedSauceIngredients
+                                                        .remove(entry.key);
+                                                  } else {
+                                                    _checkedSauceIngredients
+                                                        .add(entry.key);
+                                                  }
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ];
+                        }(),
+                      ] else ...[
+                        ...() {
+                          final emb = recipe.embeddedSauce!;
+                          final title = emb.title?.trim();
+                          return <Widget>[
+                            if (title != null && title.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(
+                                  title,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ...emb.ingredients.asMap().entries.map(
+                                  (entry) => RecipeIngredientEditChip(
+                                    label: RecipeIngredientEditChip
+                                        .labelForIngredientWithSystem(
+                                      entry.value,
+                                      measurementSystem,
+                                    ),
+                                    onTap: () => unawaited(
+                                      _editSauceIngredientLine(
+                                          recipe, entry.key),
+                                    ),
+                                    onDelete: () => unawaited(
+                                      _removeSauceIngredientLine(
+                                          recipe, entry.key),
+                                    ),
+                                  ),
+                                ),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: () => unawaited(
+                                  _addSauceIngredientLine(recipe),
+                                ),
+                                icon: const Icon(Icons.add_rounded),
+                                label: const Text('Add sauce ingredient'),
+                              ),
+                            ),
+                          ];
+                        }(),
+                      ],
+                    ] else if (recipe.defaultSauceRecipeId != null &&
+                        recipe.defaultSauceRecipeId!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _sauceSectionHeading(recipe),
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Builder(
+                        builder: (context) {
+                          final sid = recipe.defaultSauceRecipeId!.trim();
+                          final sauceRecipe =
+                              recipes.firstWhereOrNull((r) => r.id == sid);
+                          if (sauceRecipe == null) {
+                            return Text(
+                              'Linked sauce recipe is not in your library yet.',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                            );
+                          }
+                          return Card(
+                            margin: EdgeInsets.zero,
+                            child: ListTile(
+                              leading: const Icon(Icons.water_drop_outlined),
+                              title: Text(sauceRecipe.title),
+                              subtitle: Text(
+                                '${sauceRecipe.ingredients.length} ingredients · '
+                                '${sauceRecipe.instructions.length} steps',
+                              ),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () =>
+                                  context.push('/cooking/${sauceRecipe.id}'),
+                            ),
+                          );
                         },
                       ),
-                      const MeasurementSystemToggle(),
                     ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              if (!_ingredientsEditMode)
-                ...recipe.ingredients.asMap().entries.map(
-                      (entry) => Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: CheckboxListTile(
-                          value: _checkedIngredients.contains(entry.key),
-                          title: Text(
-                            entry.value.qualitative
-                                ? '${entry.value.name} · ${entry.value.unit}'
-                                : '${ingredientDisplayQuantityLabel(entry.value, measurementSystem)} ${entry.value.name}',
-                          ),
-                          onChanged: (_) {
-                            setState(() {
-                              if (_checkedIngredients.contains(entry.key)) {
-                                _checkedIngredients.remove(entry.key);
-                              } else {
-                                _checkedIngredients.add(entry.key);
-                              }
-                            });
-                          },
-                        ),
-                      ),
-                    )
-              else ...[
-                ...recipe.ingredients.asMap().entries.map(
-                      (entry) => RecipeIngredientEditChip(
-                        label:
-                            RecipeIngredientEditChip.labelForIngredientWithSystem(
-                          entry.value,
-                          measurementSystem,
-                        ),
-                        onTap: () => unawaited(
-                          _editIngredientLine(recipe, entry.key),
-                        ),
-                        onDelete: () => unawaited(
-                          _removeIngredientLine(recipe, entry.key),
+                    const Divider(),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Directions',
+                          style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
                     ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => unawaited(_addIngredientLine(recipe)),
-                    icon: const Icon(Icons.add_rounded),
-                    label: const Text('Add ingredient'),
-                  ),
-                ),
-              ],
-              const Divider(),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Directions',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 40,
-                      minHeight: 36,
-                    ),
-                    tooltip: _directionsEditMode
-                        ? 'Done editing directions'
-                        : 'Edit directions',
-                    icon: Icon(
-                      _directionsEditMode
-                          ? Icons.check_rounded
-                          : Icons.edit_outlined,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _directionsEditMode = !_directionsEditMode;
-                      });
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              if (!_directionsEditMode) ...[
-                if (recipe.instructions.isEmpty) ...[
-                  Text(
-                    'No directions for this recipe. Tap Edit to add steps, or add them when editing the recipe.',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.tonal(
-                      onPressed: () async {
-                        await showTimePicker(
-                          context: context,
-                          initialTime: TimeOfDay.now(),
-                        );
-                      },
-                      child: const Text('Timer'),
-                    ),
-                  ),
-                ] else ...[
-                  Builder(
-                    builder: (context) {
-                      final instr = recipe.instructions;
-                      final idx = _stepIndex.clamp(0, instr.length - 1);
-                      final stepText = instr[idx];
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'Step ${idx + 1}/${instr.length}',
-                            style: Theme.of(context).textTheme.titleMedium,
+                    const SizedBox(height: 6),
+                    if (_showCookingEmbeddedSauceBlock(recipe)) ...[
+                      SegmentedButton<_CookingDirectionsTab>(
+                        segments: [
+                          const ButtonSegment<_CookingDirectionsTab>(
+                            value: _CookingDirectionsTab.main,
+                            label: Text('Main'),
                           ),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            child: Text(
-                              stepText,
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: idx == 0
-                                      ? null
-                                      : () => setState(() => _stepIndex--),
-                                  child: const Text('Previous'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: FilledButton(
-                                  onPressed: idx >= instr.length - 1
-                                      ? null
-                                      : () => setState(() => _stepIndex++),
-                                  child: const Text('Next Step'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            children: [
-                              FilledButton.tonal(
-                                onPressed: () => _tts.speak(stepText),
-                                child: const Text('Voice'),
-                              ),
-                              FilledButton.tonal(
-                                onPressed: () async {
-                                  await showTimePicker(
-                                    context: context,
-                                    initialTime: TimeOfDay.now(),
-                                  );
-                                },
-                                child: const Text('Timer'),
-                              ),
-                            ],
+                          ButtonSegment<_CookingDirectionsTab>(
+                            value: _CookingDirectionsTab.sauce,
+                            label: Text(_directionsSauceSegmentLabel(recipe)),
                           ),
                         ],
-                      );
-                    },
-                  ),
-                ],
-              ] else ...[
-                if (recipe.instructions.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'No steps yet. Add one below.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                        selected: {_directionsTab},
+                        onSelectionChanged: (next) {
+                          if (next.isEmpty) return;
+                          setState(() => _directionsTab = next.first);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: _recipeEditMode
+                            ? (_directionsTab == _CookingDirectionsTab.main
+                                ? _cookingMainDirectionsEdit(
+                                    context, recipe, scheme)
+                                : _cookingSauceDirectionsEdit(
+                                    context, recipe, scheme))
+                            : (_directionsTab == _CookingDirectionsTab.main
+                                ? _cookingMainDirectionsView(
+                                    context, recipe, scheme)
+                                : _cookingSauceDirectionsView(
+                                    context, recipe, scheme)),
+                      ),
+                    ] else if (!_recipeEditMode) ...[
+                      if (recipe.instructions.isEmpty) ...[
+                        Text(
+                          'No directions for this recipe. Tap the edit button above to add steps, or add them in the full recipe editor.',
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: FilledButton.tonal(
+                            onPressed: () async {
+                              await showTimePicker(
+                                context: context,
+                                initialTime: TimeOfDay.now(),
+                              );
+                            },
+                            child: const Text('Timer'),
                           ),
+                        ),
+                      ] else ...[
+                        _cookingMainDirectionsView(context, recipe, scheme),
+                      ],
+                    ] else ...[
+                      _cookingMainDirectionsEdit(context, recipe, scheme),
+                    ],
+                    ],
                     ),
-                  )
-                else
-                  ...recipe.instructions.asMap().entries.map(
-                        (e) => RecipeDirectionEditChip(
-                          label: RecipeDirectionEditChip.labelForStep(
-                            e.key + 1,
-                            e.value,
-                          ),
-                          onTap: () => unawaited(
-                            _editDirectionLine(recipe, e.key),
-                          ),
-                          onDelete: () => unawaited(
-                            _removeDirectionLine(recipe, e.key),
-                          ),
-                        ),
-                      ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => unawaited(_addDirectionLine(recipe)),
-                    icon: const Icon(Icons.add_rounded),
-                    label: const Text('Add step'),
                   ),
-                ),
-              ],
-            ],
-                ),
-              ),
-              if (_checkedIngredients.isNotEmpty)
-                Material(
-                  elevation: 3,
-                  color: scheme.surfaceContainerLow,
-                  child: SafeArea(
-                    top: false,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      child: FilledButton.icon(
-                        onPressed: () => _addCheckedIngredientsToList(recipe),
-                        icon: const Icon(Icons.playlist_add_rounded),
-                        label: Text(
-                          'Add ${_checkedIngredients.length} item${_checkedIngredients.length == 1 ? '' : 's'} to List',
+                  if (_checkedIngredients.isNotEmpty ||
+                      _checkedSauceIngredients.isNotEmpty)
+                    Material(
+                      elevation: 3,
+                      color: scheme.surfaceContainerLow,
+                      child: SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                _addCheckedIngredientsToList(recipe),
+                            icon: const Icon(Icons.playlist_add_rounded),
+                            label: Text(
+                              'Add ${_checkedIngredients.length + _checkedSauceIngredients.length} item${_checkedIngredients.length + _checkedSauceIngredients.length == 1 ? '' : 's'} to List',
+                            ),
+                          ),
                         ),
                       ),
+                    ),
+                ],
+              ),
+              if (_recipeEditMode)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 12 + editFabLift,
+                  child: Center(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        elevation: 4,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 16,
+                        ),
+                      ),
+                      onPressed: () => _setRecipeEditMode(false),
+                      icon: const Icon(Icons.check_rounded),
+                      label: const Text('Save'),
                     ),
                   ),
                 ),

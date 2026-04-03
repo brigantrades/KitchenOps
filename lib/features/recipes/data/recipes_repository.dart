@@ -125,11 +125,11 @@ class RecipesRepository {
 
         channel!
             .onPostgresChanges(
-              event: PostgresChangeEvent.all,
-              schema: 'public',
-              table: 'recipes',
-              callback: onChange,
-            )
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'recipes',
+          callback: onChange,
+        )
             .subscribe((RealtimeSubscribeStatus status, Object? error) {
           switch (status) {
             case RealtimeSubscribeStatus.subscribed:
@@ -181,8 +181,9 @@ class RecipesRepository {
         .insert({
           ...payload,
           'user_id': userId,
-          'household_id':
-              visibility == RecipeVisibility.household.name ? householdId : null,
+          'household_id': visibility == RecipeVisibility.household.name
+              ? householdId
+              : null,
           'visibility': visibility,
           'is_public': visibility == RecipeVisibility.public.name,
         })
@@ -192,11 +193,16 @@ class RecipesRepository {
   }
 
   Future<void> updateRecipe(String recipeId, Recipe recipe) async {
-    final payload = recipe.toJson()..remove('id')..remove('user_id');
+    final payload = recipe.toJson()
+      ..remove('id')
+      ..remove('user_id');
     payload['is_public'] = recipe.visibility == RecipeVisibility.public;
     // Omit null fields so we do not overwrite DB-only columns (api_id, household_id,
     // image_url, …) with NULL — that caused unique constraint errors on save.
-    payload.removeWhere((_, value) => value == null);
+    // Keep embedded_sauce: null so we can clear the jsonb column when sauce is removed.
+    payload.removeWhere(
+      (key, value) => value == null && key != 'embedded_sauce',
+    );
     final updated = await _client
         .from('recipes')
         .update(payload)
@@ -220,8 +226,48 @@ class RecipesRepository {
         .update({'is_to_try': value}).eq('id', recipeId);
   }
 
-  Future<void> deleteRecipe(String recipeId) {
-    return _client.from('recipes').delete().eq('id', recipeId);
+  Future<void> deleteRecipe(String recipeId) async {
+    final row = await _client
+        .from('recipes')
+        .select('default_sauce_recipe_id')
+        .eq('id', recipeId)
+        .maybeSingle();
+    final sauceId = row?['default_sauce_recipe_id']?.toString();
+    await _client.from('recipes').delete().eq('id', recipeId);
+    if (sauceId != null && sauceId.isNotEmpty) {
+      await _client.from('recipes').delete().eq('id', sauceId);
+    }
+  }
+
+  /// Creates or updates one recipe row. Sauce/icing is stored in [Recipe.embeddedSauce]
+  /// on the main recipe — no separate [MealType.sauce] row.
+  ///
+  /// When [existingDefaultSauceId] is set (legacy linked sauce), that row is deleted
+  /// and the FK cleared on save.
+  Future<String> saveRecipeWithOptionalDefaultSauce({
+    required String userId,
+    required Recipe mainFields,
+    String? existingMainId,
+    String? existingDefaultSauceId,
+    bool shareWithHousehold = false,
+    RecipeVisibility? visibilityOverride,
+  }) async {
+    final toWrite = mainFields.copyWith(clearDefaultSauceRecipeId: true);
+
+    if (existingMainId != null) {
+      if (existingDefaultSauceId != null && existingDefaultSauceId.isNotEmpty) {
+        await _client.from('recipes').delete().eq('id', existingDefaultSauceId);
+      }
+      await updateRecipe(existingMainId, toWrite);
+      return existingMainId;
+    }
+
+    return create(
+      userId,
+      toWrite,
+      shareWithHousehold: shareWithHousehold,
+      visibilityOverride: visibilityOverride,
+    );
   }
 
   Future<void> copyPersonalRecipeToHousehold({
@@ -259,6 +305,40 @@ class RecipesRepository {
       return;
     }
 
+    final sourceSauceId = source['default_sauce_recipe_id']?.toString();
+    String? newSauceId;
+    if (sourceSauceId != null && sourceSauceId.isNotEmpty) {
+      final sauceRow = await _client
+          .from('recipes')
+          .select()
+          .eq('id', sourceSauceId)
+          .eq('user_id', userId)
+          .eq('visibility', RecipeVisibility.personal.name)
+          .maybeSingle();
+      if (sauceRow != null) {
+        final saucePayload = Map<String, dynamic>.from(sauceRow)
+          ..remove('id')
+          ..remove('created_at')
+          ..remove('user_id')
+          ..remove('household_id')
+          ..remove('visibility')
+          ..remove('api_id')
+          ..remove('copied_from_personal_recipe_id')
+          ..remove('default_sauce_recipe_id');
+        final insertedSauce = await _client
+            .from('recipes')
+            .insert({
+              ...saucePayload,
+              'user_id': userId,
+              'household_id': householdId,
+              'visibility': RecipeVisibility.household.name,
+            })
+            .select('id')
+            .single();
+        newSauceId = insertedSauce['id'].toString();
+      }
+    }
+
     final payload = Map<String, dynamic>.from(source)
       ..remove('id')
       ..remove('created_at')
@@ -267,7 +347,8 @@ class RecipesRepository {
       ..remove('visibility')
       // recipes.api_id is globally unique; household copies should not reuse it.
       ..remove('api_id')
-      ..remove('copied_from_personal_recipe_id');
+      ..remove('copied_from_personal_recipe_id')
+      ..remove('default_sauce_recipe_id');
 
     final sourceFavorite = source['is_favorite'] == true;
     final sourceToTry = source['is_to_try'] == true;
@@ -280,6 +361,7 @@ class RecipesRepository {
       'copied_from_personal_recipe_id': recipeId,
       'is_favorite': householdFavorite ?? sourceFavorite,
       'is_to_try': householdToTry ?? sourceToTry,
+      if (newSauceId != null) 'default_sauce_recipe_id': newSauceId,
     });
   }
 
@@ -328,7 +410,7 @@ class RecipesRepository {
         .eq('copied_from_personal_recipe_id', personalRecipeId)
         .maybeSingle();
     if (byLink != null) {
-      await _client.from('recipes').delete().eq('id', byLink['id']);
+      await deleteRecipe(byLink['id'].toString());
       return true;
     }
 
@@ -347,7 +429,7 @@ class RecipesRepository {
         .maybeSingle();
     if (match == null) return false;
     final copyId = match['id'].toString();
-    await _client.from('recipes').delete().eq('id', copyId);
+    await deleteRecipe(copyId);
     return true;
   }
 

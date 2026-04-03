@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plateplan/core/models/app_models.dart';
@@ -94,6 +94,11 @@ class RecipeIngredientFormRow {
 
   bool namePickedFromSuggestions = false;
 
+  bool _disposed = false;
+  // #region agent log
+  StackTrace? _disposeStackTrace;
+  // #endregion
+
   String get name => nameCtrl.text.trim();
 
   String resolvedQualitativePhrase() {
@@ -105,6 +110,24 @@ class RecipeIngredientFormRow {
   }
 
   void dispose() {
+    // #region agent log
+    debugPrint('AGENT_DEBUG_5a73d6 ROW_DISPOSE name=${nameCtrl.text} '
+        'alreadyDisposed=$_disposed reorderId=$reorderId\n'
+        '${StackTrace.current}');
+    // #endregion
+    if (_disposed) return;
+    // #region agent log
+    _disposeStackTrace = StackTrace.current;
+    // #endregion
+    try {
+      nameFocusNode.unfocus();
+      amountFocusNode.unfocus();
+      qualitativeCustomFocusNode.unfocus();
+      customUnitFocusNode.unfocus();
+    } on Object {
+      // Nodes may already be detached; still dispose below.
+    }
+    _disposed = true;
     nameFocusNode.dispose();
     amountFocusNode.dispose();
     qualitativeCustomFocusNode.dispose();
@@ -196,7 +219,11 @@ class RecipeDirectionDraft {
 
   final TextEditingController textCtrl = TextEditingController();
 
+  bool _disposed = false;
+
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     textCtrl.dispose();
   }
 }
@@ -435,19 +462,33 @@ class IngredientCardScrollIntoView extends StatefulWidget {
 }
 
 class _IngredientCardScrollIntoViewState extends State<IngredientCardScrollIntoView> {
+  bool _anyFocusNodeHasFocus() {
+    try {
+      return widget.focusNodes.any((n) => n.hasFocus);
+    } on Object {
+      // [FocusNode.hasFocus] asserts if the node was disposed (e.g. row removed
+      // and deferred disposal races a focus notification).
+      return false;
+    }
+  }
+
   void _onAnyFocusNodeChanged() {
-    if (!widget.focusNodes.any((n) => n.hasFocus)) return;
+    if (!_anyFocusNodeHasFocus()) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!widget.focusNodes.any((n) => n.hasFocus)) return;
-      final ctx = widget.cardKey.currentContext;
-      if (ctx != null) {
-        Scrollable.ensureVisible(
-          ctx,
-          alignment: 0.08,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-        );
+      try {
+        if (!_anyFocusNodeHasFocus()) return;
+        final ctx = widget.cardKey.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(
+            ctx,
+            alignment: 0.08,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      } on Object {
+        // Ignore if focus nodes were disposed after this callback was scheduled.
       }
     });
   }
@@ -551,7 +592,17 @@ Widget buildRecipeIngredientEditorBody(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: Column(
+                child: Builder(builder: (context) {
+                  // #region agent log
+                  if (row._disposed) {
+                    debugPrint(
+                        'AGENT_DEBUG_5a73d6 BUILDING_DISPOSED_ROW '
+                        'name=${row.nameCtrl.text} reorderId=${row.reorderId}\n'
+                        'BUILD_STACK:\n${StackTrace.current}\n'
+                        'DISPOSE_STACK:\n${row._disposeStackTrace}');
+                  }
+                  // #endregion
+                  return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     TextField(
@@ -609,7 +660,8 @@ Widget buildRecipeIngredientEditorBody(
                         ),
                       ),
                   ],
-                ),
+                );
+                }),
               ),
               IconButton(
                 onPressed: () {
@@ -1023,9 +1075,13 @@ Future<ImportIngredientEditorOutcome?> showImportIngredientEditorDialog(
                                 },
                                 onRemovePressed: () {
                                   FocusScope.of(dialogCtx).unfocus();
-                                  Navigator.of(dialogCtx).pop(
-                                    ImportIngredientEditorDeleted(),
-                                  );
+                                  WidgetsBinding.instance
+                                      .addPostFrameCallback((_) {
+                                    if (!dialogCtx.mounted) return;
+                                    Navigator.of(dialogCtx).pop(
+                                      ImportIngredientEditorDeleted(),
+                                    );
+                                  });
                                 },
                                 dialogSetState: setModalState,
                               ),
@@ -1047,14 +1103,21 @@ Future<ImportIngredientEditorOutcome?> showImportIngredientEditorDialog(
                                           ? () {
                                               FocusScope.of(dialogCtx)
                                                   .unfocus();
-                                              Navigator.of(dialogCtx).pop(
-                                                ImportIngredientEditorSaved(
-                                                  ingredientFromFormRow(
-                                                    row,
-                                                    mergeMetadataFrom: initial,
+                                              WidgetsBinding.instance
+                                                  .addPostFrameCallback((_) {
+                                                if (!dialogCtx.mounted) {
+                                                  return;
+                                                }
+                                                Navigator.of(dialogCtx).pop(
+                                                  ImportIngredientEditorSaved(
+                                                    ingredientFromFormRow(
+                                                      row,
+                                                      mergeMetadataFrom:
+                                                          initial,
+                                                    ),
                                                   ),
-                                                ),
-                                              );
+                                                );
+                                              });
                                             }
                                           : null,
                                       child: const Text('Save'),
@@ -1077,7 +1140,14 @@ Future<ImportIngredientEditorOutcome?> showImportIngredientEditorDialog(
     },
   );
 
-  row.dispose();
+  // Defer disposal: same two-frame pattern as recipes_screen ingredient-row disposal
+  // — one frame is not always enough for TextField / gesture state to release
+  // FocusNodes after the dialog unmounts.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      row.dispose();
+    });
+  });
   return outcome;
 }
 
@@ -1208,6 +1278,8 @@ Future<ImportDirectionEditorOutcome?> showImportDirectionStepDialog(
     },
   );
 
-  draft.dispose();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    draft.dispose();
+  });
   return outcome;
 }

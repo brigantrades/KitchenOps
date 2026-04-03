@@ -654,13 +654,21 @@ class _HomeHeader extends StatelessWidget {
       DateTime.sunday => 'Sunday',
       _ => 'Today',
     };
+    final focusForeground = isDark
+        ? AppBrand.offWhite.withValues(alpha: 0.95)
+        : AppBrand.deepTeal;
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         borderRadius: AppRadius.md,
         gradient: isDark
             ? AppBrand.headerGradientDark
-            : AppBrand.headerGradient,
+            : const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppBrand.paleMint, AppBrand.mutedAqua],
+              ),
         boxShadow: AppShadows.soft,
       ),
       child: Column(
@@ -670,13 +678,13 @@ class _HomeHeader extends StatelessWidget {
             children: [
               Icon(
                 Icons.wb_sunny_outlined,
-                color: AppBrand.offWhite.withValues(alpha: 0.95),
+                color: focusForeground,
               ),
               const SizedBox(width: AppSpacing.xs),
               Text(
                 '$weekday Focus',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: AppBrand.offWhite,
+                      color: focusForeground,
                       fontWeight: FontWeight.w800,
                     ),
               ),

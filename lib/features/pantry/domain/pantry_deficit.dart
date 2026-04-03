@@ -83,6 +83,12 @@ class PantryDeficitCalculator {
           for (final ing in recipe.ingredients) {
             addIngredientScaled(ing, scale);
           }
+          final emb = recipe.embeddedSauce;
+          if (emb != null) {
+            for (final ing in emb.ingredients) {
+              addIngredientScaled(ing, scale);
+            }
+          }
         }
       }
       final sideId = slot.sideRecipeId?.trim();
