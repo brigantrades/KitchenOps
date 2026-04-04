@@ -1,5 +1,35 @@
+import 'dart:convert';
+
 import 'package:collection/collection.dart';
 import 'package:plateplan/core/strings/ingredient_amount_display.dart';
+
+/// Parses [recipes.cuisine_tags] from PostgREST / JSON (usually a [List], rarely a
+/// JSON string). Empty list on unknown shapes so Discover matching still works.
+List<String> recipeCuisineTagsFromJson(dynamic value) {
+  if (value == null) return const [];
+  if (value is List) {
+    return value
+        .map((e) => e.toString().trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+  if (value is String) {
+    final s = value.trim();
+    if (s.isEmpty) return const [];
+    if (s.startsWith('[')) {
+      try {
+        final decoded = jsonDecode(s);
+        if (decoded is List) {
+          return decoded
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+        }
+      } catch (_) {}
+    }
+  }
+  return const [];
+}
 
 enum MealType { entree, side, sauce, snack, dessert }
 
@@ -411,10 +441,7 @@ class Recipe {
         prepTime: (json['prep_time'] as num?)?.toInt(),
         cookTime: (json['cook_time'] as num?)?.toInt(),
         mealType: _mealTypeFromDb(json['meal_type']?.toString()),
-        cuisineTags: (json['cuisine_tags'] as List?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            const [],
+        cuisineTags: recipeCuisineTagsFromJson(json['cuisine_tags']),
         ingredients: (json['ingredients'] as List?)
                 ?.whereType<Map<String, dynamic>>()
                 .map(Ingredient.fromJson)

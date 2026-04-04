@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -108,6 +109,59 @@ class DiscoverFilters {
       mealTypes: mealTypes ?? this.mealTypes,
     );
   }
+}
+
+/// True when a recipe should appear under Discover **Breakfast** browse tiles and
+/// breakfast category pages.
+///
+/// Includes all [MealType.entree] rows (importers store breakfast as `entree`).
+/// Also includes non-entree rows that match **any** Breakfast [BrowseCategory]
+/// using the same matcher as tile grids ([discoverRecipeMatchesBrowseCategoryKeywords]),
+/// so pool eligibility never disagrees with a category the recipe actually matches.
+bool recipeEligibleForBreakfastDiscoverCategories(Recipe recipe) {
+  if (recipe.mealType == MealType.entree) return true;
+  for (final cat in kBrowseCategories.where(
+    (c) => c.mealScope == DiscoverMealType.entree,
+  )) {
+    if (discoverRecipeMatchesBrowseCategoryKeywords(
+      title: recipe.title,
+      cuisineTags: recipe.cuisineTags,
+      category: cat,
+    )) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// True when a recipe should appear under Discover **Lunch** browse tiles and
+/// lunch category pages.
+///
+/// Includes all [MealType.side] rows (lunch importers store `meal_type: side`;
+/// see [DiscoverMealType.side]). Also includes non-side rows that match **any**
+/// Lunch [BrowseCategory] via [discoverRecipeMatchesBrowseCategoryKeywords],
+/// so opening a category never shows 0 while the recipe matches that category.
+///
+/// Finally, title/tags containing `lunch` (e.g. importer tag `Lunch`) still
+/// count for pool membership even when no category keyword matches alone.
+bool recipeEligibleForLunchDiscoverCategories(Recipe recipe) {
+  if (recipe.mealType == MealType.side) return true;
+  final lunchHaystack = normalizeDiscoverMatchText(
+    '${recipe.title} ${recipe.cuisineTags.join(' ')}',
+  );
+  if (lunchHaystack.contains('lunch')) return true;
+  for (final cat in kBrowseCategories.where(
+    (c) => c.mealScope == DiscoverMealType.side,
+  )) {
+    if (discoverRecipeMatchesBrowseCategoryKeywords(
+      title: recipe.title,
+      cuisineTags: recipe.cuisineTags,
+      category: cat,
+    )) {
+      return true;
+    }
+  }
+  return false;
 }
 
 extension DiscoverMealTypeX on DiscoverMealType {
@@ -377,6 +431,28 @@ List<DiscoverFilterChip> discoverChipsForMeal(DiscoverMealType meal) {
     case DiscoverMealType.dessert:
       return _dessertChips;
   }
+}
+
+/// Dedupes by recipe id and sorts by [Recipe.createdAt] descending (matches a
+/// single full-table Discover fetch).
+List<Recipe> mergePublicDiscoverRecipes(List<Recipe> a, List<Recipe> b) {
+  final byId = <String, Recipe>{};
+  for (final r in a) {
+    byId[r.id] = r;
+  }
+  for (final r in b) {
+    byId[r.id] = r;
+  }
+  final list = byId.values.toList();
+  list.sort((x, y) {
+    final dx = x.createdAt;
+    final dy = y.createdAt;
+    if (dx == null && dy == null) return 0;
+    if (dx == null) return 1;
+    if (dy == null) return -1;
+    return dy.compareTo(dx);
+  });
+  return list;
 }
 
 class DiscoverRepository {
@@ -695,6 +771,51 @@ class DiscoverRepository {
         .toList();
   }
 
+  /// Loads public recipes whose [Recipe.meal_type] is in [mealTypes], paging
+  /// past PostgREST’s default max-rows cap (often 1000).
+  Future<List<Recipe>> fetchPublicRecipesForDiscoverMealTypes(
+    Set<MealType> mealTypes,
+  ) async {
+    if (mealTypes.isEmpty) return [];
+    final names = mealTypes.map((e) => e.name).toList();
+    const pageSize = 1000;
+    final all = <Recipe>[];
+    var offset = 0;
+    while (true) {
+      final rows = await _client
+          .from('recipes')
+          .select()
+          .eq('visibility', RecipeVisibility.public.name)
+          .inFilter('meal_type', names)
+          .order('created_at', ascending: false)
+          .range(offset, offset + pageSize - 1);
+      final list = (rows as List).whereType<Map<String, dynamic>>().toList();
+      if (list.isEmpty) break;
+      for (final m in list) {
+        all.add(Recipe.fromJson(m));
+      }
+      if (list.length < pageSize) break;
+      offset += pageSize;
+    }
+    return all;
+  }
+
+  /// Loads every public recipe for Discover via two parallel queries (entree vs
+  /// other meal types) so cold loads can show Breakfast data first while the
+  /// rest streams in ([discoverAllPublicRecipesProvider]).
+  Future<List<Recipe>> fetchAllPublicRecipesForDiscover() async {
+    final results = await Future.wait([
+      fetchPublicRecipesForDiscoverMealTypes({MealType.entree}),
+      fetchPublicRecipesForDiscoverMealTypes({
+        MealType.side,
+        MealType.sauce,
+        MealType.snack,
+        MealType.dessert,
+      }),
+    ]);
+    return mergePublicDiscoverRecipes(results[0], results[1]);
+  }
+
   List<Recipe> filterRecipesByChip(
     List<Recipe> recipes,
     DiscoverFilterChip chip,
@@ -1001,18 +1122,44 @@ final discoverPublicRecipesProvider = FutureProvider<List<Recipe>>((ref) async {
   return ref.watch(discoverRepositoryProvider).listPublicRecipesForMeal(meal);
 });
 
+/// Yields [LocalCache.loadDiscoverPublicCatalog] when present, then network
+/// data. On **cold** cache, yields [MealType.entree] rows first (Breakfast-heavy),
+/// then merges in other meal types so the default tab becomes usable quickly.
 final discoverAllPublicRecipesProvider =
-    FutureProvider<List<Recipe>>((ref) async {
+    StreamProvider.autoDispose<List<Recipe>>((ref) async* {
+  final cache = ref.read(localCacheProvider);
+  final cachedRaw = cache.loadDiscoverPublicCatalog();
+  if (cachedRaw.isNotEmpty) {
+    try {
+      yield cachedRaw.map(Recipe.fromJson).toList();
+    } catch (_) {
+      // Stale or incompatible cache — wait for network.
+    }
+  }
   final repository = ref.watch(discoverRepositoryProvider);
-  final rows = await repository._client
-      .from('recipes')
-      .select()
-      .eq('visibility', RecipeVisibility.public.name)
-      .order('created_at', ascending: false);
-  return (rows as List)
-      .whereType<Map<String, dynamic>>()
-      .map(Recipe.fromJson)
-      .toList();
+  if (cachedRaw.isEmpty) {
+    final entreeFirst = await repository.fetchPublicRecipesForDiscoverMealTypes({
+      MealType.entree,
+    });
+    yield entreeFirst;
+    final others = await repository.fetchPublicRecipesForDiscoverMealTypes({
+      MealType.side,
+      MealType.sauce,
+      MealType.snack,
+      MealType.dessert,
+    });
+    final merged = mergePublicDiscoverRecipes(entreeFirst, others);
+    unawaited(
+      cache.saveDiscoverPublicCatalog(merged.map((r) => r.toJson()).toList()),
+    );
+    yield merged;
+  } else {
+    final fresh = await repository.fetchAllPublicRecipesForDiscover();
+    unawaited(
+      cache.saveDiscoverPublicCatalog(fresh.map((r) => r.toJson()).toList()),
+    );
+    yield fresh;
+  }
 });
 
 final discoverFiltersProvider = Provider<DiscoverFilters>((ref) {
@@ -1040,9 +1187,15 @@ final discoverCuisineTilesProvider =
 
     return recipesAsync.whenData((recipes) {
       final mealType = mealTab.recipeMealType;
-      final mealRecipes = recipes
-          .where((r) => r.mealType == mealType)
-          .toList();
+      final mealRecipes = recipes.where((r) {
+        if (mealTab == DiscoverMealType.entree) {
+          return recipeEligibleForBreakfastDiscoverCategories(r);
+        }
+        if (mealTab == DiscoverMealType.side) {
+          return recipeEligibleForLunchDiscoverCategories(r);
+        }
+        return r.mealType == mealType;
+      }).toList();
 
       final candidates = browseCategoriesForMeal(mealTab, activeDiets);
 
@@ -1050,9 +1203,13 @@ final discoverCuisineTilesProvider =
       for (final cat in candidates) {
         var count = 0;
         for (final recipe in mealRecipes) {
-          final haystack =
-              '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
-          if (cat.keywords.any(haystack.contains)) count++;
+          if (discoverRecipeMatchesBrowseCategoryKeywords(
+            title: recipe.title,
+            cuisineTags: recipe.cuisineTags,
+            category: cat,
+          )) {
+            count++;
+          }
         }
         tiles.add(DiscoverCuisineTile(
           id: cat.id,
@@ -1111,7 +1268,6 @@ final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>(
     final filtered = recipes.where((recipe) {
       final haystack =
           '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
-      final isBreakfastMeal = recipe.mealType == MealType.entree;
       final isLazyBreakfast = haystack.contains('breakfast') ||
           haystack.contains('egg') ||
           haystack.contains('overnight oats') ||
@@ -1119,7 +1275,8 @@ final discoverLazyBreakfastRecipesProvider = Provider<AsyncValue<List<Recipe>>>(
           haystack.contains('frittata') ||
           haystack.contains('casserole') ||
           haystack.contains('whole30');
-      return isBreakfastMeal && isLazyBreakfast;
+      return recipeEligibleForBreakfastDiscoverCategories(recipe) &&
+          isLazyBreakfast;
     }).toList();
     if (filtered.isEmpty) return const <Recipe>[];
     final shuffled = [...filtered]..shuffle(Random(shuffleSeed));
@@ -1132,16 +1289,19 @@ final discoverQuickLunchRecipesProvider = Provider<AsyncValue<List<Recipe>>>((re
   final shuffleSeed = ref.watch(discoverLunchFeaturedShuffleSeedProvider);
   return recipesAsync.whenData((recipes) {
     final filtered = recipes.where((recipe) {
+      if (!recipeEligibleForLunchDiscoverCategories(recipe)) return false;
+      // All public lunch ([side]) rows belong in the strip; the old substring
+      // filter hid most imports that only had category tags (e.g. 5-ingredient).
+      if (recipe.mealType == MealType.side) return true;
       final haystack =
           '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
-      final isLunchMeal = recipe.mealType == MealType.side;
       final isQuickLunch = haystack.contains('lunch') ||
           haystack.contains('salad') ||
           haystack.contains('sandwich') ||
           haystack.contains('wrap') ||
           haystack.contains('bento') ||
           haystack.contains('whole30');
-      return isLunchMeal && isQuickLunch;
+      return isQuickLunch;
     }).toList();
     if (filtered.isEmpty) return const <Recipe>[];
     final shuffled = [...filtered]..shuffle(Random(shuffleSeed));

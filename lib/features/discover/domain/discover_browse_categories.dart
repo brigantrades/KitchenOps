@@ -22,6 +22,37 @@ class BrowseCategory {
   final bool hiddenFromBrowse;
 }
 
+/// Normalizes title + tags for Discover keyword substring matching (lowercase,
+/// unicode dashes → ASCII hyphen, NBSP / collapsed whitespace).
+String normalizeDiscoverMatchText(String raw) {
+  var s = raw.toLowerCase();
+  for (final d in const [
+    '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015', '\u2212',
+  ]) {
+    s = s.replaceAll(d, '-');
+  }
+  s = s.replaceAll(RegExp(r'[\s\u00A0]+'), ' ');
+  return s.trim();
+}
+
+/// True if [haystackRaw] contains [keyword] after [normalizeDiscoverMatchText].
+bool discoverKeywordMatchesHaystack(String haystackRaw, String keyword) {
+  if (keyword.isEmpty) return true;
+  final h = normalizeDiscoverMatchText(haystackRaw);
+  final k = normalizeDiscoverMatchText(keyword);
+  return h.contains(k);
+}
+
+/// True if [title] + [cuisineTags] match any [category.keywords].
+bool discoverRecipeMatchesBrowseCategoryKeywords({
+  required String title,
+  required List<String> cuisineTags,
+  required BrowseCategory category,
+}) {
+  final raw = '$title ${cuisineTags.join(' ')}';
+  return category.keywords.any((kw) => discoverKeywordMatchesHaystack(raw, kw));
+}
+
 const _twemoji = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72';
 
 const kBrowseCategories = <BrowseCategory>[
@@ -52,14 +83,14 @@ const kBrowseCategories = <BrowseCategory>[
     label: 'Thai',
     keywords: ['thai', 'pad thai', 'coconut curry', 'lemongrass', 'thai curry', 'thai basil'],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f35b.png',
+    graphicUrl: '$_twemoji/1f336.png',
   ),
   BrowseCategory(
     id: 'dinner-indian',
     label: 'Indian',
     keywords: ['indian', 'tikka', 'masala', 'korma', 'curry', 'dal', 'biryani', 'naan', 'tandoori'],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f9c8.png',
+    graphicUrl: '$_twemoji/1f35b.png',
   ),
   BrowseCategory(
     id: 'dinner-mediterranean',
@@ -97,7 +128,7 @@ const kBrowseCategories = <BrowseCategory>[
       'sangria',
     ],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f377.png',
+    graphicUrl: '$_twemoji/1f958.png',
   ),
   BrowseCategory(
     id: 'dinner-french',
@@ -129,7 +160,7 @@ const kBrowseCategories = <BrowseCategory>[
       'pupusa',
     ],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f32d.png',
+    graphicUrl: '$_twemoji/1f969.png',
   ),
   BrowseCategory(
     id: 'dinner-american',
@@ -143,7 +174,7 @@ const kBrowseCategories = <BrowseCategory>[
     label: 'Southern & Cajun',
     keywords: ['southern', 'cajun', 'gumbo', 'grits', 'biscuit', 'fried', 'jambalaya', 'creole'],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f372.png',
+    graphicUrl: '$_twemoji/1f356.png',
   ),
   BrowseCategory(
     id: 'dinner-instant-pot',
@@ -157,7 +188,7 @@ const kBrowseCategories = <BrowseCategory>[
       'instapot',
     ],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f372.png',
+    graphicUrl: '$_twemoji/26a1.png',
   ),
   BrowseCategory(
     id: 'dinner-crock-pot',
@@ -170,7 +201,7 @@ const kBrowseCategories = <BrowseCategory>[
       'slow-cooker',
     ],
     mealScope: DiscoverMealType.sauce,
-    graphicUrl: '$_twemoji/1f958.png',
+    graphicUrl: '$_twemoji/1f372.png',
   ),
   BrowseCategory(
     id: 'dinner-soups',
@@ -266,13 +297,15 @@ const kBrowseCategories = <BrowseCategory>[
     keywords: [
       '5 ingredients or less',
       'five ingredients or less',
+      '5 ingredients',
+      'five ingredients',
       '5-ingredient',
       'five-ingredient',
       '5 ingredient',
       'five ingredient',
     ],
     mealScope: DiscoverMealType.side,
-    graphicUrl: '$_twemoji/1f4dd.png',
+    graphicUrl: '$_twemoji/1f372.png',
   ),
   BrowseCategory(
     id: 'lunch-school',
@@ -368,7 +401,7 @@ const kBrowseCategories = <BrowseCategory>[
       'pecan',
     ],
     mealScope: DiscoverMealType.snack,
-    graphicUrl: '$_twemoji/1f37d.png',
+    graphicUrl: '$_twemoji/1f9c0.png',
   ),
   BrowseCategory(
     id: 'snack-crowd-favorites',

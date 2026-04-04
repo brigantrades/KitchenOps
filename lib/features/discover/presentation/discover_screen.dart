@@ -145,7 +145,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                               children: [
                                 _sectionTitle(context, featuredSectionTitle),
                                 const SizedBox(height: AppSpacing.xs),
-                                _buildQuickDinnerGrid(featuredRecipesAsync),
+                                _buildQuickDinnerGrid(
+                                  featuredRecipesAsync,
+                                  selectedMeal,
+                                ),
                                 const SizedBox(height: AppSpacing.md),
                                 _sectionTitle(context, 'Explore Cuisines'),
                                 if (activeDietary.isNotEmpty)
@@ -499,14 +502,19 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     );
   }
 
-  Widget _buildQuickDinnerGrid(AsyncValue<List<Recipe>> recipesAsync) {
+  Widget _buildQuickDinnerGrid(
+    AsyncValue<List<Recipe>> recipesAsync,
+    DiscoverMealType mealTab,
+  ) {
     final savedRecipes = ref.watch(recipesProvider).valueOrNull ?? const <Recipe>[];
     final userId = ref.watch(currentUserProvider)?.id;
     return recipesAsync.when(
+      skipLoadingOnReload: true,
       data: (recipes) {
         final quickRecipes = recipes.take(8).toList();
         if (quickRecipes.isEmpty) return const SizedBox.shrink();
         return SizedBox(
+          key: ValueKey(mealTab),
           height: 212,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
@@ -638,6 +646,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     ];
 
     return cuisinesAsync.when(
+      skipLoadingOnReload: true,
       data: (tiles) {
         if (tiles.isEmpty) {
           return Padding(
@@ -1257,6 +1266,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                                 ref
                                     .read(discoverMealTypeProvider.notifier)
                                     .state = draftMeal;
+                                ref
+                                    .read(discoverSelectedMealTypesProvider
+                                        .notifier)
+                                    .state = {draftMeal};
                                 Navigator.pop(context);
                               },
                               child: const Text('Apply Filters'),
@@ -1274,6 +1287,58 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       },
     );
   }
+}
+
+/// Shown on cuisine drill-down when profile-seeded dietary filters hide recipes.
+Widget _discoverCuisineDietaryBanner(
+  BuildContext context,
+  WidgetRef ref,
+  Set<String> activeDietary,
+) {
+  if (activeDietary.isEmpty) return const SizedBox.shrink();
+  String labelFor(String slug) {
+    for (final o in DietaryOption.values) {
+      if (o.slug == slug) return o.label;
+    }
+    return slug;
+  }
+
+  final labels = activeDietary.map(labelFor).join(', ');
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppBrand.mutedAqua.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.filter_alt_outlined,
+                size: 18, color: AppBrand.deepTeal.withValues(alpha: 0.9)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Discover is filtered for $labels. Recipes that don\'t match are hidden.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppBrand.deepTeal,
+                      height: 1.35,
+                    ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => ref
+                  .read(discoverSelectedDietaryTagsProvider.notifier)
+                  .clearAll(),
+              child: const Text('Clear'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _DiscoverCuisineRecipesPage extends ConsumerWidget {
@@ -1294,6 +1359,7 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final recipesAsync = ref.watch(discoverDietaryFilteredPublicRecipesProvider);
+    final activeDietary = ref.watch(discoverSelectedDietaryTagsProvider);
     return Scaffold(
       body: DecoratedBox(
         decoration: const BoxDecoration(
@@ -1347,6 +1413,7 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                   ],
                 ),
               ),
+              _discoverCuisineDietaryBanner(context, ref, activeDietary),
               Expanded(
                 child: Container(
                   width: double.infinity,
@@ -1366,11 +1433,24 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
                       final selectedRecipeMealTypes = selectedMealTypes
                           .map((meal) => meal.recipeMealType)
                           .toSet();
+                      // Breakfast/lunch categories: [_matchesCuisine] already uses
+                      // the same keywords as tiles. Do not second-gate with
+                      // [recipeEligibleFor*] or recipes that match the tile can
+                      // still be hidden here (pool vs detail drift).
                       final filtered = recipes
                           .where((recipe) => _matchesCuisine(recipe, cuisineId))
                           .where(
-                            (recipe) => selectedRecipeMealTypes.isEmpty ||
-                                selectedRecipeMealTypes.contains(recipe.mealType),
+                            (recipe) {
+                              if (selectedRecipeMealTypes.isEmpty) {
+                                return true;
+                              }
+                              if (cuisineId.startsWith('breakfast-') ||
+                                  cuisineId.startsWith('lunch-')) {
+                                return true;
+                              }
+                              return selectedRecipeMealTypes
+                                  .contains(recipe.mealType);
+                            },
                           )
                           .toList();
                       if (filtered.isEmpty) {
@@ -1474,9 +1554,11 @@ class _DiscoverCuisineRecipesPage extends ConsumerWidget {
 bool _matchesCuisine(Recipe recipe, String cuisineId) {
   final category = browseCategoryById(cuisineId);
   if (category == null) return false;
-  final haystack =
-      '${recipe.title} ${recipe.cuisineTags.join(' ')}'.toLowerCase();
-  return category.keywords.any(haystack.contains);
+  return discoverRecipeMatchesBrowseCategoryKeywords(
+    title: recipe.title,
+    cuisineTags: recipe.cuisineTags,
+    category: category,
+  );
 }
 
 bool _savedRecipeMatchesDiscover(Recipe discoverRecipe, Recipe saved) {
@@ -1847,7 +1929,7 @@ class _DiscoverRecipeDetailPageState
         );
       case _DiscoverDetailSection.nutritionalInfo:
         return SectionCard(
-          title: 'Nutritional Info',
+          title: 'Nutrition',
           child: _nutritionGrid(context, recipe),
         );
     }
@@ -2011,7 +2093,7 @@ class _DiscoverRecipeDetailPageState
 enum _DiscoverDetailSection {
   ingredients('Ingredients'),
   directions('Directions'),
-  nutritionalInfo('Nutritional Info');
+  nutritionalInfo('Nutrition');
 
   const _DiscoverDetailSection(this.label);
   final String label;

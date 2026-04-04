@@ -295,4 +295,185 @@ void main() {
       );
     });
   });
+
+  group('supplementWebImportJsonWithEmbeddedSauceFromPlainText', () {
+    test('splits #### Orange Sauce from #### Air Fryer Tofu blog layout', () {
+      const plain = '''
+### Ingredients
+
+#### Air Fryer Tofu:
+
+* 1 block tofu
+* 1 tsp salt
+
+#### Orange Sauce:
+
+* 1/4 cup water
+* 1 tbsp orange juice
+
+### Instructions
+
+#### Orange Sauce
+
+* Boil and thicken the sauce.
+
+#### Air Fryer Tofu
+
+* Air fry tofu until crisp.
+''';
+      final base = {
+        'title': 'Orange Tofu',
+        'ingredients': [
+          {'name': 'merged', 'amount': '1', 'unit': 'item'},
+        ],
+        'instructions': ['Do everything'],
+      };
+      final out =
+          supplementWebImportJsonWithEmbeddedSauceFromPlainText(base, plain);
+      final recipe = recipeFromInstagramGeminiMap(
+        out,
+        source: 'web_import',
+      );
+      expect(recipe.embeddedSauce, isNotNull);
+      expect(
+        recipe.embeddedSauce!.ingredients.length,
+        greaterThanOrEqualTo(2),
+      );
+      expect(recipe.embeddedSauce!.instructions, isNotEmpty);
+      expect(recipe.ingredients.length, greaterThanOrEqualTo(2));
+      expect(
+        recipe.ingredients.any((i) => i.name.toLowerCase().contains('tofu')),
+        isTrue,
+      );
+      expect(
+        recipe.ingredients.every(
+          (i) => !i.name.toLowerCase().contains('orange juice'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('splits WP-style plain Ingredients / For the … headings (no #)', () {
+      const plain = '''
+Ingredients
+
+For the air fryer tofu
+
+1 block firm tofu
+1 tsp salt
+
+For the orange sauce
+
+1/4 cup water
+1 tbsp orange juice concentrate
+
+Instructions
+
+For the orange sauce
+
+Boil and thicken the sauce.
+
+For the air fryer tofu
+
+Air fry tofu until crisp.
+''';
+      final base = {
+        'title': 'Orange Tofu',
+        'ingredients': [
+          {'name': 'merged', 'amount': '1', 'unit': 'item'},
+        ],
+        'instructions': ['Do everything'],
+      };
+      final out =
+          supplementWebImportJsonWithEmbeddedSauceFromPlainText(base, plain);
+      final recipe = recipeFromInstagramGeminiMap(
+        out,
+        source: 'web_import',
+      );
+      expect(recipe.embeddedSauce, isNotNull);
+      expect(
+        recipe.embeddedSauce!.ingredients.length,
+        greaterThanOrEqualTo(2),
+      );
+      expect(recipe.embeddedSauce!.instructions, isNotEmpty);
+      expect(recipe.ingredients.length, greaterThanOrEqualTo(2));
+      expect(
+        recipe.ingredients.any((i) => i.name.toLowerCase().contains('tofu')),
+        isTrue,
+      );
+      expect(
+        recipe.ingredients.every(
+          (i) => !i.name.toLowerCase().contains('orange juice'),
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('recipeFromInstagramGeminiMap embedded_sauce', () {
+    test('parses embedded_sauce ingredients and instructions', () {
+      final r = recipeFromInstagramGeminiMap(
+        {
+          'title': 'Fish',
+          'ingredients': [
+            {'name': 'fish', 'amount': '1', 'unit': 'lb'},
+          ],
+          'instructions': ['Bake fish'],
+          'embedded_sauce': {
+            'title': 'Lemon butter',
+            'ingredients': [
+              {'name': 'butter', 'amount': '2', 'unit': 'tbsp'},
+            ],
+            'instructions': ['Melt and drizzle'],
+          },
+        },
+        source: 'web_import',
+      );
+      expect(r.embeddedSauce, isNotNull);
+      expect(r.embeddedSauce!.title, 'Lemon butter');
+      expect(r.embeddedSauce!.ingredients, hasLength(1));
+      expect(
+        r.embeddedSauce!.ingredients.first.name.toLowerCase(),
+        contains('butter'),
+      );
+      expect(r.embeddedSauce!.instructions, ['Melt and drizzle']);
+    });
+
+    test('omitted embedded_sauce yields null', () {
+      final r = recipeFromInstagramGeminiMap(
+        {
+          'title': 'Plain',
+          'ingredients': [
+            {'name': 'flour', 'amount': '1', 'unit': 'cup'},
+          ],
+          'instructions': ['Mix'],
+        },
+        source: 'web_import',
+      );
+      expect(r.embeddedSauce, isNull);
+    });
+
+    test('accepts sauce as alias key', () {
+      final r = recipeFromInstagramGeminiMap(
+        {
+          'title': 'Pasta',
+          'ingredients': [],
+          'instructions': [],
+          'sauce': {
+            'ingredients': [
+              {'name': 'cream', 'amount': '1', 'unit': 'cup'},
+            ],
+            'instructions': [],
+          },
+        },
+        source: 'web_import',
+      );
+      expect(r.embeddedSauce, isNotNull);
+      expect(r.embeddedSauce!.ingredients, hasLength(1));
+      expect(
+        r.embeddedSauce!.ingredients.first.name.toLowerCase(),
+        contains('cream'),
+      );
+    });
+  });
 }

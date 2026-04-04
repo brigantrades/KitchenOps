@@ -98,92 +98,84 @@ class _HomeThreeDayOutlook extends ConsumerWidget {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         data: (slots) {
-          return recipesAsync.when(
-            skipLoadingOnReload: true,
-            loading: () => const SizedBox(
-              height: _loadingMinHeight,
-              child: Center(child: CircularProgressIndicator()),
-            ),
-            error: (e, _) => Text(
-              'Could not load recipes: $e',
+          if (recipesAsync.hasError) {
+            return Text(
+              'Could not load recipes: ${recipesAsync.error}',
               style: Theme.of(context).textTheme.bodySmall,
-            ),
-            data: (recipes) {
-              final members =
-                  ref.watch(householdMembersProvider).valueOrNull ?? const [];
-              final activeMembers = members
-                  .where((m) => m.status == HouseholdMemberStatus.active)
-                  .toList();
-              final showMemberAssignment =
-                  ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < dates.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 12),
-                    HomeOutlookDayCard(
+            );
+          }
+          final recipes = recipesAsync.valueOrNull ?? const <Recipe>[];
+          final members =
+              ref.watch(householdMembersProvider).valueOrNull ?? const [];
+          final activeMembers = members
+              .where((m) => m.status == HouseholdMemberStatus.active)
+              .toList();
+          final showMemberAssignment =
+              ref.watch(hasSharedHouseholdProvider).valueOrNull ?? false;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < dates.length; i++) ...[
+                if (i > 0) const SizedBox(height: 12),
+                HomeOutlookDayCard(
+                  date: dates[i],
+                  outlookIndex: i,
+                  daySlots: dedupeMealPlanSlotsByIdPreferPlanned(
+                    slots
+                        .where((s) =>
+                            plannerDateOnly(calendarDateForSlot(s)) ==
+                            plannerDateOnly(dates[i]))
+                        .sorted(
+                            (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                        .toList(),
+                  ),
+                  recipes: recipes,
+                  onTap: () {
+                    final daySlots = dedupeMealPlanSlotsByIdPreferPlanned(
+                      slots
+                          .where((s) =>
+                              plannerDateOnly(calendarDateForSlot(s)) ==
+                              plannerDateOnly(dates[i]))
+                          .sorted(
+                              (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                          .toList(),
+                    );
+                    showHomeOutlookDayDetailSheet(
+                      context: context,
+                      ref: ref,
                       date: dates[i],
-                      outlookIndex: i,
-                      daySlots: dedupeMealPlanSlotsByIdPreferPlanned(
-                        slots
-                            .where((s) =>
-                                plannerDateOnly(calendarDateForSlot(s)) ==
-                                plannerDateOnly(dates[i]))
-                            .sorted(
-                                (a, b) => a.slotOrder.compareTo(b.slotOrder))
-                            .toList(),
-                      ),
+                      daySlots: daySlots,
                       recipes: recipes,
-                      onTap: () {
-                        final daySlots = dedupeMealPlanSlotsByIdPreferPlanned(
-                          slots
-                              .where((s) =>
-                                  plannerDateOnly(calendarDateForSlot(s)) ==
-                                  plannerDateOnly(dates[i]))
-                              .sorted(
-                                  (a, b) =>
-                                      a.slotOrder.compareTo(b.slotOrder))
-                              .toList(),
-                        );
-                        showHomeOutlookDayDetailSheet(
-                          context: context,
-                          ref: ref,
-                          date: dates[i],
-                          daySlots: daySlots,
-                          recipes: recipes,
-                        );
-                      },
-                      onPlanEmptySlot: (slot) {
-                        final user = ref.read(currentUserProvider);
-                        if (user == null) return;
-                        final daySlots = dedupeMealPlanSlotsByIdPreferPlanned(
-                          slots
-                              .where((s) =>
-                                  plannerDateOnly(calendarDateForSlot(s)) ==
-                                  plannerDateOnly(dates[i]))
-                              .sorted(
-                                  (a, b) =>
-                                      a.slotOrder.compareTo(b.slotOrder))
-                              .toList(),
-                        );
-                        unawaited(
-                          openSlotMealPlanEditorFromHome(
-                            context,
-                            ref,
-                            slot: slot,
-                            daySlots: daySlots,
-                            recipes: recipes,
-                            activeMembers: activeMembers,
-                            currentUserId: user.id,
-                            showMemberAssignment: showMemberAssignment,
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ],
-              );
-            },
+                    );
+                  },
+                  onPlanEmptySlot: (slot) {
+                    final user = ref.read(currentUserProvider);
+                    if (user == null) return;
+                    final daySlots = dedupeMealPlanSlotsByIdPreferPlanned(
+                      slots
+                          .where((s) =>
+                              plannerDateOnly(calendarDateForSlot(s)) ==
+                              plannerDateOnly(dates[i]))
+                          .sorted(
+                              (a, b) => a.slotOrder.compareTo(b.slotOrder))
+                          .toList(),
+                    );
+                    unawaited(
+                      openSlotMealPlanEditorFromHome(
+                        context,
+                        ref,
+                        slot: slot,
+                        daySlots: daySlots,
+                        recipes: recipes,
+                        activeMembers: activeMembers,
+                        currentUserId: user.id,
+                        showMemberAssignment: showMemberAssignment,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ],
           );
         },
       ),

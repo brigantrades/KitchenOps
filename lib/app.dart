@@ -15,6 +15,7 @@ import 'package:plateplan/features/auth/data/auth_providers.dart';
 import 'package:plateplan/features/grocery/data/grocery_repository.dart';
 import 'package:plateplan/core/planner_week_mapping.dart';
 import 'package:plateplan/features/planner/data/planner_repository.dart';
+import 'package:plateplan/features/discover/data/discover_repository.dart';
 import 'package:plateplan/features/recipes/data/recipes_repository.dart';
 import 'package:plateplan/core/recipes/recipe_import_reparse_kind.dart';
 import 'package:plateplan/features/recipes/presentation/import_recipe_preview_screen.dart';
@@ -96,6 +97,8 @@ class _LeckerlyAppState extends ConsumerState<LeckerlyApp>
     ref.listen<User?>(currentUserProvider, (prev, next) {
       if (prev == null && next != null) {
         ref.read(shareImportNotifierProvider.notifier).flushPendingAfterLogin();
+        unawaited(ref.read(listsProvider.future));
+        unawaited(ref.read(discoverAllPublicRecipesProvider.future));
       }
       if (Env.firebaseEnabled) {
         if (prev != null && next == null) {

@@ -9,6 +9,7 @@ class LocalCache {
   static const _groceryBox = 'grocery_cache';
   static const _groceryRecentsKey = 'grocery_recents';
   static const _discoverBox = 'discover_cache';
+  static const _discoverPublicCatalogKey = 'discover_public_catalog_json';
   static const _homePinnedListIdKey = 'home_pinned_list_id';
   static const _householdCtaHiddenUntilKey = 'home_household_cta_hidden_until';
   static const _plannerLayoutModeKey = 'planner_layout_mode';
@@ -80,6 +81,21 @@ class LocalCache {
     if (raw == null || raw.isEmpty) return null;
     final decoded = jsonDecode(raw);
     return decoded is Map<String, dynamic> ? decoded : null;
+  }
+
+  /// Full public Discover catalog from [DiscoverRepository.fetchAllPublicRecipesForDiscover].
+  Future<void> saveDiscoverPublicCatalog(List<Map<String, dynamic>> recipes) async {
+    final box = Hive.box<String>(_discoverBox);
+    await box.put(_discoverPublicCatalogKey, jsonEncode(recipes));
+  }
+
+  List<Map<String, dynamic>> loadDiscoverPublicCatalog() {
+    final box = Hive.box<String>(_discoverBox);
+    final raw = box.get(_discoverPublicCatalogKey);
+    if (raw == null || raw.isEmpty) return [];
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return [];
+    return decoded.whereType<Map<String, dynamic>>().toList();
   }
 
   Future<void> saveHomePinnedListId(String? listId) async {

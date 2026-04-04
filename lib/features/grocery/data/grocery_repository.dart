@@ -922,6 +922,14 @@ class GroceryRepository {
       var sawSubscribedOnce = false;
 
       Future<void> setup() async {
+        final cachedRaw = _cache.loadGrocery();
+        if (cachedRaw.isNotEmpty && !multi.isClosed) {
+          try {
+            multi.add(cachedRaw.map(GroceryItem.fromJson).toList());
+          } catch (_) {
+            // Stale or incompatible cache — wait for network.
+          }
+        }
         await pushFresh();
         if (multi.isClosed) return;
         channel = _client.channel(topic);

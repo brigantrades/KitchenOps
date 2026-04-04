@@ -3,6 +3,21 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+/// Imports public Breakfast (meal_type entree) recipes from Food.com ideas
+/// pages — aligns with Discover "Burritos & Sandwiches" (`breakfast-savory`).
+///
+/// Sources:
+/// - https://www.food.com/ideas/breakfast-sandwiches-6529
+/// - https://www.food.com/ideas/breakfast-burrito-recipes-7094
+///
+/// Hub pages embed extra `/recipe/` links; JSON-LD is filtered to handheld
+/// breakfast sandwiches, burritos, wraps, etc.
+///
+/// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SEED_USER_ID
+/// Args: [--execute] [--limit=N]  (default limit 72 — ~28 + ~44 hub items)
+///
+/// Dry run writes tmp/foodcom_breakfast_burritos_sandwiches_review.csv.
+
 class ReviewRow {
   const ReviewRow({
     required this.url,
@@ -17,12 +32,38 @@ class ReviewRow {
   final List<String> warnings;
 }
 
+const _ideasPageUrls = <String>[
+  'https://www.food.com/ideas/breakfast-sandwiches-6529',
+  'https://www.food.com/ideas/breakfast-burrito-recipes-7094',
+];
+
+/// Subset aligned with discover_repository meat/fish checks for vegetarian tagging.
+const _meatKeywords = <String>[
+  'chicken', 'beef', 'pork', 'lamb', 'turkey', 'duck', 'veal', 'venison',
+  'bison', 'bacon', 'sausage', 'ham', 'prosciutto', 'salami', 'pepperoni',
+  'chorizo', 'steak', 'ground meat', 'meatball', 'ribs', 'roast',
+  'braised', 'pulled pork', 'ground turkey', 'ground beef', 'lox',
+  'nova lox', 'belly lox', 'smoked salmon', 'pastrami',
+  'brisket', 'andouille', 'kielbasa',
+];
+
+const _fishKeywords = <String>[
+  'salmon', 'tuna', 'shrimp', 'prawn', 'cod', 'tilapia', 'halibut', 'trout',
+  'bass', 'anchovy', 'sardine', 'crab', 'lobster', 'scallop', 'mussel',
+  'clam', 'oyster', 'squid', 'calamari', 'seafood', 'mahi', 'swordfish',
+];
+
+const _dairyEggKeywords = <String>[
+  'egg', 'cheese', 'butter', 'cream', 'milk', 'yogurt', 'whey',
+  'crème', 'creme fraiche', 'sour cream', 'mayo', 'mayonnaise',
+];
+
 Future<void> main(List<String> args) async {
   final supabaseUrl = _env('SUPABASE_URL');
   final serviceRole = _env('SUPABASE_SERVICE_ROLE_KEY');
   final seedUserId = _env('SEED_USER_ID');
   final execute = args.contains('--execute');
-  final limit = _parseLimit(args) ?? 10;
+  final limit = _parseLimit(args) ?? 72;
 
   if (supabaseUrl == null || serviceRole == null || seedUserId == null) {
     stderr.writeln(
@@ -37,8 +78,22 @@ Future<void> main(List<String> args) async {
   try {
     var success = 0;
     var failed = 0;
+    var skipped = 0;
 
-    final urls = await _discoverMexicanRecipeUrls(client, limit: limit);
+    Set<String> existingTitles;
+    try {
+      existingTitles = await _fetchExistingPublicTitles(
+        client: client,
+        supabaseUrl: supabaseUrl,
+        serviceRole: serviceRole,
+      );
+      stdout.writeln('Existing public catalog titles loaded: ${existingTitles.length}');
+    } catch (e) {
+      stderr.writeln('Warning: could not prefetch public titles: $e');
+      existingTitles = <String>{};
+    }
+
+    final urls = await _discoverBurritoSandwichUrls(client, limit: limit);
     stdout.writeln('Import target count: ${urls.length}');
 
     for (final url in urls) {
@@ -54,6 +109,22 @@ Future<void> main(List<String> args) async {
         );
 
         _validatePayload(payload);
+        final titleNorm = _normalizeTitle(payload['title']?.toString() ?? '');
+        if (existingTitles.contains(titleNorm)) {
+          warnings.add('duplicate_title_skip');
+          skipped += 1;
+          stdout.writeln('Skip (duplicate title): ${payload['title']}');
+          reviewRows.add(
+            ReviewRow(
+              url: url,
+              title: payload['title']?.toString() ?? '',
+              apiId: payload['api_id']?.toString() ?? '',
+              warnings: warnings,
+            ),
+          );
+          continue;
+        }
+
         stdout.writeln('Parsed: ${payload['title']}');
         reviewRows.add(
           ReviewRow(
@@ -73,10 +144,13 @@ Future<void> main(List<String> args) async {
           );
           if (ok) {
             success += 1;
+            existingTitles.add(titleNorm);
             stdout.writeln('Upserted successfully.');
           } else {
             failed += 1;
           }
+        } else {
+          existingTitles.add(titleNorm);
         }
       } catch (error) {
         failed += 1;
@@ -99,10 +173,53 @@ Future<void> main(List<String> args) async {
         'Dry run complete. Re-run with --execute to import recipes.',
       );
     }
-    stdout.writeln('Success: $success, Failed: $failed');
+    stdout.writeln('Success: $success, Skipped: $skipped, Failed: $failed');
   } finally {
     client.close();
   }
+}
+
+String _normalizeTitle(String title) => title.trim().toLowerCase();
+
+Future<Set<String>> _fetchExistingPublicTitles({
+  required http.Client client,
+  required String supabaseUrl,
+  required String serviceRole,
+}) async {
+  final out = <String>{};
+  var offset = 0;
+  const page = 1000;
+  while (true) {
+    final uri = Uri.parse('$supabaseUrl/rest/v1/recipes').replace(
+      queryParameters: <String, String>{
+        'select': 'title',
+        'visibility': 'eq.public',
+      },
+    );
+    final response = await client.get(
+      uri,
+      headers: <String, String>{
+        'apikey': serviceRole,
+        'Authorization': 'Bearer $serviceRole',
+        'Range': '$offset-${offset + page - 1}',
+      },
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Title fetch failed (${response.statusCode}): ${response.body}',
+      );
+    }
+    final rows = jsonDecode(response.body) as List<dynamic>;
+    for (final row in rows) {
+      if (row is Map<String, dynamic>) {
+        final t = row['title']?.toString() ?? '';
+        if (t.isNotEmpty) out.add(_normalizeTitle(t));
+      }
+    }
+    if (rows.length < page) break;
+    offset += page;
+  }
+  return out;
 }
 
 int? _parseLimit(List<String> args) {
@@ -117,37 +234,56 @@ int? _parseLimit(List<String> args) {
   return null;
 }
 
-Future<List<String>> _discoverMexicanRecipeUrls(
+Future<List<String>> _discoverBurritoSandwichUrls(
   http.Client client, {
   required int limit,
 }) async {
-  final discovered = <String>{};
-  final pages = <String>[
-    'https://www.food.com/search/mexican',
-    'https://www.food.com/search/mexican?pn=2',
-    // Regional hub: use bin/import_discover_foodcom_dinner_mexican_regional.dart
-  ];
+  final mergedOrder = <String>[];
+  final seenUrls = <String>{};
+  for (final hub in _ideasPageUrls) {
+    final response = await client.get(Uri.parse(hub));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Ideas page fetch failed (${response.statusCode}) for $hub',
+      );
+    }
+    for (final u in _extractFoodComRecipeUrlsInDocumentOrder(response.body)) {
+      if (seenUrls.add(u)) mergedOrder.add(u);
+    }
+  }
 
-  for (final pageUrl in pages) {
+  final reviewed = <String>{};
+  final seenRecipeKeys = <String>{};
+  final discovered = <String>[];
+
+  for (final candidate in mergedOrder) {
+    if (discovered.length >= limit) break;
+    if (reviewed.contains(candidate)) continue;
+    reviewed.add(candidate);
+    final key = _recipeIdFromUrl(candidate) ?? candidate;
+    if (seenRecipeKeys.contains(key)) continue;
     try {
-      final response = await client.get(Uri.parse(pageUrl));
-      if (response.statusCode < 200 || response.statusCode >= 300) continue;
-      final urls = _extractFoodComRecipeUrls(response.body);
-      discovered.addAll(urls);
-      if (discovered.length >= limit) break;
+      final jsonLd = await _fetchRecipeJsonLd(client, candidate);
+      if (!_isLikelyBurritoSandwichRecipe(jsonLd)) continue;
+      discovered.add(candidate);
+      seenRecipeKeys.add(key);
     } catch (_) {
       continue;
     }
   }
 
   if (discovered.isEmpty) {
-    throw Exception('No Food.com recipe URLs discovered.');
+    throw Exception(
+      'No Food.com recipe URLs discovered. The ideas pages may require '
+      'different scraping or a manual URL list.',
+    );
   }
-  return discovered.take(limit).toList();
+  return discovered;
 }
 
-Set<String> _extractFoodComRecipeUrls(String html) {
-  final urls = <String>{};
+/// First occurrence order (hub main list before footer “related” when DOM allows).
+List<String> _extractFoodComRecipeUrlsInDocumentOrder(String html) {
+  final hits = <MapEntry<int, String>>[];
   final abs = RegExp(
     r'https://www\.food\.com/recipe/[a-z0-9\-]+',
     caseSensitive: false,
@@ -155,7 +291,7 @@ Set<String> _extractFoodComRecipeUrls(String html) {
   for (final m in abs.allMatches(html)) {
     final raw = m.group(0)?.trim();
     if (raw == null || raw.isEmpty) continue;
-    urls.add(raw.toLowerCase());
+    hits.add(MapEntry(m.start, raw.toLowerCase()));
   }
   final rel = RegExp(
     r'href="(/recipe/[a-z0-9\-]+)"',
@@ -164,9 +300,15 @@ Set<String> _extractFoodComRecipeUrls(String html) {
   for (final m in rel.allMatches(html)) {
     final path = m.group(1)?.trim();
     if (path == null || path.isEmpty) continue;
-    urls.add('https://www.food.com$path'.toLowerCase());
+    hits.add(MapEntry(m.start, 'https://www.food.com$path'.toLowerCase()));
   }
-  return urls;
+  hits.sort((a, b) => a.key.compareTo(b.key));
+  final out = <String>[];
+  final seen = <String>{};
+  for (final e in hits) {
+    if (seen.add(e.value)) out.add(e.value);
+  }
+  return out;
 }
 
 Future<Map<String, dynamic>> _fetchRecipeJsonLd(
@@ -221,6 +363,108 @@ Map<String, dynamic>? _findRecipeNode(dynamic node) {
   return null;
 }
 
+/// Ideas pages include unrelated `/recipe/` links; keep handheld breakfast items.
+bool _isLikelyBurritoSandwichRecipe(Map<String, dynamic> jsonLd) {
+  final title = (jsonLd['name']?.toString() ?? '').toLowerCase();
+  final desc = (jsonLd['description']?.toString() ?? '').toLowerCase();
+  final keywords = (jsonLd['keywords']?.toString() ?? '').toLowerCase();
+  final cat = (jsonLd['recipeCategory']?.toString() ?? '').toLowerCase();
+  final haystack = '$title $desc $keywords $cat';
+
+  if (haystack.contains('smoothie')) return false;
+
+  if (title.contains('monte cristo')) return true;
+  if (haystack.contains('croque')) return true;
+  if (RegExp(r'breakfast\s+basket').hasMatch(haystack)) return true;
+
+  final hasHandheld = haystack.contains('burrito') ||
+      haystack.contains('sandwich') ||
+      haystack.contains('panini') ||
+      haystack.contains('stromboli') ||
+      RegExp(r'\bwrap\b').hasMatch(haystack) ||
+      haystack.contains('melt') ||
+      haystack.contains('melts') ||
+      haystack.contains('chimichanga') ||
+      haystack.contains('mcmuffin') ||
+      haystack.contains('mc muffin') ||
+      haystack.contains('applewich') ||
+      (haystack.contains('grilled cheese') &&
+          (haystack.contains('breakfast') ||
+              haystack.contains('egg') ||
+              title.contains('breakfast')));
+
+  if (!hasHandheld) return false;
+
+  if (haystack.contains('casserole') &&
+      !haystack.contains('sandwich') &&
+      !haystack.contains('burrito') &&
+      !RegExp(r'\bwrap\b').hasMatch(haystack) &&
+      !haystack.contains('panini')) {
+    return false;
+  }
+
+  return true;
+}
+
+/// Tags tuned for [kBrowseCategories] `breakfast-savory` plus dietary filters.
+List<String> _buildCuisineTags({
+  required Map<String, dynamic> jsonLd,
+  required List<Map<String, dynamic>> ingredients,
+  required String title,
+}) {
+  final tags = <String>{
+    'Breakfast',
+  };
+
+  final t = title.toLowerCase();
+  final desc = (jsonLd['description']?.toString() ?? '').toLowerCase();
+  final cuisine = (jsonLd['recipeCuisine']?.toString() ?? '').toLowerCase();
+  final keywords = (jsonLd['keywords']?.toString() ?? '').toLowerCase();
+  final ingHaystack = ingredients
+      .map((m) => m['name']?.toString() ?? '')
+      .join(' ')
+      .toLowerCase();
+  final haystack = '$t $desc $cuisine $keywords $ingHaystack';
+
+  if (RegExp(r'\bburrito\b').hasMatch(haystack)) {
+    tags.add('burrito');
+    tags.add('breakfast burrito');
+  }
+  if (RegExp(r'\bsandwich\b').hasMatch(haystack) || t.contains('sandwich')) {
+    tags.add('sandwich');
+    tags.add('breakfast sandwich');
+  }
+  if (t.contains('monte cristo')) {
+    tags.add('sandwich');
+    tags.add('breakfast sandwich');
+  }
+  if (RegExp(r'\bwrap\b').hasMatch(haystack)) tags.add('wrap');
+  if (haystack.contains('panini')) tags.add('panini');
+  if (haystack.contains('melt') || haystack.contains('melts')) tags.add('melt');
+  if (haystack.contains('stromboli')) tags.add('stromboli');
+  if (haystack.contains('chimichanga')) tags.add('chimichanga');
+  if (haystack.contains('croque')) tags.add('croque');
+  if (RegExp(r'breakfast\s+basket').hasMatch(haystack)) {
+    tags.add('sandwich');
+    tags.add('breakfast sandwich');
+  }
+
+  final hasMeat = _meatKeywords.any(haystack.contains);
+  final hasFish = _fishKeywords.any(haystack.contains);
+  if (!hasMeat && !hasFish) {
+    tags.add('vegetarian');
+  }
+
+  final hasAnimalProducts = _dairyEggKeywords.any(haystack.contains) ||
+      haystack.contains('honey') ||
+      haystack.contains('gelatin');
+  if (!hasMeat && !hasFish && !hasAnimalProducts) {
+    tags.add('vegan');
+  }
+
+  return tags.toList()..sort();
+}
+
 Map<String, dynamic> _toPayload({
   required Map<String, dynamic> jsonLd,
   required String sourceUrl,
@@ -237,8 +481,11 @@ Map<String, dynamic> _toPayload({
   final servings = _extractServings(jsonLd['recipeYield']);
   var ingredients = _extractIngredients(jsonLd['recipeIngredient']);
   var instructions = _extractInstructions(jsonLd['recipeInstructions']);
-  var nutrition = _extractNutrition(jsonLd['nutrition']);
-  final apiId = 'food_com:${_slugFromUrl(sourceUrl)}';
+  final nutrition = _extractNutrition(jsonLd['nutrition']);
+  final recipeId = _recipeIdFromUrl(sourceUrl);
+  final apiId = recipeId != null
+      ? 'food_com:$recipeId'
+      : 'food_com:${_slugFromUrl(sourceUrl)}';
 
   var resolvedPrep = prepMinutes;
   var resolvedCook = cookMinutes;
@@ -253,7 +500,7 @@ Map<String, dynamic> _toPayload({
 
   if (imageUrl.isEmpty) {
     imageUrl =
-        'https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?auto=format&fit=crop&w=1200&q=80';
+        'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=1200&q=80';
     warnings.add('defaulted_image');
   }
 
@@ -280,6 +527,12 @@ Map<String, dynamic> _toPayload({
     warnings.add('defaulted_nutrition_missing');
   }
 
+  final cuisineTags = _buildCuisineTags(
+    jsonLd: jsonLd,
+    ingredients: ingredients,
+    title: title.isNotEmpty ? title : _titleFromSlug(_slugFromUrl(sourceUrl)),
+  );
+
   return <String, dynamic>{
     'user_id': seedUserId,
     'title': title.isNotEmpty ? title : _titleFromSlug(_slugFromUrl(sourceUrl)),
@@ -287,9 +540,8 @@ Map<String, dynamic> _toPayload({
     'servings': servings > 0 ? servings : 2,
     'prep_time': resolvedPrep,
     'cook_time': resolvedCook,
-    // DB constraint expects app enum values.
-    'meal_type': 'sauce',
-    'cuisine_tags': const <String>['Mexican Fiesta'],
+    'meal_type': 'entree',
+    'cuisine_tags': cuisineTags,
     'ingredients': ingredients,
     'instructions': instructions,
     'image_url': imageUrl,
@@ -351,7 +603,7 @@ Future<String> _writeReviewCsv(List<ReviewRow> rows) async {
   if (!dir.existsSync()) {
     dir.createSync(recursive: true);
   }
-  final path = '${dir.path}/foodcom_mexican_review.csv';
+  const path = 'tmp/foodcom_breakfast_burritos_sandwiches_review.csv';
   final buffer = StringBuffer()
     ..writeln('url,title,api_id,warnings');
   for (final row in rows) {
@@ -598,6 +850,12 @@ String _slugFromUrl(String url) {
   final path = Uri.parse(url).path;
   final segs = path.split('/').where((s) => s.isNotEmpty).toList();
   return segs.isEmpty ? url : segs.last;
+}
+
+String? _recipeIdFromUrl(String url) {
+  final slug = _slugFromUrl(url);
+  final m = RegExp(r'-(\d+)$').firstMatch(slug);
+  return m?.group(1);
 }
 
 String _titleFromSlug(String slug) {

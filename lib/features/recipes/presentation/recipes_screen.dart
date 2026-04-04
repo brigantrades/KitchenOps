@@ -43,8 +43,7 @@ String get _agentLogPath {
     _agentDebugLogPath =
         '/Users/brigan/Personal Development/KitchenOps/.cursor/debug-5a73d6.log';
   } else {
-    _agentDebugLogPath =
-        '${Directory.systemTemp.path}/debug-5a73d6.log';
+    _agentDebugLogPath = '${Directory.systemTemp.path}/debug-5a73d6.log';
   }
   return _agentDebugLogPath!;
 }
@@ -643,118 +642,120 @@ class _RecipesScreenState extends ConsumerState<RecipesScreen> {
         builder: (context, ref, _) {
           final recipesAsync = ref.watch(recipesProvider);
           return recipesAsync.when(
-        data: (recipes) {
-          bool matches(Recipe recipe) {
-            if (query.isEmpty) return true;
-            final title = recipe.title.toLowerCase();
-            final cuisines = recipe.cuisineTags.join(' ').toLowerCase();
-            final meal = _mealTypeLabel(recipe.mealType).toLowerCase();
-            return title.contains(query) ||
-                cuisines.contains(query) ||
-                meal.contains(query);
-          }
+            data: (recipes) {
+              bool matches(Recipe recipe) {
+                if (query.isEmpty) return true;
+                final title = recipe.title.toLowerCase();
+                final cuisines = recipe.cuisineTags.join(' ').toLowerCase();
+                final meal = _mealTypeLabel(recipe.mealType).toLowerCase();
+                return title.contains(query) ||
+                    cuisines.contains(query) ||
+                    meal.contains(query);
+              }
 
-          final filtered = recipes.where(matches).toList();
-          final isHouseholdLibrary =
-              hasSharedHousehold && effectiveLibraryIndex == 0;
-          final List<Recipe> visible;
-          if (isHouseholdLibrary) {
-            final householdBase = filtered
-                .where((r) => r.visibility == RecipeVisibility.household)
-                .toList();
-            final hhFavorites =
-                householdBase.where((r) => r.isFavorite).toList();
-            final hhToTry = householdBase.where((r) => r.isToTry).toList();
-            visible = switch (_segmentIndex) {
-              1 => hhFavorites,
-              2 => hhToTry,
-              _ => householdBase,
-            };
-          } else {
-            final personal = filtered
-                .where((r) => r.visibility != RecipeVisibility.household)
-                .toList();
-            final favorites = personal.where((r) => r.isFavorite).toList();
-            final toTry = personal.where((r) => r.isToTry).toList();
-            // My Recipes lists personal copies only. Favorites / To Try are your
-            // personal rows; household copies live under Household Recipes.
-            visible = switch (_segmentIndex) {
-              1 => favorites,
-              2 => toTry,
-              _ => personal,
-            };
-          }
-          final displayed = visible.where(_recipePassesMealFilter).toList();
-          displayed.sort((a, b) {
-            switch (_sortOption) {
-              case _RecipeSortOption.name:
-                return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-              case _RecipeSortOption.dateAdded:
-                final aTime =
-                    a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                final bTime =
-                    b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                return bTime.compareTo(aTime);
-            }
-          });
-
-          final emptyListMessage = isHouseholdLibrary
-              ? switch (_segmentIndex) {
-                  1 =>
-                    'No household favorites yet. Open a household recipe and turn on My Favorites in Lists & Sharing.',
-                  2 =>
-                    'Nothing in To Try for household recipes. Mark one from Lists & Sharing.',
-                  _ => 'No recipes yet. Add one in Discover or Planner.',
-                }
-              : switch (_segmentIndex) {
-                  1 =>
-                    'No favorites yet. Open a personal recipe and turn on My Favorites.',
-                  2 =>
-                    'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
-                  _ => 'No recipes yet. Add one in Discover or Planner.',
+              final filtered = recipes.where(matches).toList();
+              final isHouseholdLibrary =
+                  hasSharedHousehold && effectiveLibraryIndex == 0;
+              final List<Recipe> visible;
+              if (isHouseholdLibrary) {
+                final householdBase = filtered
+                    .where((r) => r.visibility == RecipeVisibility.household)
+                    .toList();
+                final hhFavorites =
+                    householdBase.where((r) => r.isFavorite).toList();
+                final hhToTry = householdBase.where((r) => r.isToTry).toList();
+                visible = switch (_segmentIndex) {
+                  1 => hhFavorites,
+                  2 => hhToTry,
+                  _ => householdBase,
                 };
+              } else {
+                final personal = filtered
+                    .where((r) => r.visibility != RecipeVisibility.household)
+                    .toList();
+                final favorites = personal.where((r) => r.isFavorite).toList();
+                final toTry = personal.where((r) => r.isToTry).toList();
+                // My Recipes lists personal copies only. Favorites / To Try are your
+                // personal rows; household copies live under Household Recipes.
+                visible = switch (_segmentIndex) {
+                  1 => favorites,
+                  2 => toTry,
+                  _ => personal,
+                };
+              }
+              final displayed = visible.where(_recipePassesMealFilter).toList();
+              displayed.sort((a, b) {
+                switch (_sortOption) {
+                  case _RecipeSortOption.name:
+                    return a.title
+                        .toLowerCase()
+                        .compareTo(b.title.toLowerCase());
+                  case _RecipeSortOption.dateAdded:
+                    final aTime =
+                        a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                    final bTime =
+                        b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                    return bTime.compareTo(aTime);
+                }
+              });
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-                child: _buildRecipesFilterHeader(
-                  context: context,
-                  hasSharedHousehold: hasSharedHousehold,
-                  effectiveLibraryIndex: effectiveLibraryIndex,
-                  libraryLabels: libraryLabels,
-                ),
-              ),
-              Expanded(
-                child: displayed.isEmpty
-                    ? Center(
-                        child: Text(emptyListMessage),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(
-                          10,
-                          0,
-                          10,
-                          88,
-                        ),
-                        itemCount: displayed.length,
-                        itemBuilder: (context, index) {
-                          return _RecipeRow(
-                            recipe: displayed[index],
-                            allRecipes: recipes,
-                            hasSharedHousehold: hasSharedHousehold,
-                            isHouseholdLibrary: isHouseholdLibrary,
-                            onEditRecipe: _editRecipe,
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(child: Text('Error: $error')),
+              final emptyListMessage = isHouseholdLibrary
+                  ? switch (_segmentIndex) {
+                      1 =>
+                        'No household favorites yet. Open a household recipe and turn on My Favorites in Lists & Sharing.',
+                      2 =>
+                        'Nothing in To Try for household recipes. Mark one from Lists & Sharing.',
+                      _ => 'No recipes yet. Add one in Discover or Planner.',
+                    }
+                  : switch (_segmentIndex) {
+                      1 =>
+                        'No favorites yet. Open a personal recipe and turn on My Favorites.',
+                      2 =>
+                        'Nothing in To Try. Mark a personal recipe from Lists & Sharing.',
+                      _ => 'No recipes yet. Add one in Discover or Planner.',
+                    };
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                    child: _buildRecipesFilterHeader(
+                      context: context,
+                      hasSharedHousehold: hasSharedHousehold,
+                      effectiveLibraryIndex: effectiveLibraryIndex,
+                      libraryLabels: libraryLabels,
+                    ),
+                  ),
+                  Expanded(
+                    child: displayed.isEmpty
+                        ? Center(
+                            child: Text(emptyListMessage),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(
+                              10,
+                              0,
+                              10,
+                              88,
+                            ),
+                            itemCount: displayed.length,
+                            itemBuilder: (context, index) {
+                              return _RecipeRow(
+                                recipe: displayed[index],
+                                allRecipes: recipes,
+                                hasSharedHousehold: hasSharedHousehold,
+                                isHouseholdLibrary: isHouseholdLibrary,
+                                onEditRecipe: _editRecipe,
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (error, stack) => Center(child: Text('Error: $error')),
           );
         },
       ),
@@ -1114,8 +1115,7 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
           summary.contains('_dependents') ||
           summary.contains('disposed')) {
         final trace = details.stack?.toString() ?? '(no stack)';
-        final msg =
-            'AGENT_DEBUG_5a73d6 CAUGHT_ERROR summary=$summary\n$trace';
+        final msg = 'AGENT_DEBUG_5a73d6 CAUGHT_ERROR summary=$summary\n$trace';
         debugPrint(msg);
         _recipeBuilderSheetDebugLog(
           'CAUGHT_ERROR',
@@ -1206,9 +1206,11 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     // rebuilds that race with teardown). Deferring guarantees every descendant
     // has released its attachment before we call dispose().
     final ingredients = List<RecipeIngredientFormRow>.of(_ingredients);
-    final sauceIngredients = List<RecipeIngredientFormRow>.of(_sauceIngredients);
+    final sauceIngredients =
+        List<RecipeIngredientFormRow>.of(_sauceIngredients);
     final directionDrafts = List<RecipeDirectionDraft>.of(_directionDrafts);
-    final sauceDirectionDrafts = List<RecipeDirectionDraft>.of(_sauceDirectionDrafts);
+    final sauceDirectionDrafts =
+        List<RecipeDirectionDraft>.of(_sauceDirectionDrafts);
     final stepCtrl = _stepCtrl;
     final titleCtrl = _titleCtrl;
     final servingsCtrl = _servingsCtrl;
@@ -3636,463 +3638,426 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
     final stepTitle = _headerStepTitle();
 
     final topObstruction = MediaQuery.viewPaddingOf(context).top;
-    return WillPopScope(
-      onWillPop: () async => false,
-      child: SafeArea(
-        minimum: EdgeInsets.only(top: topObstruction),
-        child: Form(
-          key: _formKey,
-          child: Theme(
-            data: Theme.of(context).copyWith(
-              inputDecorationTheme: InputDecorationTheme(
-                filled: true,
-                fillColor: const Color(0xFFEFF6FF),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide(color: scheme.primary, width: 1.2),
+    return Material(
+      color: scheme.surface,
+      child: WillPopScope(
+        onWillPop: () async => false,
+        child: SafeArea(
+          minimum: EdgeInsets.only(top: topObstruction),
+          child: Form(
+            key: _formKey,
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                inputDecorationTheme: InputDecorationTheme(
+                  filled: true,
+                  fillColor: const Color(0xFFEFF6FF),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide(color: scheme.primary, width: 1.2),
+                  ),
                 ),
               ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      gradient: const LinearGradient(
-                        colors: [
-                          _kCreateRecipeBlueLight,
-                          _kCreateRecipeBlueMid,
-                          _kCreateRecipeBlueDeep,
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        gradient: const LinearGradient(
+                          colors: [
+                            _kCreateRecipeBlueLight,
+                            _kCreateRecipeBlueMid,
+                            _kCreateRecipeBlueDeep,
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
                       ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.initialRecipe == null
-                              ? 'Create Recipe'
-                              : 'Edit Recipe',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(stepTitle),
-                        const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: LinearProgressIndicator(
-                            minHeight: 8,
-                            value: (_step + 1) / _pageCount,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.initialRecipe == null
+                                ? 'Create Recipe'
+                                : 'Edit Recipe',
+                            style: Theme.of(context).textTheme.titleLarge,
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: List.generate(
-                            _pageCount,
-                            (index) => Expanded(
-                              child: Container(
-                                margin: EdgeInsets.only(
-                                    right: index == _pageCount - 1 ? 0 : 6),
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: index <= _step
-                                      ? Colors.white
-                                      : Colors.white.withOpacity(0.45),
-                                  borderRadius: BorderRadius.circular(6),
+                          const SizedBox(height: 6),
+                          Text(stepTitle),
+                          const SizedBox(height: 10),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              minHeight: 8,
+                              value: (_step + 1) / _pageCount,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: List.generate(
+                              _pageCount,
+                              (index) => Expanded(
+                                child: Container(
+                                  margin: EdgeInsets.only(
+                                      right: index == _pageCount - 1 ? 0 : 6),
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: index <= _step
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.45),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (widget.initialRecipe != null && _hasUnsavedEdits)
+                          TextButton.icon(
+                            onPressed: _isSubmitting ? null : _submit,
+                            icon: Icon(
+                              _isSubmitting
+                                  ? Icons.hourglass_empty
+                                  : Icons.save_rounded,
+                              size: 18,
+                            ),
+                            label: Text(_isSubmitting ? 'Saving…' : 'Save'),
+                          ),
+                        if (widget.initialRecipe != null && _hasUnsavedEdits)
+                          const SizedBox(width: 4),
+                        TextButton.icon(
+                          onPressed: _confirmClose,
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          label: const Text('Cancel'),
                         ),
                       ],
                     ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      if (widget.initialRecipe != null && _hasUnsavedEdits)
-                        TextButton.icon(
-                          onPressed: _isSubmitting ? null : _submit,
-                          icon: Icon(
-                            _isSubmitting
-                                ? Icons.hourglass_empty
-                                : Icons.save_rounded,
-                            size: 18,
-                          ),
-                          label: Text(_isSubmitting ? 'Saving…' : 'Save'),
-                        ),
-                      if (widget.initialRecipe != null && _hasUnsavedEdits)
-                        const SizedBox(width: 4),
-                      TextButton.icon(
-                        onPressed: _confirmClose,
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                        label: const Text('Cancel'),
-                      ),
-                    ],
-                  ),
-                  Expanded(
-                    child: PageView(
-                      controller: _stepCtrl,
-                      physics: const NeverScrollableScrollPhysics(),
-                      children: [
-                        _StepCard(
-                          title: 'Name your recipe',
-                          child: TextFormField(
-                            controller: _titleCtrl,
-                            focusNode: _titleFocusNode,
-                            textCapitalization: widget.initialRecipe != null
-                                ? TextCapitalization.sentences
-                                : (_recipeTitleLowercaseTyping
-                                    ? TextCapitalization.none
-                                    : TextCapitalization.words),
-                            inputFormatters: widget.initialRecipe == null
-                                ? [
-                                    RecipeTitlePerWordInputFormatter(
-                                      lowercaseTyping:
-                                          _recipeTitleLowercaseTyping,
-                                    ),
-                                  ]
-                                : null,
-                            onTapOutside: (_) =>
-                                FocusScope.of(context).unfocus(),
-                            decoration: InputDecoration(
-                              labelText: 'Recipe name',
-                              hintText: 'e.g., Spicy Garlic Chicken Pasta',
-                              suffixIcon: widget.initialRecipe == null
-                                  ? IconButton(
-                                      icon: Icon(
-                                        _recipeTitleLowercaseTyping
-                                            ? Icons.title_rounded
-                                            : Icons.text_fields_rounded,
+                    Expanded(
+                      child: PageView(
+                        controller: _stepCtrl,
+                        physics: const NeverScrollableScrollPhysics(),
+                        children: [
+                          _StepCard(
+                            title: 'Name your recipe',
+                            child: TextFormField(
+                              controller: _titleCtrl,
+                              focusNode: _titleFocusNode,
+                              textCapitalization: widget.initialRecipe != null
+                                  ? TextCapitalization.sentences
+                                  : (_recipeTitleLowercaseTyping
+                                      ? TextCapitalization.none
+                                      : TextCapitalization.words),
+                              inputFormatters: widget.initialRecipe == null
+                                  ? [
+                                      RecipeTitlePerWordInputFormatter(
+                                        lowercaseTyping:
+                                            _recipeTitleLowercaseTyping,
                                       ),
-                                      tooltip: _recipeTitleLowercaseTyping
-                                          ? 'Title case while typing'
-                                          : 'Lowercase while typing',
-                                      onPressed: () {
-                                        setState(() {
-                                          if (_recipeTitleLowercaseTyping) {
-                                            _recipeTitleLowercaseTyping = false;
-                                            _titleCtrl.text =
-                                                formatRecipeTitlePerWord(
-                                              _titleCtrl.text,
-                                            );
-                                            _titleCtrl.selection =
-                                                TextSelection.collapsed(
-                                              offset: _titleCtrl.text.length,
-                                            );
-                                          } else {
-                                            _recipeTitleLowercaseTyping = true;
-                                          }
-                                        });
-                                      },
-                                    )
+                                    ]
                                   : null,
-                            ),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'Recipe name is required.'
+                              onTapOutside: (_) =>
+                                  FocusScope.of(context).unfocus(),
+                              decoration: InputDecoration(
+                                labelText: 'Recipe name',
+                                hintText: 'e.g., Spicy Garlic Chicken Pasta',
+                                suffixIcon: widget.initialRecipe == null
+                                    ? IconButton(
+                                        icon: Icon(
+                                          _recipeTitleLowercaseTyping
+                                              ? Icons.title_rounded
+                                              : Icons.text_fields_rounded,
+                                        ),
+                                        tooltip: _recipeTitleLowercaseTyping
+                                            ? 'Title case while typing'
+                                            : 'Lowercase while typing',
+                                        onPressed: () {
+                                          setState(() {
+                                            if (_recipeTitleLowercaseTyping) {
+                                              _recipeTitleLowercaseTyping =
+                                                  false;
+                                              _titleCtrl.text =
+                                                  formatRecipeTitlePerWord(
+                                                _titleCtrl.text,
+                                              );
+                                              _titleCtrl.selection =
+                                                  TextSelection.collapsed(
+                                                offset: _titleCtrl.text.length,
+                                              );
+                                            } else {
+                                              _recipeTitleLowercaseTyping =
+                                                  true;
+                                            }
+                                          });
+                                        },
+                                      )
                                     : null,
+                              ),
+                              validator: (value) =>
+                                  (value == null || value.trim().isEmpty)
+                                      ? 'Recipe name is required.'
+                                      : null,
+                            ),
                           ),
-                        ),
-                        SingleChildScrollView(
-                          child: Column(
-                            children: [
-                              SectionCard(
-                                title: 'Serving size',
-                                child: Center(
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        onPressed: _decrementServings,
-                                        icon: const Icon(
-                                            Icons.remove_circle_outline),
-                                      ),
-                                      SizedBox(
-                                        width: 64,
-                                        child: TextFormField(
-                                          controller: _servingsCtrl,
-                                          textAlign: TextAlign.center,
-                                          keyboardType: TextInputType.number,
-                                          onTapOutside: (_) =>
-                                              FocusScope.of(context).unfocus(),
-                                          decoration: const InputDecoration(
-                                            border: InputBorder.none,
-                                            contentPadding: EdgeInsets.zero,
-                                            isDense: true,
-                                          ),
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .headlineMedium
-                                              ?.copyWith(
-                                                  fontWeight: FontWeight.w700),
-                                        ),
-                                      ),
-                                      IconButton(
-                                        onPressed: _incrementServings,
-                                        icon: const Icon(
-                                            Icons.add_circle_outline),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              SectionCard(
-                                title: 'Meal type',
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: MealType.values
-                                        .map(
-                                          (type) => ChoiceChip(
-                                            label: Text(_mealTypeLabel(type)),
-                                            selected: _mealType == type,
-                                            onSelected: (_) {
-                                              setState(() {
-                                                final prev = _mealType;
-                                                _mealType = type;
-                                                if (type == MealType.sauce &&
-                                                    prev != MealType.sauce) {
-                                                  final wasEnabled =
-                                                      _sauceEnabled;
-                                                  _sauceEnabled = false;
-                                                  _clearSauceDraft();
-                                                  if (wasEnabled && _step > 4) {
-                                                    _step--;
-                                                  }
-                                                }
-                                              });
-                                              if (type == MealType.sauce) {
-                                                _scheduleStepPageSync();
-                                              }
-                                            },
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              if (_mealType != MealType.sauce)
+                          SingleChildScrollView(
+                            child: Column(
+                              children: [
                                 SectionCard(
-                                  title: _mealType == MealType.dessert
-                                      ? 'Sauce or Icing'
-                                      : 'Sauce',
-                                  subtitle: _mealType == MealType.dessert
-                                      ? 'Does this recipe have a sauce or icing?'
-                                      : 'Does this recipe have a sauce?',
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: SegmentedButton<bool>(
-                                      showSelectedIcon: false,
-                                      segments: const [
-                                        ButtonSegment<bool>(
-                                          value: false,
-                                          label: Text('No'),
-                                          icon: Icon(Icons.close_rounded,
-                                              size: 18),
+                                  title: 'Serving size',
+                                  child: Center(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          onPressed: _decrementServings,
+                                          icon: const Icon(
+                                              Icons.remove_circle_outline),
                                         ),
-                                        ButtonSegment<bool>(
-                                          value: true,
-                                          label: Text('Yes'),
-                                          icon: Icon(Icons.check_rounded,
-                                              size: 18),
+                                        SizedBox(
+                                          width: 64,
+                                          child: TextFormField(
+                                            controller: _servingsCtrl,
+                                            textAlign: TextAlign.center,
+                                            keyboardType: TextInputType.number,
+                                            onTapOutside: (_) =>
+                                                FocusScope.of(context)
+                                                    .unfocus(),
+                                            decoration: const InputDecoration(
+                                              border: InputBorder.none,
+                                              contentPadding: EdgeInsets.zero,
+                                              isDense: true,
+                                            ),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .headlineMedium
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w700),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed: _incrementServings,
+                                          icon: const Icon(
+                                              Icons.add_circle_outline),
                                         ),
                                       ],
-                                      selected: {_sauceEnabled},
-                                      onSelectionChanged: (Set<bool> next) {
-                                        final v = next.first;
-                                        final wasEnabled = _sauceEnabled;
-                                        setState(() {
-                                          _sauceEnabled = v;
-                                          if (!v) {
-                                            _clearSauceDraft();
-                                            if (wasEnabled && _step > 4) {
-                                              _step--;
-                                            }
-                                          } else {
-                                            if (_sauceTitleCtrl.text
-                                                    .trim()
-                                                    .isEmpty &&
-                                                _titleCtrl.text
-                                                    .trim()
-                                                    .isNotEmpty) {
-                                              final m = _titleCtrl.text.trim();
-                                              _sauceTitleCtrl.text =
-                                                  _mealType == MealType.dessert
-                                                      ? '$m — sauce or icing'
-                                                      : '$m — sauce';
-                                            }
-                                            if (!wasEnabled && _step >= 4) {
-                                              _step++;
-                                            }
-                                          }
-                                        });
-                                        _scheduleStepPageSync();
-                                      },
                                     ),
                                   ),
                                 ),
-                            ],
-                          ),
-                        ),
-                        _buildIngredientStepPage(),
-                        _StepCard(
-                          title: 'Directions (optional)',
-                          subtitle:
-                              'Tap a step to edit, or Add step. Drag the handle on '
-                              'the left to reorder steps. Use Save in the editor '
-                              'when you are finished.',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              ReorderableListView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                buildDefaultDragHandles: false,
-                                onReorder: _onDirectionsReorder,
-                                itemCount: _directionDrafts.length,
-                                itemBuilder: (context, i) {
-                                  final draft = _directionDrafts[i];
-                                  return KeyedSubtree(
-                                    key: ObjectKey(draft),
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: AppSpacing.xs,
+                                const SizedBox(height: 12),
+                                SectionCard(
+                                  title: 'Meal type',
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: MealType.values
+                                          .map(
+                                            (type) => ChoiceChip(
+                                              label: Text(_mealTypeLabel(type)),
+                                              selected: _mealType == type,
+                                              onSelected: (_) {
+                                                setState(() {
+                                                  final prev = _mealType;
+                                                  _mealType = type;
+                                                  if (type == MealType.sauce &&
+                                                      prev != MealType.sauce) {
+                                                    final wasEnabled =
+                                                        _sauceEnabled;
+                                                    _sauceEnabled = false;
+                                                    _clearSauceDraft();
+                                                    if (wasEnabled &&
+                                                        _step > 4) {
+                                                      _step--;
+                                                    }
+                                                  }
+                                                });
+                                                if (type == MealType.sauce) {
+                                                  _scheduleStepPageSync();
+                                                }
+                                              },
+                                            ),
+                                          )
+                                          .toList(),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                if (_mealType != MealType.sauce)
+                                  SectionCard(
+                                    title: _mealType == MealType.dessert
+                                        ? 'Sauce or Icing'
+                                        : 'Sauce',
+                                    subtitle: _mealType == MealType.dessert
+                                        ? 'Does this recipe have a sauce or icing?'
+                                        : 'Does this recipe have a sauce?',
+                                    child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: SegmentedButton<bool>(
+                                        showSelectedIcon: false,
+                                        segments: const [
+                                          ButtonSegment<bool>(
+                                            value: false,
+                                            label: Text('No'),
+                                            icon: Icon(Icons.close_rounded,
+                                                size: 18),
+                                          ),
+                                          ButtonSegment<bool>(
+                                            value: true,
+                                            label: Text('Yes'),
+                                            icon: Icon(Icons.check_rounded,
+                                                size: 18),
+                                          ),
+                                        ],
+                                        selected: {_sauceEnabled},
+                                        onSelectionChanged: (Set<bool> next) {
+                                          final v = next.first;
+                                          final wasEnabled = _sauceEnabled;
+                                          setState(() {
+                                            _sauceEnabled = v;
+                                            if (!v) {
+                                              _clearSauceDraft();
+                                              if (wasEnabled && _step > 4) {
+                                                _step--;
+                                              }
+                                            } else {
+                                              if (_sauceTitleCtrl.text
+                                                      .trim()
+                                                      .isEmpty &&
+                                                  _titleCtrl.text
+                                                      .trim()
+                                                      .isNotEmpty) {
+                                                final m =
+                                                    _titleCtrl.text.trim();
+                                                _sauceTitleCtrl.text =
+                                                    _mealType ==
+                                                            MealType.dessert
+                                                        ? '$m — sauce or icing'
+                                                        : '$m — sauce';
+                                              }
+                                              if (!wasEnabled && _step >= 4) {
+                                                _step++;
+                                              }
+                                            }
+                                          });
+                                          _scheduleStepPageSync();
+                                        },
                                       ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        children: [
-                                          Tooltip(
-                                            message: 'Drag to reorder',
-                                            child: ReorderableDragStartListener(
-                                              index: i,
-                                              child: Padding(
-                                                padding: const EdgeInsets.only(
-                                                  right: 6,
-                                                ),
-                                                child: Icon(
-                                                  Icons.drag_handle_rounded,
-                                                  size: 22,
-                                                  color:
-                                                      scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          _buildIngredientStepPage(),
+                          _StepCard(
+                            title: 'Directions (optional)',
+                            subtitle:
+                                'Tap a step to edit, or Add step. Drag the handle on '
+                                'the left to reorder steps. Use Save in the editor '
+                                'when you are finished.',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ReorderableListView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  buildDefaultDragHandles: false,
+                                  onReorder: _onDirectionsReorder,
+                                  itemCount: _directionDrafts.length,
+                                  itemBuilder: (context, i) {
+                                    final draft = _directionDrafts[i];
+                                    return KeyedSubtree(
+                                      key: ObjectKey(draft),
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: AppSpacing.xs,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            Tooltip(
+                                              message: 'Drag to reorder',
+                                              child:
+                                                  ReorderableDragStartListener(
+                                                index: i,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                    right: 6,
+                                                  ),
+                                                  child: Icon(
+                                                    Icons.drag_handle_rounded,
+                                                    size: 22,
+                                                    color:
+                                                        scheme.onSurfaceVariant,
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                          Expanded(
-                                            child: _buildCondensedDirectionRow(
-                                              context,
-                                              i,
-                                              draft,
-                                              wrapWithBottomPadding: false,
+                                            Expanded(
+                                              child:
+                                                  _buildCondensedDirectionRow(
+                                                context,
+                                                i,
+                                                draft,
+                                                wrapWithBottomPadding: false,
+                                              ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: AppSpacing.xs),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: TextButton.icon(
-                                  onPressed: _canAddAnotherDirection
-                                      ? _addDirectionAndOpenModal
-                                      : null,
-                                  icon: const Icon(Icons.add),
-                                  label: const Text('Add step'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (_sauceEnabled) _buildSauceStepPage(),
-                        _buildNutritionStepPage(),
-                        _StepCard(
-                          title: 'Final touches',
-                          child: Builder(
-                            builder: (context) {
-                              final isCreate = widget.initialRecipe == null;
-                              final hasShared = ref
-                                      .watch(hasSharedHouseholdProvider)
-                                      .valueOrNull ??
-                                  false;
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Text(
-                                    'My Recipes',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w700,
+                                          ],
                                         ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: AppSpacing.xs),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: _canAddAnotherDirection
+                                        ? _addDirectionAndOpenModal
+                                        : null,
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('Add step'),
                                   ),
-                                  const SizedBox(height: 4),
-                                  SwitchListTile.adaptive(
-                                    contentPadding: EdgeInsets.zero,
-                                    secondary: Icon(
-                                      _markFavorite
-                                          ? Icons.favorite_rounded
-                                          : Icons.favorite_border_rounded,
-                                      color: _markFavorite
-                                          ? scheme.primary
-                                          : scheme.onSurfaceVariant,
-                                    ),
-                                    title: const Text('Add to Favorites'),
-                                    subtitle: const Text(
-                                      'Show under Favorites on My Recipes.',
-                                    ),
-                                    value: _markFavorite,
-                                    onChanged: (value) =>
-                                        setState(() => _markFavorite = value),
-                                  ),
-                                  const Divider(height: 1),
-                                  SwitchListTile.adaptive(
-                                    contentPadding: EdgeInsets.zero,
-                                    secondary: Icon(
-                                      _markToTry
-                                          ? Icons.flag_rounded
-                                          : Icons.outlined_flag_rounded,
-                                      color: _markToTry
-                                          ? scheme.primary
-                                          : scheme.onSurfaceVariant,
-                                    ),
-                                    title: const Text('Add to To Try'),
-                                    subtitle: const Text(
-                                      'Show under To Try on My Recipes.',
-                                    ),
-                                    value: _markToTry,
-                                    onChanged: (value) =>
-                                        setState(() => _markToTry = value),
-                                  ),
-                                  if (hasShared && isCreate) ...[
-                                    const Divider(height: 1),
-                                    const SizedBox(height: 8),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_sauceEnabled) _buildSauceStepPage(),
+                          _buildNutritionStepPage(),
+                          _StepCard(
+                            title: 'Final touches',
+                            child: Builder(
+                              builder: (context) {
+                                final isCreate = widget.initialRecipe == null;
+                                final hasShared = ref
+                                        .watch(hasSharedHouseholdProvider)
+                                        .valueOrNull ??
+                                    false;
+                                return Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
                                     Text(
-                                      'Household',
+                                      'My Recipes',
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleSmall
@@ -4104,155 +4069,208 @@ class _RecipeBuilderSheetState extends ConsumerState<_RecipeBuilderSheet> {
                                     SwitchListTile.adaptive(
                                       contentPadding: EdgeInsets.zero,
                                       secondary: Icon(
-                                        Icons.groups_2_outlined,
-                                        color: _saveToHousehold && !_makePublic
+                                        _markFavorite
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        color: _markFavorite
                                             ? scheme.primary
                                             : scheme.onSurfaceVariant,
                                       ),
-                                      title: const Text('Save to Household'),
-                                      subtitle: Text(
-                                        _makePublic
-                                            ? 'Public recipes cannot be saved to household from this screen.'
-                                            : 'Creates your recipe in My Recipes and a shared copy for your household.',
+                                      title: const Text('Add to Favorites'),
+                                      subtitle: const Text(
+                                        'Show under Favorites on My Recipes.',
                                       ),
-                                      value: _saveToHousehold,
-                                      onChanged: _makePublic
-                                          ? null
-                                          : (value) => setState(() {
-                                                _saveToHousehold = value;
-                                                if (value) {
-                                                  _householdFavorite =
-                                                      _markFavorite;
-                                                  _householdToTry = _markToTry;
-                                                }
-                                              }),
+                                      value: _markFavorite,
+                                      onChanged: (value) =>
+                                          setState(() => _markFavorite = value),
                                     ),
-                                    if (_saveToHousehold && !_makePublic) ...[
-                                      SwitchListTile.adaptive(
-                                        contentPadding: EdgeInsets.zero,
-                                        secondary: Icon(
-                                          _householdFavorite
-                                              ? Icons.favorite_rounded
-                                              : Icons.favorite_border_rounded,
-                                          color: _householdFavorite
-                                              ? scheme.primary
-                                              : scheme.onSurfaceVariant,
-                                        ),
-                                        title: const Text(
-                                          'Favorite on Household Recipes',
-                                        ),
-                                        subtitle: const Text(
-                                          'Applies to the shared household copy.',
-                                        ),
-                                        value: _householdFavorite,
-                                        onChanged: (value) => setState(
-                                            () => _householdFavorite = value),
-                                      ),
-                                      const Divider(height: 1),
-                                      SwitchListTile.adaptive(
-                                        contentPadding: EdgeInsets.zero,
-                                        secondary: Icon(
-                                          _householdToTry
-                                              ? Icons.flag_rounded
-                                              : Icons.outlined_flag_rounded,
-                                          color: _householdToTry
-                                              ? scheme.primary
-                                              : scheme.onSurfaceVariant,
-                                        ),
-                                        title: const Text(
-                                          'To Try on Household Recipes',
-                                        ),
-                                        subtitle: const Text(
-                                          'Applies to the shared household copy.',
-                                        ),
-                                        value: _householdToTry,
-                                        onChanged: (value) => setState(
-                                            () => _householdToTry = value),
-                                      ),
-                                    ],
-                                  ],
-                                  if (_kShowMakePublicRecipeOption) ...[
                                     const Divider(height: 1),
                                     SwitchListTile.adaptive(
                                       contentPadding: EdgeInsets.zero,
                                       secondary: Icon(
-                                        _makePublic
-                                            ? Icons.public_rounded
-                                            : Icons.public_off_rounded,
-                                        color: _makePublic
+                                        _markToTry
+                                            ? Icons.flag_rounded
+                                            : Icons.outlined_flag_rounded,
+                                        color: _markToTry
                                             ? scheme.primary
                                             : scheme.onSurfaceVariant,
                                       ),
-                                      title: const Text('Make public'),
+                                      title: const Text('Add to To Try'),
                                       subtitle: const Text(
-                                        'Public recipes appear in Discover for all users.',
+                                        'Show under To Try on My Recipes.',
                                       ),
-                                      value: _makePublic,
-                                      onChanged: (value) => setState(() {
-                                        _makePublic = value;
-                                        if (value) {
-                                          _saveToHousehold = false;
-                                        }
-                                      }),
+                                      value: _markToTry,
+                                      onChanged: (value) =>
+                                          setState(() => _markToTry = value),
                                     ),
+                                    if (hasShared && isCreate) ...[
+                                      const Divider(height: 1),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Household',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      SwitchListTile.adaptive(
+                                        contentPadding: EdgeInsets.zero,
+                                        secondary: Icon(
+                                          Icons.groups_2_outlined,
+                                          color:
+                                              _saveToHousehold && !_makePublic
+                                                  ? scheme.primary
+                                                  : scheme.onSurfaceVariant,
+                                        ),
+                                        title: const Text('Save to Household'),
+                                        subtitle: Text(
+                                          _makePublic
+                                              ? 'Public recipes cannot be saved to household from this screen.'
+                                              : 'Creates your recipe in My Recipes and a shared copy for your household.',
+                                        ),
+                                        value: _saveToHousehold,
+                                        onChanged: _makePublic
+                                            ? null
+                                            : (value) => setState(() {
+                                                  _saveToHousehold = value;
+                                                  if (value) {
+                                                    _householdFavorite =
+                                                        _markFavorite;
+                                                    _householdToTry =
+                                                        _markToTry;
+                                                  }
+                                                }),
+                                      ),
+                                      if (_saveToHousehold && !_makePublic) ...[
+                                        SwitchListTile.adaptive(
+                                          contentPadding: EdgeInsets.zero,
+                                          secondary: Icon(
+                                            _householdFavorite
+                                                ? Icons.favorite_rounded
+                                                : Icons.favorite_border_rounded,
+                                            color: _householdFavorite
+                                                ? scheme.primary
+                                                : scheme.onSurfaceVariant,
+                                          ),
+                                          title: const Text(
+                                            'Favorite on Household Recipes',
+                                          ),
+                                          subtitle: const Text(
+                                            'Applies to the shared household copy.',
+                                          ),
+                                          value: _householdFavorite,
+                                          onChanged: (value) => setState(
+                                              () => _householdFavorite = value),
+                                        ),
+                                        const Divider(height: 1),
+                                        SwitchListTile.adaptive(
+                                          contentPadding: EdgeInsets.zero,
+                                          secondary: Icon(
+                                            _householdToTry
+                                                ? Icons.flag_rounded
+                                                : Icons.outlined_flag_rounded,
+                                            color: _householdToTry
+                                                ? scheme.primary
+                                                : scheme.onSurfaceVariant,
+                                          ),
+                                          title: const Text(
+                                            'To Try on Household Recipes',
+                                          ),
+                                          subtitle: const Text(
+                                            'Applies to the shared household copy.',
+                                          ),
+                                          value: _householdToTry,
+                                          onChanged: (value) => setState(
+                                              () => _householdToTry = value),
+                                        ),
+                                      ],
+                                    ],
+                                    if (_kShowMakePublicRecipeOption) ...[
+                                      const Divider(height: 1),
+                                      SwitchListTile.adaptive(
+                                        contentPadding: EdgeInsets.zero,
+                                        secondary: Icon(
+                                          _makePublic
+                                              ? Icons.public_rounded
+                                              : Icons.public_off_rounded,
+                                          color: _makePublic
+                                              ? scheme.primary
+                                              : scheme.onSurfaceVariant,
+                                        ),
+                                        title: const Text('Make public'),
+                                        subtitle: const Text(
+                                          'Public recipes appear in Discover for all users.',
+                                        ),
+                                        value: _makePublic,
+                                        onChanged: (value) => setState(() {
+                                          _makePublic = value;
+                                          if (value) {
+                                            _saveToHousehold = false;
+                                          }
+                                        }),
+                                      ),
+                                    ],
                                   ],
-                                ],
-                              );
-                            },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_validationMessage != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _validationMessage!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: _isSubmitting
+                                ? null
+                                : (_step == 0 ? _confirmClose : _prevStep),
+                            icon: Icon(_step == 0
+                                ? Icons.close_rounded
+                                : Icons.arrow_back_rounded),
+                            label: Text(_step == 0 ? 'Cancel' : 'Back'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: _isSubmitting ? null : _nextStep,
+                            icon: Icon(_step == _finalPageIndex
+                                ? Icons.check_rounded
+                                : Icons.arrow_forward_rounded),
+                            label: Text(_step == _finalPageIndex
+                                ? (_isSubmitting ? 'Saving...' : 'Save Recipe')
+                                : 'Next'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF4CA9F5),
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(52),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  if (_validationMessage != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _validationMessage!,
-                      style:
-                          TextStyle(color: Theme.of(context).colorScheme.error),
-                    ),
                   ],
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: _isSubmitting
-                              ? null
-                              : (_step == 0 ? _confirmClose : _prevStep),
-                          icon: Icon(_step == 0
-                              ? Icons.close_rounded
-                              : Icons.arrow_back_rounded),
-                          label: Text(_step == 0 ? 'Cancel' : 'Back'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(52),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _isSubmitting ? null : _nextStep,
-                          icon: Icon(_step == _finalPageIndex
-                              ? Icons.check_rounded
-                              : Icons.arrow_forward_rounded),
-                          label: Text(_step == _finalPageIndex
-                              ? (_isSubmitting ? 'Saving...' : 'Save Recipe')
-                              : 'Next'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFF4CA9F5),
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size.fromHeight(52),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
             ),
           ),
